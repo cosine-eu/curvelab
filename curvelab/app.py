@@ -110,6 +110,7 @@ class CurveLabApp(ttk.Frame):
             left_pane,
             on_add_component=self._on_add_component,
             on_remove_component=self._on_remove_component,
+            on_edit_expression=self._on_edit_expression,
             on_auto_guess=self._on_auto_guess,
             on_fit=self._on_fit,
             on_clear_fit=self._on_clear_fit,
@@ -322,10 +323,15 @@ class CurveLabApp(ttk.Frame):
     def _update_component_list_from(self, fit_mgr: FitManager):
         labels = []
         for i, c in enumerate(fit_mgr.components):
-            name = f"{c.name} ({c.prefix})" if c.prefix else c.name
+            if c.name == "Expression" and c.expression:
+                display = f"Expression: {c.expression}"
+                if c.prefix:
+                    display = f"{display} ({c.prefix})"
+            else:
+                display = f"{c.name} ({c.prefix})" if c.prefix else c.name
             if i > 0:
-                name = f"{c.operator} {name}"
-            labels.append(name)
+                display = f"{c.operator} {display}"
+            labels.append(display)
         self.fit_panel.set_components(labels)
 
     def _update_component_list(self):
@@ -575,12 +581,12 @@ class CurveLabApp(ttk.Frame):
 
     # --- Fit callbacks ---
 
-    def _on_add_component(self, model_name: str, operator: str = "+"):
+    def _on_add_component(self, model_name: str, operator: str = "+", expression: str = ""):
         fm = self._active_fit_mgr
         if fm is None:
             messagebox.showwarning("No Session", "Create a fit session first.")
             return
-        fm.add_component(model_name, operator=operator)
+        fm.add_component(model_name, operator=operator, expression=expression)
         self._update_component_list()
 
     def _on_remove_component(self, index: int):
@@ -588,6 +594,13 @@ class CurveLabApp(ttk.Frame):
         if fm is None:
             return
         fm.remove_component(index)
+        self._update_component_list()
+
+    def _on_edit_expression(self, index: int, new_expr: str):
+        fm = self._active_fit_mgr
+        if fm is None:
+            return
+        fm.edit_expression(index, new_expr)
         self._update_component_list()
 
     def _get_fit_data(self, rec: SeriesRecord):
@@ -979,7 +992,12 @@ class CurveLabApp(ttk.Frame):
                     "color": sess.color,
                     "visible": sess.visible,
                     "components": [
-                        {"name": c.name, "prefix": c.prefix, "operator": c.operator}
+                        {
+                            "name": c.name,
+                            "prefix": c.prefix,
+                            "operator": c.operator,
+                            "expression": c.expression,
+                        }
                         for c in sess.fit_manager.components
                     ],
                 }
@@ -1116,7 +1134,11 @@ class CurveLabApp(ttk.Frame):
             for sess_name, sess_data in sdata.get("fit_sessions", {}).items():
                 fm = FitManager()
                 for comp in sess_data.get("components", []):
-                    fm.add_component(comp["name"], operator=comp.get("operator", "+"))
+                    fm.add_component(
+                        comp["name"],
+                        operator=comp.get("operator", "+"),
+                        expression=comp.get("expression", ""),
+                    )
 
                 sess = FitSession(
                     name=sess_data.get("name", sess_name),
@@ -1206,8 +1228,8 @@ class CurveLabApp(ttk.Frame):
         """Standalone launch: creates Tk root and runs mainloop."""
         root = tk.Tk()
         root.title("CurveLab - Data Plotter & Curve Fitter")
-        root.geometry("1200x750")
-        root.minsize(800, 500)
+        root.geometry("1200x850")
+        root.minsize(800, 600)
 
         app = cls(root)
         app.pack(fill=tk.BOTH, expand=True)

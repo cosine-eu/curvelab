@@ -407,6 +407,7 @@ class FitPanel(ttk.LabelFrame):
         parent,
         on_add_component=None,
         on_remove_component=None,
+        on_edit_expression=None,
         on_auto_guess=None,
         on_fit=None,
         on_clear_fit=None,
@@ -421,6 +422,7 @@ class FitPanel(ttk.LabelFrame):
         super().__init__(parent, text="Fit", padding=5)
         self._on_add_component = on_add_component
         self._on_remove_component = on_remove_component
+        self._on_edit_expression = on_edit_expression
         self._on_auto_guess = on_auto_guess
         self._on_fit = on_fit
         self._on_clear_fit = on_clear_fit
@@ -509,6 +511,7 @@ class FitPanel(ttk.LabelFrame):
         # --- Component list ---
         self.comp_listbox = tk.Listbox(self, height=3)
         self.comp_listbox.pack(fill=tk.X, pady=3)
+        self.comp_listbox.bind("<Double-1>", self._edit_expression)
 
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
@@ -580,13 +583,45 @@ class FitPanel(ttk.LabelFrame):
 
     def _add_component(self):
         name = self.model_var.get()
-        if name and self._on_add_component:
-            self._on_add_component(name, self.operator_var.get())
+        if not name or not self._on_add_component:
+            return
+        expression = ""
+        if name == "Expression":
+            expression = simpledialog.askstring(
+                "Expression Model",
+                "Enter math expression (use x as independent variable):",
+                parent=self,
+            )
+            if not expression:
+                return
+        self._on_add_component(name, self.operator_var.get(), expression=expression)
 
     def _remove_component(self):
         sel = self.comp_listbox.curselection()
         if sel and self._on_remove_component:
             self._on_remove_component(sel[0])
+
+    def _edit_expression(self, event=None):
+        sel = self.comp_listbox.curselection()
+        if not sel or not self._on_edit_expression:
+            return
+        idx = sel[0]
+        label = self.comp_listbox.get(idx)
+        if "Expression:" not in label:
+            return
+        # Extract current expression from label
+        current = label.split("Expression:", 1)[1].strip()
+        # Strip trailing prefix like " (expression1_)" or leading operator
+        if " (" in current:
+            current = current[:current.rfind(" (")]
+        new_expr = simpledialog.askstring(
+            "Edit Expression",
+            "Expression (use x as independent variable):",
+            initialvalue=current,
+            parent=self,
+        )
+        if new_expr and new_expr != current:
+            self._on_edit_expression(idx, new_expr)
 
     def _auto_guess(self):
         if self._on_auto_guess:

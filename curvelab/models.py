@@ -63,9 +63,33 @@ MODEL_REGISTRY: dict[str, type] = {
     "Doniach": DoniachModel,
     "Sine": SineModel,
     "Constant": ConstantModel,
+    "Expression": None,  # Sentinel: requires expression string at creation time
 }
 
 MODEL_NAMES: list[str] = sorted(MODEL_REGISTRY.keys())
+
+
+def create_expression_model(expr: str, prefix: str = ""):
+    """Create an ExpressionModel from a math expression string.
+
+    ExpressionModel does not support the prefix kwarg, so we bake the prefix
+    into the expression by renaming parameter names (e.g. a -> expr1_a).
+    """
+    if not prefix:
+        return ExpressionModel(expr, independent_vars=["x"])
+
+    import re
+
+    # Discover parameter names from an unprefixed model
+    tmp = ExpressionModel(expr, independent_vars=["x"])
+    params = set(tmp.param_names)
+
+    # Replace each param with prefixed version (longest first to avoid partial matches)
+    prefixed_expr = expr
+    for p in sorted(params, key=len, reverse=True):
+        prefixed_expr = re.sub(r"\b" + re.escape(p) + r"\b", prefix + p, prefixed_expr)
+
+    return ExpressionModel(prefixed_expr, independent_vars=["x"])
 
 
 def create_model(name: str, prefix: str = ""):

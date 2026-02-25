@@ -6,7 +6,7 @@ import numpy as np
 from lmfit import CompositeModel, Model, Parameters
 from lmfit.model import ModelResult
 
-from .models import create_model
+from .models import create_expression_model, create_model
 
 
 @dataclass
@@ -16,6 +16,7 @@ class FitComponent:
     name: str  # Registry name, e.g. "Gaussian"
     prefix: str  # e.g. "gauss1_"
     operator: str = "+"  # "+" (sum) or "*" (multiply); ignored for first component
+    expression: str = ""  # Only used when name == "Expression"
 
 
 @dataclass
@@ -44,7 +45,9 @@ class FitManager:
         self._params: Parameters | None = None
         self._last_result: ModelResult | None = None
 
-    def add_component(self, model_name: str, operator: str = "+") -> FitComponent:
+    def add_component(
+        self, model_name: str, operator: str = "+", expression: str = ""
+    ) -> FitComponent:
         """Add a model component. operator is '+' or '*'; ignored for first component."""
         # Count existing components with this base name to generate prefix
         count = sum(1 for c in self.components if c.name == model_name) + 1
@@ -58,7 +61,9 @@ class FitManager:
                 old.prefix = f"{old.name.lower()}1_"
             prefix = f"{model_name.lower()}{count}_"
 
-        comp = FitComponent(name=model_name, prefix=prefix, operator=operator)
+        comp = FitComponent(
+            name=model_name, prefix=prefix, operator=operator, expression=expression
+        )
         self.components.append(comp)
         self._rebuild_model()
         return comp
@@ -71,6 +76,14 @@ class FitManager:
             if len(self.components) == 1:
                 self.components[0].prefix = ""
             self._rebuild_model()
+
+    def edit_expression(self, index: int, new_expr: str):
+        """Update the expression of an Expression component and rebuild."""
+        if 0 <= index < len(self.components):
+            comp = self.components[index]
+            if comp.name == "Expression":
+                comp.expression = new_expr
+                self._rebuild_model()
 
     def clear_components(self):
         self.components.clear()
@@ -87,7 +100,10 @@ class FitManager:
 
         models = []
         for comp in self.components:
-            m = create_model(comp.name, prefix=comp.prefix)
+            if comp.name == "Expression":
+                m = create_expression_model(comp.expression, prefix=comp.prefix)
+            else:
+                m = create_model(comp.name, prefix=comp.prefix)
             models.append(m)
 
         self._model = models[0]
@@ -97,6 +113,11 @@ class FitManager:
             else:
                 self._model = self._model + m
         self._params = self._model.make_params()
+
+        # ExpressionModel params default to -inf; set to 1.0 so fits don't NaN
+        for par in self._params.values():
+            if par.value == float("-inf"):
+                par.set(value=1.0)
 
     @property
     def model(self) -> Model | None:
@@ -113,8 +134,16 @@ class FitManager:
 
         self._params = self._model.make_params()
 
+        # ExpressionModel params default to -inf; set to 1.0 so fits don't NaN
+        for par in self._params.values():
+            if par.value == float("-inf"):
+                par.set(value=1.0)
+
         for comp in self.components:
-            m = create_model(comp.name, prefix=comp.prefix)
+            if comp.name == "Expression":
+                m = create_expression_model(comp.expression, prefix=comp.prefix)
+            else:
+                m = create_model(comp.name, prefix=comp.prefix)
             try:
                 guessed = m.guess(y, x=x)
                 for pname, par in guessed.items():
@@ -132,7 +161,7 @@ class FitManager:
         """Copy this manager's component list into target, rebuilding its model."""
         target.clear_components()
         for comp in self.components:
-            target.add_component(comp.name, operator=comp.operator)
+            target.add_component(comp.name, operator=comp.operator, expression=comp.expression)
 
     def set_param(self, name: str, **kwargs):
         """Set parameter attributes (value, min, max, vary)."""
