@@ -1,0 +1,874 @@
+"""All tkinter panel widgets: DataPanel, PlotControlPanel, FitPanel, FontDialog."""
+
+import tkinter as tk
+from tkinter import ttk, filedialog, simpledialog
+import tkinter.font as tkfont
+
+from .models import MODEL_NAMES
+
+# Marker choices for the style dropdown
+MARKERS = ["o", "s", "^", "v", "D", "x", "+", ".", "*", "h"]
+LINESTYLES = ["None", "-", "--", "-.", ":"]
+COLORS = [
+    "", "xkcd:blue", "xkcd:red", "xkcd:green", "xkcd:orange", "xkcd:purple",
+    "xkcd:brown", "xkcd:black", "xkcd:cyan", "xkcd:magenta", "xkcd:teal",
+    "xkcd:sky blue", "xkcd:olive", "xkcd:coral", "xkcd:lavender",
+]
+
+
+class DataPanel(ttk.LabelFrame):
+    """File loading, dataset selection, column selection, series list, and style controls."""
+
+    def __init__(
+        self,
+        parent,
+        on_load=None,
+        on_add_series=None,
+        on_plot=None,
+        on_dataset_selected=None,
+        on_remove_dataset=None,
+    ):
+        super().__init__(parent, text="Data", padding=5)
+        self._on_load = on_load
+        self._on_add_series = on_add_series
+        self._on_plot = on_plot
+        self._on_dataset_selected = on_dataset_selected
+        self._on_remove_dataset = on_remove_dataset
+        self._series_items = []  # list of dicts describing each series
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # --- Load button ---
+        ttk.Button(self, text="Load File...", command=self._load_file).pack(
+            fill=tk.X, pady=(0, 5)
+        )
+
+        # --- Dataset selector ---
+        ds_frame = ttk.Frame(self)
+        ds_frame.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(ds_frame, text="Dataset:").pack(side=tk.LEFT)
+        self.dataset_var = tk.StringVar()
+        self.dataset_combo = ttk.Combobox(
+            ds_frame, textvariable=self.dataset_var, state="readonly", width=15
+        )
+        self.dataset_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        self.dataset_combo.bind("<<ComboboxSelected>>", self._dataset_selected)
+
+        ttk.Button(ds_frame, text="Remove", command=self._remove_dataset, width=7).pack(
+            side=tk.LEFT
+        )
+
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+
+        # --- Column selection ---
+        col_frame = ttk.Frame(self)
+        col_frame.pack(fill=tk.X)
+
+        ttk.Label(col_frame, text="X:").grid(row=0, column=0, sticky=tk.W)
+        self.x_var = tk.StringVar()
+        self.x_combo = ttk.Combobox(
+            col_frame, textvariable=self.x_var, state="readonly", width=15
+        )
+        self.x_combo.grid(row=0, column=1, sticky=tk.EW, padx=2)
+
+        ttk.Label(col_frame, text="Y:").grid(row=1, column=0, sticky=tk.W)
+        self.y_var = tk.StringVar()
+        self.y_combo = ttk.Combobox(
+            col_frame, textvariable=self.y_var, state="readonly", width=15
+        )
+        self.y_combo.grid(row=1, column=1, sticky=tk.EW, padx=2)
+
+        ttk.Label(col_frame, text="Y err:").grid(row=2, column=0, sticky=tk.W)
+        self.yerr_var = tk.StringVar()
+        self.yerr_combo = ttk.Combobox(
+            col_frame, textvariable=self.yerr_var, state="readonly", width=15
+        )
+        self.yerr_combo.grid(row=2, column=1, sticky=tk.EW, padx=2)
+
+        ttk.Label(col_frame, text="X err:").grid(row=3, column=0, sticky=tk.W)
+        self.xerr_var = tk.StringVar()
+        self.xerr_combo = ttk.Combobox(
+            col_frame, textvariable=self.xerr_var, state="readonly", width=15
+        )
+        self.xerr_combo.grid(row=3, column=1, sticky=tk.EW, padx=2)
+
+        col_frame.columnconfigure(1, weight=1)
+
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+
+        # --- Style controls ---
+        style_frame = ttk.Frame(self)
+        style_frame.pack(fill=tk.X)
+
+        ttk.Label(style_frame, text="Marker:").grid(row=0, column=0, sticky=tk.W)
+        self.marker_var = tk.StringVar(value="o")
+        ttk.Combobox(
+            style_frame,
+            textvariable=self.marker_var,
+            values=MARKERS,
+            state="readonly",
+            width=5,
+        ).grid(row=0, column=1, padx=2)
+
+        ttk.Label(style_frame, text="Line:").grid(row=0, column=2, sticky=tk.W)
+        self.line_var = tk.StringVar(value="None")
+        ttk.Combobox(
+            style_frame,
+            textvariable=self.line_var,
+            values=LINESTYLES,
+            state="readonly",
+            width=5,
+        ).grid(row=0, column=3, padx=2)
+
+        ttk.Label(style_frame, text="Color:").grid(row=1, column=0, sticky=tk.W)
+        self.color_var = tk.StringVar(value="")
+        ttk.Combobox(
+            style_frame,
+            textvariable=self.color_var,
+            values=COLORS,
+            state="readonly",
+            width=8,
+        ).grid(row=1, column=1, columnspan=3, sticky=tk.W, padx=2)
+
+        ttk.Label(style_frame, text="Label:").grid(row=2, column=0, sticky=tk.W)
+        self.label_var = tk.StringVar()
+        ttk.Entry(style_frame, textvariable=self.label_var, width=15).grid(
+            row=2, column=1, columnspan=3, sticky=tk.EW, padx=2
+        )
+
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=5)
+
+        # --- Add Series / Remove / Plot buttons ---
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=tk.X)
+        ttk.Button(btn_frame, text="Add Series", command=self._add_series).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        )
+        ttk.Button(btn_frame, text="Remove", command=self._remove_series).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        )
+        ttk.Button(btn_frame, text="Plot", command=self._plot).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
+        )
+
+        # --- Series list ---
+        self.series_listbox = tk.Listbox(self, height=4)
+        self.series_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+
+    def _load_file(self):
+        filepath = filedialog.askopenfilename(
+            filetypes=[
+                ("All supported", "*.csv *.tsv *.xlsx *.xls *.json *.parquet"),
+                ("CSV", "*.csv"),
+                ("TSV", "*.tsv"),
+                ("Excel", "*.xlsx *.xls"),
+                ("JSON", "*.json"),
+                ("Parquet", "*.parquet"),
+                ("All files", "*.*"),
+            ]
+        )
+        if filepath and self._on_load:
+            self._on_load(filepath)
+
+    def _dataset_selected(self, event=None):
+        if self._on_dataset_selected:
+            self._on_dataset_selected(self.dataset_var.get())
+
+    def _remove_dataset(self):
+        name = self.dataset_var.get()
+        if name and self._on_remove_dataset:
+            self._on_remove_dataset(name)
+
+    def set_datasets(self, names: list[str], select: str = ""):
+        """Update the dataset dropdown."""
+        self.dataset_combo["values"] = names
+        if select and select in names:
+            self.dataset_var.set(select)
+        elif names:
+            self.dataset_var.set(names[0])
+        else:
+            self.dataset_var.set("")
+
+    def set_columns(self, columns: list[str], filename: str = ""):
+        """Populate dropdowns with column names."""
+        err_columns = [""] + columns
+        self.x_combo["values"] = columns
+        self.y_combo["values"] = columns
+        self.yerr_combo["values"] = err_columns
+        self.xerr_combo["values"] = err_columns
+        if columns:
+            self.x_var.set(columns[0])
+            self.y_var.set(columns[1] if len(columns) > 1 else columns[0])
+        else:
+            self.x_var.set("")
+            self.y_var.set("")
+        self.yerr_var.set("")
+        self.xerr_var.set("")
+
+    def _add_series(self):
+        if not self.x_var.get() or not self.y_var.get():
+            return
+        dataset = self.dataset_var.get()
+        if not dataset:
+            return
+        series_info = {
+            "dataset": dataset,
+            "x": self.x_var.get(),
+            "y": self.y_var.get(),
+            "yerr": self.yerr_var.get() or None,
+            "xerr": self.xerr_var.get() or None,
+            "marker": self.marker_var.get(),
+            "linestyle": self.line_var.get(),
+            "color": self.color_var.get(),
+            "label": self.label_var.get() or self.y_var.get(),
+        }
+        self._series_items.append(series_info)
+        self.series_listbox.insert(
+            tk.END, f"{dataset}::{series_info['x']} vs {series_info['y']}"
+        )
+        if self._on_add_series:
+            self._on_add_series(series_info)
+
+    def _remove_series(self):
+        sel = self.series_listbox.curselection()
+        if sel:
+            idx = sel[0]
+            self.series_listbox.delete(idx)
+            self._series_items.pop(idx)
+
+    def _plot(self):
+        if self._on_plot:
+            self._on_plot(self._series_items)
+
+    @property
+    def series_list(self) -> list[dict]:
+        return list(self._series_items)
+
+
+class PlotControlPanel(ttk.Frame):
+    """Scale, grid, equal axes, legend controls."""
+
+    def __init__(
+        self,
+        parent,
+        on_xscale=None,
+        on_yscale=None,
+        on_grid=None,
+        on_equal=None,
+        on_legend=None,
+        on_show_params_toggled=None,
+        on_residuals_toggled=None,
+        on_confidence_band_toggled=None,
+        on_axis_labels=None,
+    ):
+        super().__init__(parent, padding=5)
+        self._on_xscale = on_xscale
+        self._on_yscale = on_yscale
+        self._on_grid = on_grid
+        self._on_equal = on_equal
+        self._on_legend = on_legend
+        self._on_show_params_toggled = on_show_params_toggled
+        self._on_residuals_toggled = on_residuals_toggled
+        self._on_confidence_band_toggled = on_confidence_band_toggled
+        self._on_axis_labels = on_axis_labels
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # --- Row 1: Scale, toggles ---
+        row1 = ttk.Frame(self)
+        row1.pack(fill=tk.X)
+
+        ttk.Label(row1, text="X:").pack(side=tk.LEFT)
+        self.xscale_var = tk.StringVar(value="linear")
+        xscale = ttk.Combobox(
+            row1,
+            textvariable=self.xscale_var,
+            values=["linear", "log"],
+            state="readonly",
+            width=6,
+        )
+        xscale.pack(side=tk.LEFT, padx=(0, 10))
+        xscale.bind("<<ComboboxSelected>>", lambda e: self._fire_xscale())
+
+        ttk.Label(row1, text="Y:").pack(side=tk.LEFT)
+        self.yscale_var = tk.StringVar(value="linear")
+        yscale = ttk.Combobox(
+            row1,
+            textvariable=self.yscale_var,
+            values=["linear", "log"],
+            state="readonly",
+            width=6,
+        )
+        yscale.pack(side=tk.LEFT, padx=(0, 10))
+        yscale.bind("<<ComboboxSelected>>", lambda e: self._fire_yscale())
+
+        self.grid_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            row1, text="Grid", variable=self.grid_var, command=self._fire_grid
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.equal_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            row1, text="Equal Axes", variable=self.equal_var, command=self._fire_equal
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.legend_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            row1, text="Legend", variable=self.legend_var, command=self._fire_legend
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.show_params_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            row1, text="Params", variable=self.show_params_var,
+            command=self._fire_show_params,
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.fit_visible_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            row1, text="Fit visible range", variable=self.fit_visible_var,
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.residuals_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            row1, text="Residuals", variable=self.residuals_var,
+            command=self._fire_residuals,
+        ).pack(side=tk.LEFT, padx=5)
+
+        self.confidence_band_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            row1, text="Conf. band", variable=self.confidence_band_var,
+            command=self._fire_confidence_band,
+        ).pack(side=tk.LEFT, padx=5)
+
+        # --- Row 2: Axis labels ---
+        row2 = ttk.Frame(self)
+        row2.pack(fill=tk.X, pady=(2, 0))
+
+        self.xlabel_var = tk.StringVar()
+        self.ylabel_var = tk.StringVar()
+
+        ttk.Label(row2, text="X Label:").pack(side=tk.LEFT)
+        xlabel_entry = ttk.Entry(row2, textvariable=self.xlabel_var, width=15)
+        xlabel_entry.pack(side=tk.LEFT, padx=(0, 10))
+        xlabel_entry.bind("<Return>", lambda e: self._fire_axis_labels())
+        xlabel_entry.bind("<FocusOut>", lambda e: self._fire_axis_labels())
+
+        ttk.Label(row2, text="Y Label:").pack(side=tk.LEFT)
+        ylabel_entry = ttk.Entry(row2, textvariable=self.ylabel_var, width=15)
+        ylabel_entry.pack(side=tk.LEFT, padx=(0, 10))
+        ylabel_entry.bind("<Return>", lambda e: self._fire_axis_labels())
+        ylabel_entry.bind("<FocusOut>", lambda e: self._fire_axis_labels())
+
+    def _fire_xscale(self):
+        if self._on_xscale:
+            self._on_xscale(self.xscale_var.get())
+
+    def _fire_yscale(self):
+        if self._on_yscale:
+            self._on_yscale(self.yscale_var.get())
+
+    def _fire_grid(self):
+        if self._on_grid:
+            self._on_grid(self.grid_var.get())
+
+    def _fire_equal(self):
+        if self._on_equal:
+            self._on_equal(self.equal_var.get())
+
+    def _fire_legend(self):
+        if self._on_legend:
+            self._on_legend(self.legend_var.get())
+
+    def _fire_show_params(self):
+        if self._on_show_params_toggled:
+            self._on_show_params_toggled(self.show_params_var.get())
+
+    def _fire_residuals(self):
+        if self._on_residuals_toggled:
+            self._on_residuals_toggled(self.residuals_var.get())
+
+    def _fire_confidence_band(self):
+        if self._on_confidence_band_toggled:
+            self._on_confidence_band_toggled(self.confidence_band_var.get())
+
+    def _fire_axis_labels(self):
+        if self._on_axis_labels:
+            self._on_axis_labels(self.xlabel_var.get(), self.ylabel_var.get())
+
+
+class FitPanel(ttk.LabelFrame):
+    """Model selection, component management, parameter editing, fit controls."""
+
+    def __init__(
+        self,
+        parent,
+        on_add_component=None,
+        on_remove_component=None,
+        on_auto_guess=None,
+        on_fit=None,
+        on_clear_fit=None,
+        on_param_changed=None,
+        on_series_selected=None,
+        on_session_selected=None,
+        on_new_session=None,
+        on_rename_session=None,
+        on_delete_session=None,
+        on_batch_fit=None,
+    ):
+        super().__init__(parent, text="Fit", padding=5)
+        self._on_add_component = on_add_component
+        self._on_remove_component = on_remove_component
+        self._on_auto_guess = on_auto_guess
+        self._on_fit = on_fit
+        self._on_clear_fit = on_clear_fit
+        self._on_param_changed = on_param_changed
+        self._on_series_selected = on_series_selected
+        self._on_session_selected = on_session_selected
+        self._on_new_session = on_new_session
+        self._on_rename_session = on_rename_session
+        self._on_delete_session = on_delete_session
+        self._on_batch_fit = on_batch_fit
+
+        self._build_ui()
+
+    def _build_ui(self):
+        # --- Series selector ---
+        series_frame = ttk.Frame(self)
+        series_frame.pack(fill=tk.X, pady=(0, 3))
+
+        ttk.Label(series_frame, text="Series:").pack(side=tk.LEFT)
+        self.series_var = tk.StringVar()
+        self.series_combo = ttk.Combobox(
+            series_frame, textvariable=self.series_var, state="readonly", width=20
+        )
+        self.series_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        self.series_combo.bind("<<ComboboxSelected>>", self._series_selected)
+
+        # --- Session controls ---
+        sess_label_frame = ttk.Frame(self)
+        sess_label_frame.pack(fill=tk.X)
+        ttk.Label(sess_label_frame, text="Fit Sessions:").pack(side=tk.LEFT)
+
+        self.session_listbox = tk.Listbox(self, height=3, exportselection=False)
+        self.session_listbox.pack(fill=tk.X, pady=2)
+        self.session_listbox.bind("<<ListboxSelect>>", self._session_selected)
+
+        sess_btn_frame = ttk.Frame(self)
+        sess_btn_frame.pack(fill=tk.X, pady=(0, 3))
+        ttk.Button(sess_btn_frame, text="New", command=self._new_session).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        )
+        ttk.Button(sess_btn_frame, text="Rename", command=self._rename_session).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        )
+        ttk.Button(sess_btn_frame, text="Delete", command=self._delete_session).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
+        )
+
+        ttk.Separator(self, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=3)
+
+        # --- Model selection ---
+        model_frame = ttk.Frame(self)
+        model_frame.pack(fill=tk.X)
+
+        ttk.Label(model_frame, text="Model:").pack(side=tk.LEFT)
+        self.model_var = tk.StringVar(value=MODEL_NAMES[0])
+        ttk.Combobox(
+            model_frame,
+            textvariable=self.model_var,
+            values=MODEL_NAMES,
+            state="readonly",
+            width=18,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+        # --- Operator + Component buttons ---
+        op_frame = ttk.Frame(self)
+        op_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(op_frame, text="Op:").pack(side=tk.LEFT)
+        self.operator_var = tk.StringVar(value="+")
+        ttk.Combobox(
+            op_frame,
+            textvariable=self.operator_var,
+            values=["+", "*"],
+            state="readonly",
+            width=3,
+        ).pack(side=tk.LEFT, padx=2)
+
+        comp_btn_frame = ttk.Frame(self)
+        comp_btn_frame.pack(fill=tk.X, pady=3)
+        ttk.Button(
+            comp_btn_frame, text="Add Component", command=self._add_component
+        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        ttk.Button(
+            comp_btn_frame, text="Remove", command=self._remove_component
+        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+
+        # --- Component list ---
+        self.comp_listbox = tk.Listbox(self, height=3)
+        self.comp_listbox.pack(fill=tk.X, pady=3)
+
+        # --- Fit buttons ---
+        fit_btn_frame = ttk.Frame(self)
+        fit_btn_frame.pack(fill=tk.X, pady=3)
+        ttk.Button(fit_btn_frame, text="Auto Guess", command=self._auto_guess).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        )
+        ttk.Button(fit_btn_frame, text="Fit", command=self._fit).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        )
+        ttk.Button(fit_btn_frame, text="Batch Fit", command=self._batch_fit).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        )
+        ttk.Button(fit_btn_frame, text="Clear", command=self._clear_fit).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
+        )
+
+    def _series_selected(self, event=None):
+        if self._on_series_selected:
+            self._on_series_selected(self.series_var.get())
+
+    def _session_selected(self, event=None):
+        sel = self.session_listbox.curselection()
+        if sel and self._on_session_selected:
+            name = self.session_listbox.get(sel[0])
+            self._on_session_selected(name)
+
+    def _new_session(self):
+        name = simpledialog.askstring("New Fit Session", "Session name:", parent=self)
+        if name and self._on_new_session:
+            self._on_new_session(name.strip())
+
+    def _rename_session(self):
+        sel = self.session_listbox.curselection()
+        if not sel:
+            return
+        old_name = self.session_listbox.get(sel[0])
+        new_name = simpledialog.askstring(
+            "Rename Session", "New name:", initialvalue=old_name, parent=self
+        )
+        if new_name and new_name.strip() != old_name and self._on_rename_session:
+            self._on_rename_session(old_name, new_name.strip())
+
+    def _delete_session(self):
+        sel = self.session_listbox.curselection()
+        if sel and self._on_delete_session:
+            name = self.session_listbox.get(sel[0])
+            self._on_delete_session(name)
+
+    def set_series_list(self, series_ids: list[str], select: str = ""):
+        """Update the series combobox."""
+        self.series_combo["values"] = series_ids
+        if select and select in series_ids:
+            self.series_var.set(select)
+        elif series_ids:
+            self.series_var.set(series_ids[0])
+        else:
+            self.series_var.set("")
+
+    def set_sessions(self, session_names: list[str], select: str = ""):
+        """Update the session listbox."""
+        self.session_listbox.delete(0, tk.END)
+        for name in session_names:
+            self.session_listbox.insert(tk.END, name)
+        if select and select in session_names:
+            idx = session_names.index(select)
+            self.session_listbox.selection_set(idx)
+            self.session_listbox.see(idx)
+
+    def _add_component(self):
+        name = self.model_var.get()
+        if name and self._on_add_component:
+            self._on_add_component(name, self.operator_var.get())
+
+    def _remove_component(self):
+        sel = self.comp_listbox.curselection()
+        if sel and self._on_remove_component:
+            self._on_remove_component(sel[0])
+
+    def _auto_guess(self):
+        if self._on_auto_guess:
+            self._on_auto_guess()
+
+    def _fit(self):
+        if self._on_fit:
+            self._on_fit()
+
+    def _batch_fit(self):
+        if self._on_batch_fit:
+            self._on_batch_fit()
+
+    def _clear_fit(self):
+        if self._on_clear_fit:
+            self._on_clear_fit()
+
+    def set_components(self, components: list[str]):
+        """Update the component listbox."""
+        self.comp_listbox.delete(0, tk.END)
+        for c in components:
+            self.comp_listbox.insert(tk.END, c)
+
+
+class FitResultsPanel(ttk.LabelFrame):
+    """Parameter table and fit report display."""
+
+    def __init__(self, parent, on_param_edited=None):
+        super().__init__(parent, text="Fit Results", padding=5)
+        self._on_param_edited = on_param_edited
+        self._editing_entry = None
+        self._build_ui()
+
+    def _build_ui(self):
+        # --- Parameter Treeview ---
+        columns = ("value", "stderr", "min", "max", "vary")
+        self.param_tree = ttk.Treeview(
+            self, columns=columns, show="headings", height=6
+        )
+        self.param_tree.heading("value", text="Value")
+        self.param_tree.heading("stderr", text="StdErr")
+        self.param_tree.heading("min", text="Min")
+        self.param_tree.heading("max", text="Max")
+        self.param_tree.heading("vary", text="Vary")
+
+        self.param_tree.column("value", width=80)
+        self.param_tree.column("stderr", width=80)
+        self.param_tree.column("min", width=60)
+        self.param_tree.column("max", width=60)
+        self.param_tree.column("vary", width=40)
+
+        # Add Name as a "tree" column
+        self.param_tree["show"] = ("tree", "headings")
+        self.param_tree.column("#0", width=200, stretch=False)
+        self.param_tree.heading("#0", text="Name")
+
+        # Alternating row colors
+        self.param_tree.tag_configure("even", background="#f0f0f0")
+        self.param_tree.tag_configure("odd", background="#ffffff")
+
+        tree_scroll = ttk.Scrollbar(
+            self, orient=tk.VERTICAL, command=self.param_tree.yview
+        )
+        self.param_tree.configure(yscrollcommand=tree_scroll.set)
+        self.param_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Double-click to edit
+        self.param_tree.bind("<Double-1>", self._on_double_click)
+
+        # --- Fit report ---
+        ttk.Label(self, text="Fit Report:").pack(anchor=tk.W, pady=(5, 0))
+        self.report_text = tk.Text(self, height=8, wrap=tk.WORD, state=tk.DISABLED)
+        report_scroll = ttk.Scrollbar(
+            self, orient=tk.VERTICAL, command=self.report_text.yview
+        )
+        self.report_text.configure(yscrollcommand=report_scroll.set)
+        self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        report_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def set_params(self, params: dict[str, dict]):
+        """Populate parameter table from param info dicts."""
+        self.param_tree.delete(*self.param_tree.get_children())
+        for i, (name, info) in enumerate(params.items()):
+            val = f"{info['value']:.6g}" if info["value"] is not None else ""
+            stderr = f"{info['stderr']:.6g}" if info.get("stderr") is not None else ""
+            mn = f"{info['min']:.6g}" if info["min"] not in (None, float("-inf")) else "-inf"
+            mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
+            vary = "Yes" if info.get("vary", True) else "No"
+            tag = "even" if i % 2 == 0 else "odd"
+            self.param_tree.insert("", tk.END, text=name, values=(val, stderr, mn, mx, vary), tags=(tag,))
+
+    def set_report(self, report: str):
+        self.report_text.config(state=tk.NORMAL)
+        self.report_text.delete("1.0", tk.END)
+        self.report_text.insert("1.0", report)
+        self.report_text.config(state=tk.DISABLED)
+
+    def clear(self):
+        self.param_tree.delete(*self.param_tree.get_children())
+        self.report_text.config(state=tk.NORMAL)
+        self.report_text.delete("1.0", tk.END)
+        self.report_text.config(state=tk.DISABLED)
+
+    def _on_double_click(self, event):
+        """Handle double-click to edit a cell in the parameter treeview."""
+        region = self.param_tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+
+        item = self.param_tree.identify_row(event.y)
+        column = self.param_tree.identify_column(event.x)
+        if not item or not column:
+            return
+
+        # column is like "#1", "#2", etc.
+        col_idx = int(column.replace("#", "")) - 1
+        col_names = ("value", "stderr", "min", "max", "vary")
+        if col_idx < 0 or col_idx >= len(col_names):
+            return
+
+        col_name = col_names[col_idx]
+        # Only allow editing value, min, max, vary
+        if col_name not in ("value", "min", "max", "vary"):
+            return
+
+        # Get cell bbox
+        bbox = self.param_tree.bbox(item, column)
+        if not bbox:
+            return
+
+        current_val = self.param_tree.set(item, column)
+        param_name = self.param_tree.item(item, "text")
+
+        # Create entry overlay
+        if self._editing_entry:
+            self._editing_entry.destroy()
+
+        entry = ttk.Entry(self.param_tree, width=10)
+        entry.place(x=bbox[0], y=bbox[1], width=bbox[2], height=bbox[3])
+        entry.insert(0, current_val)
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+        self._editing_entry = entry
+
+        def commit(e=None):
+            new_val = entry.get()
+            entry.destroy()
+            self._editing_entry = None
+            self.param_tree.set(item, column, new_val)
+            if self._on_param_edited:
+                self._on_param_edited(param_name, col_name, new_val)
+
+        def cancel(e=None):
+            entry.destroy()
+            self._editing_entry = None
+
+        entry.bind("<Return>", commit)
+        entry.bind("<Escape>", cancel)
+        entry.bind("<FocusOut>", commit)
+
+
+class FontDialog(tk.Toplevel):
+    """Dialog for setting UI and plot fonts."""
+
+    SIZES = [7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24]
+
+    def __init__(self, parent, ui_family="", ui_size=10, plot_family="", plot_size=10, on_apply=None):
+        super().__init__(parent)
+        self.title("Font Settings")
+        self.resizable(False, False)
+        self.transient(parent)
+        self.grab_set()
+
+        self._on_apply = on_apply
+        families = sorted(tkfont.families())
+
+        # --- UI Font ---
+        ui_frame = ttk.LabelFrame(self, text="UI Font", padding=10)
+        ui_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        ttk.Label(ui_frame, text="Family:").grid(row=0, column=0, sticky=tk.W)
+        self.ui_family_var = tk.StringVar(value=ui_family)
+        ui_fam = ttk.Combobox(ui_frame, textvariable=self.ui_family_var, values=families, width=25)
+        ui_fam.grid(row=0, column=1, padx=5, pady=2)
+
+        ttk.Label(ui_frame, text="Size:").grid(row=1, column=0, sticky=tk.W)
+        self.ui_size_var = tk.IntVar(value=ui_size)
+        ttk.Combobox(
+            ui_frame, textvariable=self.ui_size_var, values=self.SIZES, width=5
+        ).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+
+        # --- Plot Font ---
+        plot_frame = ttk.LabelFrame(self, text="Plot Font", padding=10)
+        plot_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(plot_frame, text="Family:").grid(row=0, column=0, sticky=tk.W)
+        self.plot_family_var = tk.StringVar(value=plot_family)
+        plot_fam = ttk.Combobox(plot_frame, textvariable=self.plot_family_var, values=families, width=25)
+        plot_fam.grid(row=0, column=1, padx=5, pady=2)
+
+        ttk.Label(plot_frame, text="Size:").grid(row=1, column=0, sticky=tk.W)
+        self.plot_size_var = tk.IntVar(value=plot_size)
+        ttk.Combobox(
+            plot_frame, textvariable=self.plot_size_var, values=self.SIZES, width=5
+        ).grid(row=1, column=1, sticky=tk.W, padx=5, pady=2)
+
+        # --- Buttons ---
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Button(btn_frame, text="Apply", command=self._apply).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+
+    def _apply(self):
+        if self._on_apply:
+            self._on_apply(
+                ui_family=self.ui_family_var.get(),
+                ui_size=self.ui_size_var.get(),
+                plot_family=self.plot_family_var.get(),
+                plot_size=self.plot_size_var.get(),
+            )
+        self.destroy()
+
+
+class ModelComparisonDialog(tk.Toplevel):
+    """Side-by-side comparison of fit sessions: AIC, BIC, reduced chi-squared."""
+
+    def __init__(self, parent, rows: list[dict]):
+        """rows: list of dicts with keys session, model, n_params, chisqr, redchi, aic, bic."""
+        super().__init__(parent)
+        self.title("Model Comparison")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("700x300")
+
+        columns = ("model", "n_params", "chisqr", "redchi", "aic", "bic")
+        tree = ttk.Treeview(self, columns=columns, show=("tree", "headings"), height=10)
+        tree.column("#0", width=120, stretch=False)
+        tree.heading("#0", text="Session")
+        tree.heading("model", text="Model")
+        tree.column("model", width=150)
+        tree.heading("n_params", text="N params")
+        tree.column("n_params", width=70)
+        tree.heading("chisqr", text="\u03c7\u00b2")
+        tree.column("chisqr", width=90)
+        tree.heading("redchi", text="\u03c7\u00b2/\u03bd")
+        tree.column("redchi", width=90)
+        tree.heading("aic", text="AIC")
+        tree.column("aic", width=90)
+        tree.heading("bic", text="BIC")
+        tree.column("bic", width=90)
+
+        tree.tag_configure("best_aic", background="#d4edda")
+        tree.tag_configure("even", background="#f0f0f0")
+        tree.tag_configure("odd", background="#ffffff")
+
+        # Find best AIC for highlighting
+        aic_vals = [r["aic"] for r in rows if r["aic"] is not None]
+        best_aic = min(aic_vals) if aic_vals else None
+
+        for i, r in enumerate(rows):
+            tags = []
+            if best_aic is not None and r["aic"] == best_aic:
+                tags.append("best_aic")
+            else:
+                tags.append("even" if i % 2 == 0 else "odd")
+            tree.insert(
+                "", tk.END, text=r["session"],
+                values=(
+                    r["model"],
+                    r["n_params"],
+                    f"{r['chisqr']:.4g}" if r["chisqr"] is not None else "",
+                    f"{r['redchi']:.4g}" if r["redchi"] is not None else "",
+                    f"{r['aic']:.4g}" if r["aic"] is not None else "",
+                    f"{r['bic']:.4g}" if r["bic"] is not None else "",
+                ),
+                tags=tuple(tags),
+            )
+
+        scroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
