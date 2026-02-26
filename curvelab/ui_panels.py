@@ -150,12 +150,17 @@ class DataPanel(ttk.LabelFrame):
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
         ttk.Button(btn_frame, text="Plot", command=self._plot).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        )
+
+        ttk.Button(btn_frame, text="Update Style", command=self._update_series_style).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
         )
 
         # --- Series list ---
-        self.series_listbox = tk.Listbox(self, height=4)
+        self.series_listbox = tk.Listbox(self, height=4, exportselection=False)
         self.series_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
+        self.series_listbox.bind("<<ListboxSelect>>", self._on_select_series)
 
     def _load_file(self):
         filepath = filedialog.askopenfilename(
@@ -230,6 +235,33 @@ class DataPanel(ttk.LabelFrame):
         )
         if self._on_add_series:
             self._on_add_series(series_info)
+
+    def _on_select_series(self, event=None):
+        sel = self.series_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        info = self._series_items[idx]
+        self.marker_var.set(info.get("marker", "o"))
+        self.line_var.set(info.get("linestyle", "None"))
+        self.color_var.set(info.get("color", ""))
+        self.label_var.set(info.get("label", ""))
+
+    def _update_series_style(self):
+        sel = self.series_listbox.curselection()
+        if not sel:
+            return
+        idx = sel[0]
+        info = self._series_items[idx]
+        info["marker"] = self.marker_var.get()
+        info["linestyle"] = self.line_var.get()
+        info["color"] = self.color_var.get()
+        info["label"] = self.label_var.get() or info.get("y", "")
+        self.series_listbox.delete(idx)
+        self.series_listbox.insert(idx, f"{info['dataset']}::{info['x']} vs {info['y']}")
+        self.series_listbox.selection_set(idx)
+        if self._on_plot:
+            self._on_plot(self._series_items)
 
     def _remove_series(self):
         sel = self.series_listbox.curselection()
