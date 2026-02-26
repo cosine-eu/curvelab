@@ -2,7 +2,6 @@
 
 import csv
 import json
-import math
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
@@ -17,6 +16,7 @@ from .ui_panels import (
     DataPanel, PlotControlPanel, FitPanel, FitResultsPanel,
     FontDialog, ModelComparisonDialog,
 )
+from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
 
 def _make_series_id(dataset: str, x_col: str, y_col: str) -> str:
@@ -57,6 +57,7 @@ class CurveLabApp(ttk.Frame):
         self.parent.bind("<Control-Shift-Z>", self._redo_param_edit)
         self.parent.bind("<Control-s>", self._save_workspace)
         self.parent.bind("<Control-o>", self._load_workspace)
+        self.parent.bind("<Control-v>", self._on_paste_data)
 
     # --- Helper properties ---
 
@@ -171,6 +172,9 @@ class CurveLabApp(ttk.Frame):
         )
         file_menu.add_command(
             label="Load Workspace...", command=self._load_workspace, accelerator="Ctrl+O"
+        )
+        file_menu.add_command(
+            label="Paste Data", command=self._on_paste_data, accelerator="Ctrl+V"
         )
         file_menu.add_separator()
         file_menu.add_command(label="Export Parameters...", command=self._export_params)
@@ -381,6 +385,21 @@ class CurveLabApp(ttk.Frame):
             self.data_panel.set_columns(columns)
         except Exception as e:
             messagebox.showerror("Load Error", str(e))
+
+    def _on_paste_data(self, event=None):
+        try:
+            text = self.parent.clipboard_get()
+        except tk.TclError:
+            messagebox.showwarning("Paste Data", "Clipboard is empty.")
+            return
+        try:
+            dataset_name, columns = self.data_mgr.load_from_text(text)
+            self.data_panel.set_datasets(
+                self.data_mgr.dataset_names, select=dataset_name
+            )
+            self.data_panel.set_columns(columns)
+        except Exception as e:
+            messagebox.showerror("Paste Error", str(e))
 
     def _on_dataset_selected(self, name: str):
         columns = self.data_mgr.column_names(name)
@@ -921,62 +940,6 @@ class CurveLabApp(ttk.Frame):
 
     # --- Workspace persistence ---
 
-    class _WorkspaceEncoder(json.JSONEncoder):
-        """JSON encoder that handles numpy arrays and special float values."""
-
-        def default(self, obj):
-            if isinstance(obj, np.ndarray):
-                return {"__ndarray__": obj.tolist()}
-            if isinstance(obj, (np.integer,)):
-                return int(obj)
-            if isinstance(obj, (np.floating,)):
-                v = float(obj)
-                if math.isinf(v):
-                    return "Infinity" if v > 0 else "-Infinity"
-                if math.isnan(v):
-                    return None
-                return v
-            if isinstance(obj, np.bool_):
-                return bool(obj)
-            return super().default(obj)
-
-    @staticmethod
-    def _encode_value(v):
-        """Recursively encode special float values in nested structures."""
-        if isinstance(v, float):
-            if math.isinf(v):
-                return "Infinity" if v > 0 else "-Infinity"
-            if math.isnan(v):
-                return None
-            return v
-        if isinstance(v, np.ndarray):
-            return {"__ndarray__": v.tolist()}
-        if isinstance(v, dict):
-            return {k: CurveLabApp._encode_value(val) for k, val in v.items()}
-        if isinstance(v, list):
-            return [CurveLabApp._encode_value(item) for item in v]
-        if isinstance(v, (np.integer,)):
-            return int(v)
-        if isinstance(v, (np.floating,)):
-            return CurveLabApp._encode_value(float(v))
-        if isinstance(v, np.bool_):
-            return bool(v)
-        return v
-
-    @staticmethod
-    def _decode_workspace(obj):
-        """JSON object_hook that restores ndarray and special floats."""
-        if "__ndarray__" in obj:
-            return np.array(obj["__ndarray__"])
-        # Restore string-encoded infinities in param dicts
-        for key in ("min", "max"):
-            if key in obj and isinstance(obj[key], str):
-                if obj[key] == "Infinity":
-                    obj[key] = float("inf")
-                elif obj[key] == "-Infinity":
-                    obj[key] = float("-inf")
-        return obj
-
     def _serialize_workspace(self) -> dict:
         """Build a workspace dict from current app state."""
         data_filepaths = {
@@ -991,19 +954,11 @@ class CurveLabApp(ttk.Frame):
                     "name": sess.name,
                     "color": sess.color,
                     "visible": sess.visible,
-                    "components": [
-                        {
-                            "name": c.name,
-                            "prefix": c.prefix,
-                            "operator": c.operator,
-                            "expression": c.expression,
-                        }
-                        for c in sess.fit_manager.components
-                    ],
+                    **sess.fit_manager.serialize(),
                 }
                 if sess.result is not None:
                     r = sess.result
-                    sess_data["result"] = self._encode_value({
+                    sess_data["result"] = encode_value({
                         "x_dense": r.x_dense,
                         "y_fit_dense": r.y_fit_dense,
                         "x_data": r.x_data,
@@ -1065,7 +1020,7 @@ class CurveLabApp(ttk.Frame):
         try:
             workspace = self._serialize_workspace()
             with open(filepath, "w") as f:
-                json.dump(workspace, f, cls=self._WorkspaceEncoder, indent=2)
+                json.dump(workspace, f, cls=WorkspaceEncoder, indent=2)
         except Exception as e:
             messagebox.showerror("Save Error", str(e))
 
@@ -1079,7 +1034,7 @@ class CurveLabApp(ttk.Frame):
             return
         try:
             with open(filepath, "r") as f:
-                ws = json.load(f, object_hook=self._decode_workspace)
+                ws = json.load(f, object_hook=decode_workspace)
         except Exception as e:
             messagebox.showerror("Load Error", str(e))
             return
@@ -1132,13 +1087,7 @@ class CurveLabApp(ttk.Frame):
 
             # Reconstruct fit sessions
             for sess_name, sess_data in sdata.get("fit_sessions", {}).items():
-                fm = FitManager()
-                for comp in sess_data.get("components", []):
-                    fm.add_component(
-                        comp["name"],
-                        operator=comp.get("operator", "+"),
-                        expression=comp.get("expression", ""),
-                    )
+                fm = FitManager.deserialize(sess_data)
 
                 sess = FitSession(
                     name=sess_data.get("name", sess_name),
