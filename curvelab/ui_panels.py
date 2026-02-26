@@ -1,7 +1,7 @@
 """All tkinter panel widgets: DataPanel, PlotControlPanel, FitPanel, FontDialog."""
 
 import tkinter as tk
-from tkinter import ttk, filedialog, simpledialog
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import tkinter.font as tkfont
 
 from .models import MODEL_NAMES
@@ -540,7 +540,18 @@ class FitPanel(ttk.LabelFrame):
             self._on_session_selected(name)
 
     def _new_session(self):
-        name = simpledialog.askstring("New Fit Session", "Session name:", parent=self)
+        if not self.series_var.get():
+            messagebox.showwarning("No Series", "Plot a series first, then select it.")
+            return
+        # Generate a default name like "Fit 1", "Fit 2", ...
+        existing = set(self.session_listbox.get(0, tk.END))
+        n = 1
+        while f"Fit {n}" in existing:
+            n += 1
+        default = f"Fit {n}"
+        name = simpledialog.askstring(
+            "New Fit Session", "Session name:", initialvalue=default, parent=self
+        )
         if name and self._on_new_session:
             self._on_new_session(name.strip())
 
