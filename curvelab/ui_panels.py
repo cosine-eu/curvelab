@@ -700,9 +700,12 @@ class FitResultsPanel(ttk.LabelFrame):
 
     def _build_ui(self):
         # --- Parameter Treeview ---
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+
         columns = ("value", "stderr", "min", "max", "vary")
         self.param_tree = ttk.Treeview(
-            self, columns=columns, show="headings", height=6
+            tree_frame, columns=columns, show="headings", height=6
         )
         self.param_tree.heading("value", text="Value")
         self.param_tree.heading("stderr", text="StdErr")
@@ -726,10 +729,10 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree.tag_configure("odd", background="#ffffff")
 
         tree_scroll = ttk.Scrollbar(
-            self, orient=tk.VERTICAL, command=self.param_tree.yview
+            tree_frame, orient=tk.VERTICAL, command=self.param_tree.yview
         )
         self.param_tree.configure(yscrollcommand=tree_scroll.set)
-        self.param_tree.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        self.param_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         # Double-click to edit
@@ -737,9 +740,11 @@ class FitResultsPanel(ttk.LabelFrame):
 
         # --- Fit report ---
         ttk.Label(self, text="Fit Report:").pack(anchor=tk.W, pady=(5, 0))
-        self.report_text = tk.Text(self, height=8, wrap=tk.WORD, state=tk.DISABLED)
+        report_frame = ttk.Frame(self)
+        report_frame.pack(fill=tk.BOTH, expand=True)
+        self.report_text = tk.Text(report_frame, height=8, wrap=tk.WORD, state=tk.DISABLED)
         report_scroll = ttk.Scrollbar(
-            self, orient=tk.VERTICAL, command=self.report_text.yview
+            report_frame, orient=tk.VERTICAL, command=self.report_text.yview
         )
         self.report_text.configure(yscrollcommand=report_scroll.set)
         self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
