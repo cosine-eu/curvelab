@@ -194,6 +194,17 @@ class PlotManager:
         self._residual_lines.clear()
         self.canvas.draw_idle()
 
+    def set_data_visible(self, visible: bool):
+        """Show or hide data series artists (points/error bars)."""
+        from matplotlib.container import ErrorbarContainer
+        for artist in self._series_lines:
+            if isinstance(artist, ErrorbarContainer):
+                for child in artist.get_children():
+                    child.set_visible(visible)
+            else:
+                artist.set_visible(visible)
+        self.canvas.draw_idle()
+
     def set_residuals_visible(self, visible: bool):
         """Show or hide the residuals subplot."""
         self._residuals_visible = visible

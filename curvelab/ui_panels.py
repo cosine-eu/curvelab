@@ -294,6 +294,7 @@ class PlotControlPanel(ttk.Frame):
         on_residuals_toggled=None,
         on_confidence_band_toggled=None,
         on_axis_labels=None,
+        on_data_toggled=None,
     ):
         super().__init__(parent, padding=5)
         self._on_xscale = on_xscale
@@ -305,6 +306,7 @@ class PlotControlPanel(ttk.Frame):
         self._on_residuals_toggled = on_residuals_toggled
         self._on_confidence_band_toggled = on_confidence_band_toggled
         self._on_axis_labels = on_axis_labels
+        self._on_data_toggled = on_data_toggled
 
         self._build_ui()
 
@@ -336,6 +338,11 @@ class PlotControlPanel(ttk.Frame):
         )
         yscale.pack(side=tk.LEFT, padx=(0, 10))
         yscale.bind("<<ComboboxSelected>>", lambda e: self._fire_yscale())
+
+        self.data_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            row1, text="Data", variable=self.data_var, command=self._fire_data
+        ).pack(side=tk.LEFT, padx=5)
 
         self.grid_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
@@ -402,6 +409,10 @@ class PlotControlPanel(ttk.Frame):
         if self._on_yscale:
             self._on_yscale(self.yscale_var.get())
 
+    def _fire_data(self):
+        if self._on_data_toggled:
+            self._on_data_toggled(self.data_var.get())
+
     def _fire_grid(self):
         if self._on_grid:
             self._on_grid(self.grid_var.get())
@@ -450,6 +461,7 @@ class FitPanel(ttk.LabelFrame):
         on_rename_session=None,
         on_delete_session=None,
         on_batch_fit=None,
+        on_toggle_session_visible=None,
     ):
         super().__init__(parent, text="Fit", padding=5)
         self._on_add_component = on_add_component
@@ -465,6 +477,8 @@ class FitPanel(ttk.LabelFrame):
         self._on_rename_session = on_rename_session
         self._on_delete_session = on_delete_session
         self._on_batch_fit = on_batch_fit
+        self._on_toggle_session_visible = on_toggle_session_visible
+        self._session_names: list[str] = []
 
         self._build_ui()
 
@@ -499,6 +513,9 @@ class FitPanel(ttk.LabelFrame):
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
         ttk.Button(sess_btn_frame, text="Delete", command=self._delete_session).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        )
+        ttk.Button(sess_btn_frame, text="Show/Hide", command=self._toggle_session_visible).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
         )
 
@@ -568,7 +585,7 @@ class FitPanel(ttk.LabelFrame):
     def _session_selected(self, event=None):
         sel = self.session_listbox.curselection()
         if sel and self._on_session_selected:
-            name = self.session_listbox.get(sel[0])
+            name = self._session_names[sel[0]]
             self._on_session_selected(name)
 
     def _new_session(self):
@@ -576,7 +593,7 @@ class FitPanel(ttk.LabelFrame):
             messagebox.showwarning("No Series", "Plot a series first, then select it.")
             return
         # Generate a default name like "Fit 1", "Fit 2", ...
-        existing = set(self.session_listbox.get(0, tk.END))
+        existing = set(self._session_names)
         n = 1
         while f"Fit {n}" in existing:
             n += 1
@@ -591,7 +608,7 @@ class FitPanel(ttk.LabelFrame):
         sel = self.session_listbox.curselection()
         if not sel:
             return
-        old_name = self.session_listbox.get(sel[0])
+        old_name = self._session_names[sel[0]]
         new_name = simpledialog.askstring(
             "Rename Session", "New name:", initialvalue=old_name, parent=self
         )
@@ -601,8 +618,14 @@ class FitPanel(ttk.LabelFrame):
     def _delete_session(self):
         sel = self.session_listbox.curselection()
         if sel and self._on_delete_session:
-            name = self.session_listbox.get(sel[0])
+            name = self._session_names[sel[0]]
             self._on_delete_session(name)
+
+    def _toggle_session_visible(self):
+        sel = self.session_listbox.curselection()
+        if sel and self._on_toggle_session_visible:
+            name = self._session_names[sel[0]]
+            self._on_toggle_session_visible(name)
 
     def set_series_list(self, series_ids: list[str], select: str = ""):
         """Update the series combobox."""
@@ -614,11 +637,17 @@ class FitPanel(ttk.LabelFrame):
         else:
             self.series_var.set("")
 
-    def set_sessions(self, session_names: list[str], select: str = ""):
-        """Update the session listbox."""
+    def set_sessions(self, session_names: list[str], select: str = "",
+                     visibility: dict[str, bool] | None = None):
+        """Update the session listbox. visibility maps name -> visible flag."""
+        self._session_names = list(session_names)
         self.session_listbox.delete(0, tk.END)
         for name in session_names:
-            self.session_listbox.insert(tk.END, name)
+            if visibility is not None and not visibility.get(name, True):
+                label = f"[hidden] {name}"
+            else:
+                label = name
+            self.session_listbox.insert(tk.END, label)
         if select and select in session_names:
             idx = session_names.index(select)
             self.session_listbox.selection_set(idx)

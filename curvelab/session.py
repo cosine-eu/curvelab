@@ -3,11 +3,40 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
-from .fit_manager import FitManager, FitResult
+
+@dataclass
+class FitResult:
+    """Results from a fit."""
+
+    x_dense: np.ndarray
+    y_fit_dense: np.ndarray
+    x_data: np.ndarray
+    y_data: np.ndarray
+    y_fit_data: np.ndarray
+    yerr_data: np.ndarray | None
+    params: dict[str, dict]  # name -> {value, stderr, min, max, vary}
+    report: str
+    gof: dict[str, float] = field(default_factory=dict)
+    component_curves: dict[str, np.ndarray] = field(default_factory=dict)
+    y_uncertainty: np.ndarray | None = None  # 1-sigma band on dense grid
+
+
+@runtime_checkable
+class FitManagerProtocol(Protocol):
+    @property
+    def params(self) -> Any: ...
+    def set_param(self, name: str, **kwargs) -> None: ...
+    def clear_components(self) -> None: ...
+
+
+# Lazy import to avoid circular dependency at module level
+def _fit_manager_factory():
+    from .fit_manager import FitManager
+    return FitManager()
 
 FIT_COLORS = [
     "xkcd:red", "xkcd:bright blue", "xkcd:green", "xkcd:purple",
@@ -38,7 +67,7 @@ class FitSession:
     """One named fit attempt attached to a series."""
 
     name: str
-    fit_manager: FitManager = field(default_factory=FitManager)
+    fit_manager: FitManagerProtocol = field(default_factory=_fit_manager_factory)
     result: FitResult | None = None
     color: str = ""
     visible: bool = True

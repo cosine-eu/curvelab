@@ -1,12 +1,13 @@
 """Curve fitting logic using lmfit."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import numpy as np
 from lmfit import CompositeModel, Model, Parameters
 from lmfit.model import ModelResult
 
 from .models import create_expression_model, create_model
+from .session import FitResult  # re-export; canonical location is session.py
 
 
 @dataclass
@@ -17,23 +18,6 @@ class FitComponent:
     prefix: str  # e.g. "gauss1_"
     operator: str = "+"  # "+" (sum) or "*" (multiply); ignored for first component
     expression: str = ""  # Only used when name == "Expression"
-
-
-@dataclass
-class FitResult:
-    """Results from a fit."""
-
-    x_dense: np.ndarray
-    y_fit_dense: np.ndarray
-    x_data: np.ndarray
-    y_data: np.ndarray
-    y_fit_data: np.ndarray
-    yerr_data: np.ndarray | None
-    params: dict[str, dict]  # name -> {value, stderr, min, max, vary}
-    report: str
-    gof: dict[str, float] = field(default_factory=dict)
-    component_curves: dict[str, np.ndarray] = field(default_factory=dict)
-    y_uncertainty: np.ndarray | None = None  # 1-sigma band on dense grid
 
 
 class FitManager:
@@ -236,3 +220,29 @@ class FitManager:
             component_curves=component_curves,
             y_uncertainty=y_uncertainty,
         )
+
+    def serialize(self) -> dict:
+        """Serialize component list for workspace persistence."""
+        return {
+            "components": [
+                {
+                    "name": c.name,
+                    "prefix": c.prefix,
+                    "operator": c.operator,
+                    "expression": c.expression,
+                }
+                for c in self.components
+            ]
+        }
+
+    @classmethod
+    def deserialize(cls, data: dict) -> "FitManager":
+        """Reconstruct a FitManager from serialized data."""
+        fm = cls()
+        for comp in data.get("components", []):
+            fm.add_component(
+                comp["name"],
+                operator=comp.get("operator", "+"),
+                expression=comp.get("expression", ""),
+            )
+        return fm

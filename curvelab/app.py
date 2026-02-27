@@ -121,6 +121,7 @@ class CurveLabApp(ttk.Frame):
             on_rename_session=self._on_rename_session,
             on_delete_session=self._on_delete_session,
             on_batch_fit=self._on_batch_fit,
+            on_toggle_session_visible=self._on_toggle_session_visible,
         )
         left_pane.add(self.fit_panel, weight=1)
 
@@ -153,6 +154,7 @@ class CurveLabApp(ttk.Frame):
             on_residuals_toggled=self._on_residuals_toggled,
             on_confidence_band_toggled=self._on_confidence_band_toggled,
             on_axis_labels=self._on_axis_labels,
+            on_data_toggled=self._on_data_toggled,
         )
         self.plot_controls.grid(row=1, column=0, sticky="ew", pady=2)
 
@@ -307,7 +309,9 @@ class CurveLabApp(ttk.Frame):
             self.fit_panel.set_sessions([])
             return
         names = list(rec.fit_sessions.keys())
-        self.fit_panel.set_sessions(names, select=rec.active_session_name or "")
+        visibility = {n: s.visible for n, s in rec.fit_sessions.items()}
+        self.fit_panel.set_sessions(names, select=rec.active_session_name or "",
+                                    visibility=visibility)
 
     def _load_session_into_ui(self):
         sess = self._active_session
@@ -525,6 +529,10 @@ class CurveLabApp(ttk.Frame):
         # Restore residuals visibility state
         self.plot_mgr.set_residuals_visible(show_resid)
 
+        # Respect data visibility toggle
+        if not self.plot_controls.data_var.get():
+            self.plot_mgr.set_data_visible(False)
+
     # --- Series / Session callbacks ---
 
     def _on_series_selected(self, series_id: str):
@@ -597,6 +605,15 @@ class CurveLabApp(ttk.Frame):
 
         self._sync_session_list()
         self._load_session_into_ui()
+
+    def _on_toggle_session_visible(self, name: str):
+        rec = self._active_record
+        if rec is None or name not in rec.fit_sessions:
+            return
+        sess = rec.fit_sessions[name]
+        sess.visible = not sess.visible
+        self._sync_session_list()
+        self._replot_all_series()
 
     # --- Fit callbacks ---
 
@@ -848,6 +865,9 @@ class CurveLabApp(ttk.Frame):
             )
         else:
             self.plot_mgr.remove_annotation(session_key=skey)
+
+    def _on_data_toggled(self, show: bool):
+        self.plot_mgr.set_data_visible(show)
 
     def _on_residuals_toggled(self, show: bool):
         self.plot_mgr.set_residuals_visible(show)
