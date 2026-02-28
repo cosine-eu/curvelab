@@ -1570,3 +1570,98 @@ class UncertaintyPropagationDialog(tk.Toplevel):
                 self._result_var.set(f"{expr} = {result}")
         except Exception as e:
             self._result_var.set(f"Error: {e}")
+
+
+class SimulateDataDialog(tk.Toplevel):
+    """Dialog for generating synthetic data from the current model."""
+
+    def __init__(self, parent, x_min=0.0, x_max=10.0, n_points=200, on_generate=None):
+        super().__init__(parent)
+        self.title("Simulate Data")
+        self.resizable(False, False)
+        self.transient(parent)
+        self._on_generate = on_generate
+
+        # --- X Range ---
+        range_frame = ttk.LabelFrame(self, text="X Range", padding=5)
+        range_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+
+        for col, (label, default) in enumerate([
+            ("x min", x_min), ("x max", x_max), ("N points", n_points),
+        ]):
+            ttk.Label(range_frame, text=label).grid(row=0, column=col * 2, padx=(5, 2))
+            var = tk.StringVar(value=str(default))
+            ttk.Entry(range_frame, textvariable=var, width=10).grid(
+                row=0, column=col * 2 + 1, padx=(0, 5)
+            )
+            if col == 0:
+                self._xmin_var = var
+            elif col == 1:
+                self._xmax_var = var
+            else:
+                self._npts_var = var
+
+        # --- Noise ---
+        noise_frame = ttk.LabelFrame(self, text="Noise", padding=5)
+        noise_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        self._gauss_on = tk.BooleanVar(value=False)
+        self._gauss_sigma = tk.StringVar(value="1.0")
+        self._poisson_on = tk.BooleanVar(value=False)
+        self._poisson_scale = tk.StringVar(value="1.0")
+        self._jitter_on = tk.BooleanVar(value=False)
+        self._jitter_sigma = tk.StringVar(value="0.1")
+
+        for row, (var_on, var_mag, label, mag_label) in enumerate([
+            (self._gauss_on, self._gauss_sigma, "Gaussian noise", "sigma"),
+            (self._poisson_on, self._poisson_scale, "Poisson noise", "scale"),
+            (self._jitter_on, self._jitter_sigma, "X-jitter", "sigma_x"),
+        ]):
+            ttk.Checkbutton(noise_frame, text=label, variable=var_on).grid(
+                row=row, column=0, sticky=tk.W, padx=(5, 10)
+            )
+            ttk.Label(noise_frame, text=mag_label).grid(row=row, column=1, padx=(5, 2))
+            ttk.Entry(noise_frame, textvariable=var_mag, width=8).grid(
+                row=row, column=2, padx=(0, 5)
+            )
+
+        # --- Buttons ---
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(btn_frame, textvariable=self._status_var).pack(
+            side=tk.LEFT, fill=tk.X, expand=True
+        )
+        ttk.Button(btn_frame, text="Generate", command=self._do_generate).pack(
+            side=tk.RIGHT, padx=(5, 0)
+        )
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+
+    def _do_generate(self):
+        try:
+            x_min = float(self._xmin_var.get())
+            x_max = float(self._xmax_var.get())
+            n_points = int(self._npts_var.get())
+        except ValueError:
+            self._status_var.set("Invalid x-range or N.")
+            return
+        if x_min >= x_max or n_points < 2:
+            self._status_var.set("Need x_min < x_max and N >= 2.")
+            return
+
+        noise_cfg = {
+            "gaussian": self._gauss_on.get(),
+            "gaussian_sigma": float(self._gauss_sigma.get()) if self._gauss_on.get() else 0,
+            "poisson": self._poisson_on.get(),
+            "poisson_scale": float(self._poisson_scale.get()) if self._poisson_on.get() else 0,
+            "jitter": self._jitter_on.get(),
+            "jitter_sigma": float(self._jitter_sigma.get()) if self._jitter_on.get() else 0,
+        }
+
+        if self._on_generate:
+            try:
+                self._on_generate(x_min, x_max, n_points, noise_cfg)
+                self.destroy()
+            except Exception as e:
+                self._status_var.set(f"Error: {e}")

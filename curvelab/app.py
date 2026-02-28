@@ -2,6 +2,7 @@
 
 import csv
 import json
+import re
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
@@ -20,8 +21,12 @@ from .ui_panels import (
     BruteCandidatesDialog, EmceeSummaryDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog,
     GlobalFitDialog, UncertaintyPropagationDialog,
+    SimulateDataDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
+
+
+_SIMULATED_DATASET = "__simulated__"
 
 
 def _make_series_id(dataset: str, x_col: str, y_col: str) -> str:
@@ -46,6 +51,7 @@ class CurveLabApp(ttk.Frame):
         self._series_records: dict[str, SeriesRecord] = {}
         self._active_series_id: str | None = None
         self._session_counter: int = 0
+        self._simulated_counter: int = 0
 
         # Font state
         self._ui_family = "TkDefaultFont"
@@ -222,6 +228,10 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_command(
             label="Model Comparison...", command=self._show_model_comparison
         )
+        analysis_menu.add_separator()
+        analysis_menu.add_command(
+            label="Simulate Data...", command=self._on_simulate_data
+        )
         menubar.add_cascade(label="Analysis", menu=analysis_menu)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
@@ -334,6 +344,98 @@ class CurveLabApp(ttk.Frame):
             messagebox.showinfo("No Fits", "No completed fits to compare.")
             return
         ModelComparisonDialog(self, rows)
+
+    # --- Simulate Data ---
+
+    def _on_simulate_data(self):
+        fm = self._active_fit_mgr
+        if fm is None or not fm.components or fm.params is None:
+            messagebox.showwarning(
+                "No Model", "Set up a model with parameters first."
+            )
+            return
+
+        # Default x-range from active series or plot limits
+        rec = self._active_record
+        if rec is not None and len(rec.x) > 0:
+            x_min, x_max = float(rec.x.min()), float(rec.x.max())
+        else:
+            x_min, x_max = 0.0, 10.0
+
+        SimulateDataDialog(
+            self,
+            x_min=x_min,
+            x_max=x_max,
+            n_points=200,
+            on_generate=self._generate_simulated_data,
+        )
+
+    def _generate_simulated_data(self, x_min, x_max, n_points, noise_cfg):
+        fm = self._active_fit_mgr
+        x = np.linspace(x_min, x_max, n_points)
+        xerr = None
+
+        # X-jitter
+        if noise_cfg.get("jitter"):
+            sigma_x = noise_cfg["jitter_sigma"]
+            x = x + np.random.normal(0, sigma_x, size=n_points)
+            xerr = np.full(n_points, sigma_x)
+
+        y = fm.model.eval(fm.params, x=x)
+
+        variance = np.zeros(n_points)
+
+        # Poisson noise
+        if noise_cfg.get("poisson"):
+            scale = noise_cfg["poisson_scale"]
+            poisson_sigma = scale * np.sqrt(np.abs(y))
+            y = y + poisson_sigma * np.random.normal(0, 1, size=n_points)
+            variance += poisson_sigma ** 2
+
+        # Gaussian noise
+        if noise_cfg.get("gaussian"):
+            sigma = noise_cfg["gaussian_sigma"]
+            y = y + np.random.normal(0, sigma, size=n_points)
+            variance += sigma ** 2
+
+        yerr = np.sqrt(variance) if variance.any() else None
+
+        # Sort by x (jitter may reorder)
+        order = np.argsort(x)
+        x = x[order]
+        y = y[order]
+        if yerr is not None:
+            yerr = yerr[order]
+        if xerr is not None:
+            xerr = xerr[order]
+
+        # Create series
+        self._simulated_counter += 1
+        n = self._simulated_counter
+        sid = f"__simulated_{n}__::x::y"
+        label = f"Simulated {n}"
+        style_dict = {
+            "dataset": _SIMULATED_DATASET,
+            "x": "x", "y": "y",
+            "yerr": "yerr" if yerr is not None else "",
+            "xerr": "xerr" if xerr is not None else "",
+            "marker": "o", "linestyle": "None", "color": "",
+            "label": label,
+        }
+
+        rec = SeriesRecord(
+            x=x, y=y, yerr=yerr, xerr=xerr,
+            style=style_dict, dataset_name=_SIMULATED_DATASET,
+        )
+        self._series_records[sid] = rec
+
+        plot_style = SeriesStyle(marker="o", linestyle="None", color="", label=label)
+        self.plot_mgr.plot_series(x, y, yerr=yerr, xerr=xerr, style=plot_style)
+
+        self._active_series_id = sid
+        self._sync_series_combo()
+        self._sync_session_list()
+        self._load_session_into_ui()
 
     # --- Sync helpers ---
 
@@ -531,6 +633,21 @@ class CurveLabApp(ttk.Frame):
 
             except Exception as e:
                 messagebox.showerror("Plot Error", f"Error plotting series: {e}")
+
+        # Carry forward simulated series
+        for sid, rec in self._series_records.items():
+            if rec.dataset_name == _SIMULATED_DATASET and sid not in new_records:
+                new_records[sid] = rec
+                s = rec.style
+                style = SeriesStyle(
+                    marker=s.get("marker", "o"),
+                    linestyle=s.get("linestyle", "None"),
+                    color=s.get("color", ""),
+                    label=s.get("label", ""),
+                )
+                self.plot_mgr.plot_series(
+                    rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
+                )
 
         self._series_records = new_records
         show_resid = self.plot_controls.residuals_var.get()
@@ -1412,12 +1529,18 @@ class CurveLabApp(ttk.Frame):
                     })
                 fit_sessions[sess_name] = sess_data
 
-            series[sid] = {
+            sdata = {
                 "dataset_name": rec.dataset_name,
                 "style": rec.style,
                 "fit_sessions": fit_sessions,
                 "active_session_name": rec.active_session_name,
             }
+            if rec.dataset_name == _SIMULATED_DATASET:
+                sdata["sim_data"] = encode_value({
+                    "x": rec.x, "y": rec.y,
+                    "yerr": rec.yerr, "xerr": rec.xerr,
+                })
+            series[sid] = sdata
 
         return {
             "version": 1,
@@ -1500,29 +1623,52 @@ class CurveLabApp(ttk.Frame):
 
         # 2. Reconstruct SeriesRecord objects
         self._series_records.clear()
+        self._simulated_counter = 0
         for sid, sdata in ws.get("series", {}).items():
             ds_name = sdata.get("dataset_name", "")
-            actual_ds = dataset_name_map.get(ds_name)
-            if actual_ds is None:
-                continue  # dataset couldn't be reloaded
 
-            style = sdata.get("style", {})
-            try:
-                x_col = style.get("x", "")
-                y_col = style.get("y", "")
-                x = self.data_mgr.get_column(actual_ds, x_col)
-                y = self.data_mgr.get_column(actual_ds, y_col)
-                yerr_col = style.get("yerr")
-                xerr_col = style.get("xerr")
-                yerr = self.data_mgr.get_column(actual_ds, yerr_col) if yerr_col else None
-                xerr = self.data_mgr.get_column(actual_ds, xerr_col) if xerr_col else None
-            except Exception:
-                # Fall back: cannot reconstruct data arrays
-                continue
+            if ds_name == _SIMULATED_DATASET:
+                # Reconstruct simulated series from saved arrays
+                sim = sdata.get("sim_data", {})
+                def to_arr(v):
+                    if isinstance(v, np.ndarray):
+                        return v
+                    if isinstance(v, list):
+                        return np.array(v)
+                    return v
+                x = to_arr(sim.get("x", []))
+                y = to_arr(sim.get("y", []))
+                yerr = to_arr(sim["yerr"]) if sim.get("yerr") is not None else None
+                xerr = to_arr(sim["xerr"]) if sim.get("xerr") is not None else None
+                style = sdata.get("style", {})
+                # Restore simulated counter from series ID
+                m = re.search(r"__simulated_(\d+)__", sid)
+                if m:
+                    self._simulated_counter = max(
+                        self._simulated_counter, int(m.group(1))
+                    )
+            else:
+                actual_ds = dataset_name_map.get(ds_name)
+                if actual_ds is None:
+                    continue  # dataset couldn't be reloaded
+
+                style = sdata.get("style", {})
+                try:
+                    x_col = style.get("x", "")
+                    y_col = style.get("y", "")
+                    x = self.data_mgr.get_column(actual_ds, x_col)
+                    y = self.data_mgr.get_column(actual_ds, y_col)
+                    yerr_col = style.get("yerr")
+                    xerr_col = style.get("xerr")
+                    yerr = self.data_mgr.get_column(actual_ds, yerr_col) if yerr_col else None
+                    xerr = self.data_mgr.get_column(actual_ds, xerr_col) if xerr_col else None
+                except Exception:
+                    continue
+                ds_name = actual_ds
 
             rec = SeriesRecord(
                 x=x, y=y, yerr=yerr, xerr=xerr,
-                style=style, dataset_name=actual_ds,
+                style=style, dataset_name=ds_name,
                 active_session_name=sdata.get("active_session_name"),
             )
 
