@@ -28,6 +28,7 @@ class DataPanel(ttk.LabelFrame):
         on_plot=None,
         on_dataset_selected=None,
         on_remove_dataset=None,
+        on_toggle_series_visible=None,
     ):
         super().__init__(parent, text="Data", padding=5)
         self._on_load = on_load
@@ -35,6 +36,7 @@ class DataPanel(ttk.LabelFrame):
         self._on_plot = on_plot
         self._on_dataset_selected = on_dataset_selected
         self._on_remove_dataset = on_remove_dataset
+        self._on_toggle_series_visible = on_toggle_series_visible
         self._series_items = []  # list of dicts describing each series
 
         self._build_ui()
@@ -148,6 +150,9 @@ class DataPanel(ttk.LabelFrame):
             side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
         )
         ttk.Button(btn_frame, text="Remove", command=self._remove_series).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        )
+        ttk.Button(btn_frame, text="Show/Hide", command=self._toggle_series_visible).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
         ttk.Button(btn_frame, text="Plot", command=self._plot).pack(
@@ -274,6 +279,20 @@ class DataPanel(ttk.LabelFrame):
     def _plot(self):
         if self._on_plot:
             self._on_plot(self._series_items)
+
+    def _toggle_series_visible(self):
+        sel = self.series_listbox.curselection()
+        if sel and self._on_toggle_series_visible:
+            self._on_toggle_series_visible(sel[0])
+
+    def set_series_visibility(self, visibility: list[bool]):
+        """Refresh listbox labels to show [hidden] prefix for hidden series."""
+        for i, (info, vis) in enumerate(zip(self._series_items, visibility)):
+            label = f"{info['dataset']}::{info['x']} vs {info['y']}"
+            if not vis:
+                label = f"[hidden] {label}"
+            self.series_listbox.delete(i)
+            self.series_listbox.insert(i, label)
 
     def add_series_entry(self, series_info: dict):
         """Programmatically add a series entry (same effect as the Add Series button)."""

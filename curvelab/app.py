@@ -116,6 +116,7 @@ class CurveLabApp(ttk.Frame):
             on_plot=self._on_plot,
             on_dataset_selected=self._on_dataset_selected,
             on_remove_dataset=self._on_remove_dataset,
+            on_toggle_series_visible=self._on_toggle_series_visible,
         )
         left_pane.add(self.data_panel, weight=1)
 
@@ -630,14 +631,6 @@ class CurveLabApp(ttk.Frame):
                 y = self.data_mgr.get_column(dataset, s["y"])
                 yerr = self.data_mgr.get_column(dataset, s["yerr"]) if s.get("yerr") else None
                 xerr = self.data_mgr.get_column(dataset, s["xerr"]) if s.get("xerr") else None
-                style = SeriesStyle(
-                    marker=s.get("marker", "o"),
-                    linestyle=s.get("linestyle", "None"),
-                    color=s.get("color", ""),
-                    label=s.get("label", s["y"]),
-                )
-                self.plot_mgr.plot_series(x, y, yerr=yerr, xerr=xerr, style=style)
-
                 if sid in self._series_records:
                     rec = self._series_records[sid]
                     rec.x = x
@@ -650,6 +643,16 @@ class CurveLabApp(ttk.Frame):
                         x=x, y=y, yerr=yerr, xerr=xerr,
                         style=s, dataset_name=dataset,
                     )
+
+                if rec.visible:
+                    style = SeriesStyle(
+                        marker=s.get("marker", "o"),
+                        linestyle=s.get("linestyle", "None"),
+                        color=s.get("color", ""),
+                        label=s.get("label", s["y"]),
+                    )
+                    self.plot_mgr.plot_series(x, y, yerr=yerr, xerr=xerr, style=style)
+
                 new_records[sid] = rec
 
             except Exception as e:
@@ -681,15 +684,16 @@ class CurveLabApp(ttk.Frame):
 
         for sid, rec in self._series_records.items():
             s = rec.style
-            style = SeriesStyle(
-                marker=s.get("marker", "o"),
-                linestyle=s.get("linestyle", "None"),
-                color=s.get("color", ""),
-                label=s.get("label", ""),
-            )
-            self.plot_mgr.plot_series(
-                rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
-            )
+            if rec.visible:
+                style = SeriesStyle(
+                    marker=s.get("marker", "o"),
+                    linestyle=s.get("linestyle", "None"),
+                    color=s.get("color", ""),
+                    label=s.get("label", ""),
+                )
+                self.plot_mgr.plot_series(
+                    rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
+                )
             for sess_name, sess in rec.fit_sessions.items():
                 if sess.result is not None and sess.visible:
                     skey = _make_session_key(sid, sess_name)
@@ -809,6 +813,29 @@ class CurveLabApp(ttk.Frame):
 
         self._sync_session_list()
         self._load_session_into_ui()
+
+    def _on_toggle_series_visible(self, idx: int):
+        series_items = self.data_panel.series_list
+        if idx < 0 or idx >= len(series_items):
+            return
+        s = series_items[idx]
+        sid = _make_series_id(s["dataset"], s["x"], s["y"])
+        rec = self._series_records.get(sid)
+        if rec is None:
+            return
+        rec.visible = not rec.visible
+        self._refresh_data_panel_labels()
+        self._replot_all_series()
+
+    def _refresh_data_panel_labels(self):
+        """Update DataPanel listbox labels to reflect series visibility."""
+        series_items = self.data_panel.series_list
+        visibility = []
+        for s in series_items:
+            sid = _make_series_id(s["dataset"], s["x"], s["y"])
+            rec = self._series_records.get(sid)
+            visibility.append(rec.visible if rec else True)
+        self.data_panel.set_series_visibility(visibility)
 
     def _on_toggle_session_visible(self, name: str):
         rec = self._active_record
@@ -1570,6 +1597,7 @@ class CurveLabApp(ttk.Frame):
             sdata = {
                 "dataset_name": rec.dataset_name,
                 "style": rec.style,
+                "visible": rec.visible,
                 "fit_sessions": fit_sessions,
                 "active_session_name": rec.active_session_name,
             }
@@ -1681,6 +1709,7 @@ class CurveLabApp(ttk.Frame):
             rec = SeriesRecord(
                 x=x, y=y, yerr=yerr, xerr=xerr,
                 style=style, dataset_name=ds_name,
+                visible=sdata.get("visible", True),
                 active_session_name=sdata.get("active_session_name"),
             )
 

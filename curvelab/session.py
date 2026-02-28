@@ -88,6 +88,7 @@ class SeriesRecord:
     xerr: np.ndarray | None = None
     style: dict = field(default_factory=dict)
     dataset_name: str = ""
+    visible: bool = True
     fit_sessions: dict[str, FitSession] = field(default_factory=dict)
     active_session_name: str | None = None
 
