@@ -19,6 +19,7 @@ from .ui_panels import (
     ConfidenceIntervalDialog, CorrelationMatrixDialog,
     BruteCandidatesDialog, EmceeSummaryDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog,
+    GlobalFitDialog, UncertaintyPropagationDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -190,6 +191,10 @@ class CurveLabApp(ttk.Frame):
         file_menu.add_separator()
         file_menu.add_command(label="Export Parameters...", command=self._export_params)
         file_menu.add_command(label="Export Fit Report...", command=self._export_report)
+        file_menu.add_separator()
+        file_menu.add_command(label="Export Model Result...", command=self._export_model_result)
+        file_menu.add_command(label="Import Model Result...", command=self._import_model_result)
+        file_menu.add_separator()
         file_menu.add_command(label="Save Plot...", command=self._save_plot)
         menubar.add_cascade(label="File", menu=file_menu)
 
@@ -205,6 +210,13 @@ class CurveLabApp(ttk.Frame):
         )
         analysis_menu.add_command(
             label="2D Confidence Contours...", command=self._show_confidence_contours
+        )
+        analysis_menu.add_separator()
+        analysis_menu.add_command(
+            label="Global Fit...", command=self._on_global_fit
+        )
+        analysis_menu.add_command(
+            label="Uncertainty Propagation...", command=self._show_uncertainty_propagation
         )
         analysis_menu.add_separator()
         analysis_menu.add_command(
@@ -349,7 +361,14 @@ class CurveLabApp(ttk.Frame):
         self._update_component_list_from(sess.fit_manager)
 
         if sess.result is not None:
-            self.fit_results.set_params(sess.result.params)
+            # Enrich params with init_value for display
+            params_display = {}
+            for name, info in sess.result.params.items():
+                entry = dict(info)
+                if sess.result.init_params and name in sess.result.init_params:
+                    entry["init_value"] = sess.result.init_params[name]
+                params_display[name] = entry
+            self.fit_results.set_params(params_display)
             self.fit_results.set_report(sess.result.report)
         else:
             self.fit_results.clear()
@@ -776,20 +795,23 @@ class CurveLabApp(ttk.Frame):
             self._run_fit_sync(rec, sess, method)
 
     def _get_fit_options(self):
-        """Read reduce function and weight mode from UI."""
+        """Read reduce function, weight mode, and max_nfev from UI."""
         reduce_fcn = REDUCE_FUNCTIONS.get(self.fit_panel.reduce_var.get())
         weight_mode = self.fit_panel.weight_var.get()
-        return reduce_fcn, weight_mode
+        max_nfev_str = self.fit_panel.max_nfev_var.get().strip()
+        max_nfev = int(max_nfev_str) if max_nfev_str else None
+        return reduce_fcn, weight_mode, max_nfev
 
     def _run_fit_sync(self, rec, sess, method):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
             x, y, yerr = self._get_fit_data(rec)
-            reduce_fcn, weight_mode = self._get_fit_options()
+            reduce_fcn, weight_mode, max_nfev = self._get_fit_options()
             result = fm.run_fit(
                 x, y, yerr=yerr, method=method,
                 reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                max_nfev=max_nfev,
             )
             sess.result = result
             self._post_fit_update(sess, rec)
@@ -823,7 +845,7 @@ class CurveLabApp(ttk.Frame):
         if method == "emcee":
             fit_kws["is_weighted"] = yerr is not None
 
-        reduce_fcn, weight_mode = self._get_fit_options()
+        reduce_fcn, weight_mode, max_nfev = self._get_fit_options()
 
         # Container for result/error from the thread
         container = {"result": None, "error": None}
@@ -834,6 +856,7 @@ class CurveLabApp(ttk.Frame):
                     x, y, yerr=yerr, method=method,
                     iter_cb=iter_cb, fit_kws=fit_kws,
                     reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                    max_nfev=max_nfev,
                 )
                 container["result"] = result
             except Exception as e:
@@ -884,7 +907,15 @@ class CurveLabApp(ttk.Frame):
         if self.plot_controls.residuals_var.get():
             self._plot_residuals_for_session(skey, sess, rec)
 
-        self.fit_results.set_params(result.params)
+        # Enrich params with init_value for the results panel
+        params_display = {}
+        for name, info in result.params.items():
+            entry = dict(info)
+            if result.init_params and name in result.init_params:
+                entry["init_value"] = result.init_params[name]
+            params_display[name] = entry
+
+        self.fit_results.set_params(params_display)
         self.fit_results.set_report(result.report)
 
         if self.plot_controls.show_params_var.get():
@@ -969,6 +1000,148 @@ class CurveLabApp(ttk.Frame):
             return
         EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params)
 
+    def _on_global_fit(self):
+        """Open Global Fit dialog for simultaneous fitting across series."""
+        rec = self._active_record
+        sess = self._active_session
+        if rec is None or sess is None:
+            messagebox.showwarning("No Session", "Create a fit session first.")
+            return
+        fm = sess.fit_manager
+        if not fm.components or fm.params is None:
+            messagebox.showwarning("No Model", "Add at least one model component.")
+            return
+        if len(self._series_records) < 2:
+            messagebox.showwarning("Need Series", "Plot at least 2 series for global fitting.")
+            return
+
+        series_info = []
+        for sid, r in self._series_records.items():
+            series_info.append({"id": sid, "label": r.style.get("label", sid)})
+
+        base_param_names = list(fm.params.keys())
+
+        def on_fit(selected_ids, shared):
+            datasets = []
+            selected_recs = []
+            for sid in selected_ids:
+                r = self._series_records[sid]
+                x, y, yerr = self._get_fit_data(r)
+                datasets.append((x, y, yerr))
+                selected_recs.append((sid, r))
+
+            _, weight_mode, max_nfev = self._get_fit_options()
+            method = self.fit_panel.method_var.get()
+            results = fm.run_global_fit(
+                datasets, shared, method=method,
+                max_nfev=max_nfev, weight_mode=weight_mode,
+            )
+
+            session_name = sess.name
+            show_resid = self.plot_controls.residuals_var.get()
+
+            for (sid, r), result in zip(selected_recs, results):
+                if session_name not in r.fit_sessions:
+                    color = FIT_COLORS[len(r.fit_sessions) % len(FIT_COLORS)]
+                    r.fit_sessions[session_name] = FitSession(
+                        name=session_name, color=color,
+                    )
+                    if r.active_session_name is None:
+                        r.active_session_name = session_name
+
+                target_sess = r.fit_sessions[session_name]
+                target_sess.result = result
+
+                skey = _make_session_key(sid, session_name)
+                series_label = r.style.get("label", sid)
+                label = f"{series_label} \u2014 {session_name}"
+                self.plot_mgr.clear_fit_session(skey)
+                self._plot_fit_for_session(skey, target_sess, label)
+                if show_resid:
+                    self._plot_residuals_for_session(skey, target_sess, r)
+
+            self._sync_session_list()
+            self._load_session_into_ui()
+
+        GlobalFitDialog(self, series_info, base_param_names, on_fit=on_fit)
+
+    def _show_uncertainty_propagation(self):
+        """Open Uncertainty Propagation dialog."""
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+        if fm._last_result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        try:
+            uvars = fm._last_result.uvars
+        except Exception:
+            messagebox.showwarning(
+                "No Uncertainties",
+                "Uncertainty variables not available. Ensure covariance was estimated.",
+            )
+            return
+        if not uvars:
+            messagebox.showwarning(
+                "No Uncertainties",
+                "No parameters with uncertainties available.",
+            )
+            return
+        UncertaintyPropagationDialog(self, uvars)
+
+    def _export_model_result(self):
+        """Export lmfit ModelResult to a .sav file."""
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+        if fm._last_result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".sav",
+            filetypes=[("lmfit Model Result", "*.sav"), ("All files", "*.*")],
+            title="Export Model Result",
+        )
+        if not filepath:
+            return
+        try:
+            from lmfit.model import save_modelresult
+            save_modelresult(fm._last_result, filepath)
+        except Exception as e:
+            messagebox.showerror("Export Error", str(e))
+
+    def _import_model_result(self):
+        """Import lmfit ModelResult from a .sav file."""
+        filepath = filedialog.askopenfilename(
+            filetypes=[("lmfit Model Result", "*.sav"), ("All files", "*.*")],
+            title="Import Model Result",
+        )
+        if not filepath:
+            return
+        try:
+            from lmfit.model import load_modelresult
+            loaded = load_modelresult(filepath)
+
+            # Display params and report in the results panel
+            params_info = {}
+            for name, par in loaded.params.items():
+                params_info[name] = {
+                    "value": par.value,
+                    "stderr": par.stderr,
+                    "min": par.min,
+                    "max": par.max,
+                    "vary": par.vary,
+                    "expr": par.expr or "",
+                }
+            self.fit_results.set_params(params_info)
+            self.fit_results.set_report(loaded.fit_report())
+        except Exception as e:
+            messagebox.showerror("Import Error", str(e))
+
     def _on_batch_fit(self):
         """Apply the active session's model to all plotted series."""
         rec = self._active_record
@@ -987,6 +1160,7 @@ class CurveLabApp(ttk.Frame):
         session_name = sess.name
         summary_rows = []
         show_resid = self.plot_controls.residuals_var.get()
+        reduce_fcn, weight_mode, max_nfev = self._get_fit_options()
 
         for sid, target_rec in self._series_records.items():
             # Ensure target series has a session with the same name
@@ -1008,7 +1182,11 @@ class CurveLabApp(ttk.Frame):
                 x, y, yerr = self._get_fit_data(target_rec)
                 target_fm.auto_guess(x, y)
                 method = self.fit_panel.method_var.get()
-                result = target_fm.run_fit(x, y, yerr=yerr, method=method)
+                result = target_fm.run_fit(
+                    x, y, yerr=yerr, method=method,
+                    reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                    max_nfev=max_nfev,
+                )
                 target_sess.result = result
 
                 skey = _make_session_key(sid, session_name)
@@ -1118,18 +1296,22 @@ class CurveLabApp(ttk.Frame):
                 old_value = par.vary
                 new_value = value.lower() in ("yes", "true", "1")
                 fm.set_param(param_name, vary=new_value)
+                fm.set_param_hint(param_name, vary=new_value)
             elif field == "value":
                 old_value = par.value
                 new_value = float(value)
                 fm.set_param(param_name, value=new_value)
+                fm.set_param_hint(param_name, value=new_value)
             elif field == "min":
                 old_value = par.min
                 new_value = float("-inf") if value in ("-inf", "") else float(value)
                 fm.set_param(param_name, min=new_value)
+                fm.set_param_hint(param_name, min=new_value)
             elif field == "max":
                 old_value = par.max
                 new_value = float("inf") if value in ("inf", "") else float(value)
                 fm.set_param(param_name, max=new_value)
+                fm.set_param_hint(param_name, max=new_value)
             elif field == "expr":
                 old_value = par.expr or ""
                 new_value = value.strip()
@@ -1218,6 +1400,7 @@ class CurveLabApp(ttk.Frame):
                         "gof": r.gof,
                         "report": r.report,
                         "candidates": r.candidates,
+                        "init_params": r.init_params,
                         # flatchain (emcee DataFrame) is not serialized
                     })
                 fit_sessions[sess_name] = sess_data
@@ -1247,6 +1430,7 @@ class CurveLabApp(ttk.Frame):
                 "fit_method": self.fit_panel.method_var.get(),
                 "reduce_fcn": self.fit_panel.reduce_var.get(),
                 "weight_mode": self.fit_panel.weight_var.get(),
+                "max_nfev": self.fit_panel.max_nfev_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
                 "ylabel": self.plot_controls.ylabel_var.get(),
             },
@@ -1374,6 +1558,7 @@ class CurveLabApp(ttk.Frame):
                         gof=rdata.get("gof", {}),
                         report=rdata.get("report", ""),
                         candidates=rdata.get("candidates"),
+                        init_params=rdata.get("init_params"),
                         # flatchain is not serialized
                     )
 
@@ -1400,6 +1585,7 @@ class CurveLabApp(ttk.Frame):
         self.fit_panel.method_var.set(pc.get("fit_method", "leastsq"))
         self.fit_panel.reduce_var.set(pc.get("reduce_fcn", "Chi-square (default)"))
         self.fit_panel.weight_var.set(pc.get("weight_mode", "1/yerr (default)"))
+        self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))
         self.plot_controls.xlabel_var.set(pc.get("xlabel", ""))
         self.plot_controls.ylabel_var.set(pc.get("ylabel", ""))
 

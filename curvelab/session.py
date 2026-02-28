@@ -25,6 +25,7 @@ class FitResult:
     y_uncertainty: np.ndarray | None = None  # 1-sigma band on dense grid
     candidates: list[dict] | None = None  # brute-force candidates
     flatchain: object | None = None  # emcee DataFrame
+    init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
 
 
 @runtime_checkable

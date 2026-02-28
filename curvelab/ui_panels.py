@@ -608,6 +608,16 @@ class FitPanel(ttk.LabelFrame):
             width=20,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
+        # --- Max nfev ---
+        nfev_frame = ttk.Frame(self)
+        nfev_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(nfev_frame, text="Max nfev:").pack(side=tk.LEFT)
+        self.max_nfev_var = tk.StringVar(value="")
+        ttk.Entry(nfev_frame, textvariable=self.max_nfev_var, width=10).pack(
+            side=tk.LEFT, padx=2
+        )
+        ttk.Label(nfev_frame, text="(empty = unlimited)").pack(side=tk.LEFT, padx=2)
+
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
         fit_btn_frame.pack(fill=tk.X, pady=3)
@@ -800,11 +810,12 @@ class FitResultsPanel(ttk.LabelFrame):
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("value", "stderr", "min", "max", "vary", "expr")
+        columns = ("value", "init", "stderr", "min", "max", "vary", "expr")
         self.param_tree = ttk.Treeview(
             tree_frame, columns=columns, show="headings", height=6
         )
         self.param_tree.heading("value", text="Value")
+        self.param_tree.heading("init", text="Initial")
         self.param_tree.heading("stderr", text="StdErr")
         self.param_tree.heading("min", text="Min")
         self.param_tree.heading("max", text="Max")
@@ -812,6 +823,7 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree.heading("expr", text="Expr")
 
         self.param_tree.column("value", width=80)
+        self.param_tree.column("init", width=70)
         self.param_tree.column("stderr", width=80)
         self.param_tree.column("min", width=60)
         self.param_tree.column("max", width=60)
@@ -854,13 +866,14 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree.delete(*self.param_tree.get_children())
         for i, (name, info) in enumerate(params.items()):
             val = f"{info['value']:.6g}" if info["value"] is not None else ""
+            init_val = f"{info['init_value']:.6g}" if info.get("init_value") is not None else ""
             stderr = f"{info['stderr']:.6g}" if info.get("stderr") is not None else ""
             mn = f"{info['min']:.6g}" if info["min"] not in (None, float("-inf")) else "-inf"
             mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
             vary = "Yes" if info.get("vary", True) else "No"
             expr = info.get("expr") or ""
             tag = "even" if i % 2 == 0 else "odd"
-            self.param_tree.insert("", tk.END, text=name, values=(val, stderr, mn, mx, vary, expr), tags=(tag,))
+            self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=(tag,))
 
     def set_report(self, report: str):
         self.report_text.config(state=tk.NORMAL)
@@ -887,7 +900,7 @@ class FitResultsPanel(ttk.LabelFrame):
 
         # column is like "#1", "#2", etc.
         col_idx = int(column.replace("#", "")) - 1
-        col_names = ("value", "stderr", "min", "max", "vary", "expr")
+        col_names = ("value", "init", "stderr", "min", "max", "vary", "expr")
         if col_idx < 0 or col_idx >= len(col_names):
             return
 
@@ -1407,3 +1420,153 @@ class ConfidenceContourDialog(tk.Toplevel):
             self._status_var.set("Done.")
         except Exception as e:
             self._status_var.set(f"Error: {e}")
+
+
+class GlobalFitDialog(tk.Toplevel):
+    """Dialog for global fitting across multiple series with shared parameters."""
+
+    def __init__(self, parent, series_info: list[dict], base_param_names: list[str],
+                 on_fit=None):
+        """
+        series_info: list of dicts with keys 'id' and 'label'.
+        base_param_names: list of parameter names from the model.
+        on_fit: callback(selected_series_ids, shared_param_names).
+        """
+        super().__init__(parent)
+        self.title("Global Fit")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("500x500")
+        self._on_fit = on_fit
+
+        # --- Series selection ---
+        series_frame = ttk.LabelFrame(self, text="Series", padding=5)
+        series_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 5))
+
+        self._series_vars = {}
+        for info in series_info:
+            var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(series_frame, text=info["label"], variable=var).pack(
+                anchor=tk.W
+            )
+            self._series_vars[info["id"]] = var
+
+        # --- Parameter sharing ---
+        param_frame = ttk.LabelFrame(self, text="Shared Parameters", padding=5)
+        param_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        canvas = tk.Canvas(param_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(param_frame, orient=tk.VERTICAL, command=canvas.yview)
+        inner_frame = ttk.Frame(canvas)
+
+        inner_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all")),
+        )
+        canvas.create_window((0, 0), window=inner_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._param_vars = {}
+        for name in base_param_names:
+            var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(inner_frame, text=name, variable=var).pack(anchor=tk.W)
+            self._param_vars[name] = var
+
+        # --- Buttons ---
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(btn_frame, textvariable=self._status_var).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        ttk.Button(btn_frame, text="Fit", command=self._do_fit).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+
+    def _do_fit(self):
+        selected_ids = [sid for sid, var in self._series_vars.items() if var.get()]
+        shared = {name for name, var in self._param_vars.items() if var.get()}
+        if len(selected_ids) < 2:
+            self._status_var.set("Select at least 2 series.")
+            return
+        self._status_var.set("Fitting...")
+        self.update_idletasks()
+        if self._on_fit:
+            try:
+                self._on_fit(selected_ids, shared)
+                self.destroy()
+            except Exception as e:
+                self._status_var.set(f"Error: {e}")
+
+
+class UncertaintyPropagationDialog(tk.Toplevel):
+    """Evaluate expressions with propagated uncertainties using ufloats."""
+
+    def __init__(self, parent, uvars: dict):
+        """uvars: dict mapping param name to ufloat (from lmfit result.uvars)."""
+        super().__init__(parent)
+        self.title("Uncertainty Propagation")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("550x400")
+        self._uvars = uvars
+
+        # --- Available variables ---
+        var_frame = ttk.LabelFrame(self, text="Available Variables", padding=5)
+        var_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 5))
+
+        var_list = tk.Listbox(var_frame, height=8)
+        var_scroll = ttk.Scrollbar(var_frame, orient=tk.VERTICAL, command=var_list.yview)
+        var_list.configure(yscrollcommand=var_scroll.set)
+        var_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        var_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        for name, uval in uvars.items():
+            try:
+                var_list.insert(tk.END, f"{name} = {uval.nominal_value:.6g} \u00b1 {uval.std_dev:.6g}")
+            except AttributeError:
+                var_list.insert(tk.END, f"{name} = {uval}")
+
+        # --- Expression entry ---
+        expr_frame = ttk.Frame(self, padding=5)
+        expr_frame.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(expr_frame, text="Expression:").pack(side=tk.LEFT)
+        self._expr_var = tk.StringVar()
+        expr_entry = ttk.Entry(expr_frame, textvariable=self._expr_var, width=40)
+        expr_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=5)
+        expr_entry.bind("<Return>", lambda e: self._evaluate())
+
+        ttk.Button(expr_frame, text="Evaluate", command=self._evaluate).pack(side=tk.LEFT)
+
+        # --- Result ---
+        self._result_var = tk.StringVar(value="Enter an expression using parameter names above.")
+        ttk.Label(self, textvariable=self._result_var, wraplength=500, justify=tk.LEFT).pack(
+            fill=tk.X, padx=10, pady=5
+        )
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
+
+    def _evaluate(self):
+        expr = self._expr_var.get().strip()
+        if not expr:
+            self._result_var.set("Enter an expression.")
+            return
+        try:
+            from uncertainties import umath
+            # Build namespace with uvars and umath functions
+            ns = dict(self._uvars)
+            for fname in dir(umath):
+                if not fname.startswith("_"):
+                    ns[fname] = getattr(umath, fname)
+            result = eval(expr, {"__builtins__": {}}, ns)
+            try:
+                self._result_var.set(
+                    f"{expr} = {result.nominal_value:.6g} \u00b1 {result.std_dev:.6g}"
+                )
+            except AttributeError:
+                self._result_var.set(f"{expr} = {result}")
+        except Exception as e:
+            self._result_var.set(f"Error: {e}")

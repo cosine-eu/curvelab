@@ -54,6 +54,7 @@ class FitManager:
         self._model: Model | None = None
         self._params: Parameters | None = None
         self._last_result: ModelResult | None = None
+        self._param_hints: dict[str, dict] = {}
 
     def add_component(
         self, model_name: str, operator: str = "+", expression: str = ""
@@ -100,6 +101,7 @@ class FitManager:
         self._model = None
         self._params = None
         self._last_result = None
+        self._param_hints.clear()
 
     def _build_component_model(self, comp: FitComponent, x_data: np.ndarray | None = None):
         """Build a single component model. Uses x_data for Spline if available."""
@@ -152,6 +154,11 @@ class FitManager:
             if par.value == float("-inf"):
                 par.set(value=1.0)
 
+        # Re-apply stored parameter hints so edits survive rebuilds
+        for name, hints in self._param_hints.items():
+            if name in self._params:
+                self._params[name].set(**hints)
+
     def _rebuild_model_with_data(self, x: np.ndarray):
         """Rebuild model using real x-data (needed for Spline knots)."""
         if not self.components:
@@ -175,6 +182,11 @@ class FitManager:
         for par in self._params.values():
             if par.value == float("-inf"):
                 par.set(value=1.0)
+
+        # Re-apply stored parameter hints so edits survive rebuilds
+        for name, hints in self._param_hints.items():
+            if name in self._params:
+                self._params[name].set(**hints)
 
     @property
     def _has_spline(self) -> bool:
@@ -222,6 +234,14 @@ class FitManager:
         for comp in self.components:
             target.add_component(comp.name, operator=comp.operator, expression=comp.expression)
 
+    def set_param_hint(self, name: str, **kwargs):
+        """Store a parameter hint that survives model rebuilds."""
+        self._param_hints[name] = {**self._param_hints.get(name, {}), **kwargs}
+        if self._model is not None:
+            self._model.set_param_hint(name, **kwargs)
+        if self._params is not None and name in self._params:
+            self._params[name].set(**kwargs)
+
     def set_param(self, name: str, **kwargs):
         """Set parameter attributes (value, min, max, vary)."""
         if self._params is not None and name in self._params:
@@ -254,6 +274,7 @@ class FitManager:
         fit_kws: dict | None = None,
         reduce_fcn=None,
         weight_mode: str = "1/yerr (default)",
+        max_nfev: int | None = None,
     ) -> FitResult:
         """Run the fit and return results."""
         if self._model is None or self._params is None:
@@ -263,16 +284,25 @@ class FitManager:
         if self._has_spline:
             self._rebuild_model_with_data(x)
 
+        # Snapshot initial parameter values before fitting
+        init_values = {name: par.value for name, par in self._params.items()}
+
         weights = self._compute_weights(y, yerr, weight_mode)
 
         kws = dict(fit_kws or {})
         if reduce_fcn is not None:
             kws["reduce_fcn"] = reduce_fcn
 
-        self._last_result = self._model.fit(
-            y, self._params, x=x, weights=weights,
+        fit_kwargs = dict(
             method=method, nan_policy="omit",
             iter_cb=iter_cb, fit_kws=kws,
+        )
+        if max_nfev is not None:
+            fit_kwargs["max_nfev"] = max_nfev
+
+        self._last_result = self._model.fit(
+            y, self._params, x=x, weights=weights,
+            **fit_kwargs,
         )
 
         # Dense x-grid for smooth curve
@@ -346,7 +376,135 @@ class FitManager:
             y_uncertainty=y_uncertainty,
             candidates=candidates,
             flatchain=flatchain,
+            init_params=init_values,
         )
+
+    def run_global_fit(
+        self,
+        datasets: list[tuple[np.ndarray, np.ndarray, np.ndarray | None]],
+        shared_params: set[str],
+        method: str = "leastsq",
+        max_nfev: int | None = None,
+        weight_mode: str = "1/yerr (default)",
+    ) -> list[FitResult]:
+        """Run a global fit across multiple datasets with shared parameters.
+
+        Parameters that are in *shared_params* get one entry in the combined
+        Parameters object.  Non-shared params get per-dataset prefixed entries
+        (s0_, s1_, ...).  Returns one FitResult per dataset.
+        """
+        from lmfit import Parameters, minimize
+
+        if self._model is None or self._params is None:
+            raise ValueError("No model defined")
+
+        n = len(datasets)
+        base_params = self._params
+
+        # Build combined Parameters
+        combined = Parameters()
+        base_names = list(base_params.keys())
+
+        for name in base_names:
+            bp = base_params[name]
+            if name in shared_params:
+                combined.add(name, value=bp.value, min=bp.min, max=bp.max,
+                             vary=bp.vary, expr=bp.expr or None)
+            else:
+                for i in range(n):
+                    pname = f"s{i}_{name}"
+                    combined.add(pname, value=bp.value, min=bp.min, max=bp.max,
+                                 vary=bp.vary, expr=bp.expr or None)
+
+        def objective(params):
+            all_resid = []
+            for i, (x, y, yerr) in enumerate(datasets):
+                # Build per-dataset params
+                kw = {}
+                for name in base_names:
+                    if name in shared_params:
+                        kw[name] = params[name].value
+                    else:
+                        kw[name] = params[f"s{i}_{name}"].value
+                # Evaluate model
+                y_model = self._model.eval(x=x, **kw)
+                resid = y - y_model
+                weights = self._compute_weights(y, yerr, weight_mode)
+                if weights is not None:
+                    resid = resid * weights
+                all_resid.append(resid)
+            return np.concatenate(all_resid)
+
+        kws = {}
+        if max_nfev is not None:
+            kws["max_nfev"] = max_nfev
+
+        mini_result = minimize(objective, combined, method=method,
+                               nan_policy="omit", **kws)
+
+        # Build per-dataset FitResults
+        results = []
+        for i, (x, y, yerr) in enumerate(datasets):
+            # Extract per-dataset param values
+            params_info = {}
+            init_values = {}
+            for name in base_names:
+                bp = base_params[name]
+                if name in shared_params:
+                    p = mini_result.params[name]
+                else:
+                    p = mini_result.params[f"s{i}_{name}"]
+                params_info[name] = {
+                    "value": p.value,
+                    "stderr": p.stderr,
+                    "min": p.min,
+                    "max": p.max,
+                    "vary": p.vary,
+                    "expr": p.expr or "",
+                }
+                init_values[name] = bp.value
+
+            # Evaluate model for this dataset
+            eval_kw = {name: params_info[name]["value"] for name in base_names}
+            x_dense = np.linspace(x.min(), x.max(), 500)
+            y_fit_data = self._model.eval(x=x, **eval_kw)
+            y_fit_dense = self._model.eval(x=x_dense, **eval_kw)
+
+            gof = {
+                "chi-squared": mini_result.chisqr,
+                "reduced chi-squared": mini_result.redchi,
+                "R-squared": 1 - np.sum((y - y_fit_data) ** 2) / np.sum((y - y.mean()) ** 2),
+                "AIC": mini_result.aic,
+                "BIC": mini_result.bic,
+            }
+
+            # Generate a report string
+            lines = [f"Global Fit — Dataset {i + 1}/{n}"]
+            lines.append(f"  Method: {method}")
+            lines.append(f"  chi-squared = {gof['chi-squared']:.6g}")
+            lines.append(f"  reduced chi-squared = {gof['reduced chi-squared']:.6g}")
+            lines.append(f"  R-squared = {gof['R-squared']:.6g}")
+            lines.append("")
+            for name, info in params_info.items():
+                shared_tag = " [shared]" if name in shared_params else ""
+                stderr_str = f" +/- {info['stderr']:.6g}" if info['stderr'] is not None else ""
+                lines.append(f"  {name}{shared_tag}: {info['value']:.6g}{stderr_str}")
+            report = "\n".join(lines)
+
+            results.append(FitResult(
+                x_dense=x_dense,
+                y_fit_dense=y_fit_dense,
+                x_data=x,
+                y_data=y,
+                y_fit_data=y_fit_data,
+                yerr_data=yerr,
+                params=params_info,
+                report=report,
+                gof=gof,
+                init_params=init_values,
+            ))
+
+        return results
 
     def compute_confidence_intervals(self, sigmas=None) -> str:
         """Compute confidence intervals and return a CI report string."""
@@ -368,7 +526,7 @@ class FitManager:
 
     def serialize(self) -> dict:
         """Serialize component list for workspace persistence."""
-        return {
+        data = {
             "components": [
                 {
                     "name": c.name,
@@ -377,8 +535,11 @@ class FitManager:
                     "expression": c.expression,
                 }
                 for c in self.components
-            ]
+            ],
         }
+        if self._param_hints:
+            data["param_hints"] = self._param_hints
+        return data
 
     @classmethod
     def deserialize(cls, data: dict) -> "FitManager":
@@ -390,4 +551,7 @@ class FitManager:
                 operator=comp.get("operator", "+"),
                 expression=comp.get("expression", ""),
             )
+        # Restore parameter hints
+        for name, hints in data.get("param_hints", {}).items():
+            fm.set_param_hint(name, **hints)
         return fm
