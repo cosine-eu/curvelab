@@ -163,6 +163,8 @@ class FitManager:
         yerr: np.ndarray | None = None,
         n_dense: int = 500,
         method: str = "leastsq",
+        iter_cb=None,
+        fit_kws: dict | None = None,
     ) -> FitResult:
         """Run the fit and return results."""
         if self._model is None or self._params is None:
@@ -172,6 +174,7 @@ class FitManager:
         self._last_result = self._model.fit(
             y, self._params, x=x, weights=weights,
             method=method, nan_policy="omit",
+            iter_cb=iter_cb, fit_kws=fit_kws or {},
         )
 
         # Dense x-grid for smooth curve
@@ -215,6 +218,22 @@ class FitManager:
             "BIC": self._last_result.bic,
         }
 
+        # Capture brute-force candidates
+        candidates = None
+        if hasattr(self._last_result, "candidates") and self._last_result.candidates:
+            candidates = []
+            for cand in self._last_result.candidates:
+                entry = {"score": cand.score}
+                entry["params"] = {
+                    name: cand.params[name].value for name in cand.params
+                }
+                candidates.append(entry)
+
+        # Capture emcee flatchain
+        flatchain = None
+        if hasattr(self._last_result, "flatchain") and self._last_result.flatchain is not None:
+            flatchain = self._last_result.flatchain
+
         return FitResult(
             x_dense=x_dense,
             y_fit_dense=y_fit_dense,
@@ -227,7 +246,27 @@ class FitManager:
             gof=gof,
             component_curves=component_curves,
             y_uncertainty=y_uncertainty,
+            candidates=candidates,
+            flatchain=flatchain,
         )
+
+    def compute_confidence_intervals(self, sigmas=None) -> str:
+        """Compute confidence intervals and return a CI report string."""
+        if self._last_result is None:
+            raise ValueError("No fit result available")
+        from lmfit import conf_interval, ci_report
+        ci = conf_interval(self._last_result, self._last_result, sigmas=sigmas)
+        return ci_report(ci)
+
+    def get_correlations(self) -> dict[str, dict[str, float]]:
+        """Extract parameter correlations from the last fit result."""
+        if self._last_result is None:
+            raise ValueError("No fit result available")
+        correlations = {}
+        for name, par in self._last_result.params.items():
+            if par.correl is not None:
+                correlations[name] = dict(par.correl)
+        return correlations
 
     def serialize(self) -> dict:
         """Serialize component list for workspace persistence."""

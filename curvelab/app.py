@@ -2,6 +2,7 @@
 
 import csv
 import json
+import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
@@ -15,6 +16,8 @@ from .session import FIT_COLORS, FitSession, ParamEdit, SeriesRecord
 from .ui_panels import (
     DataPanel, PlotControlPanel, FitPanel, FitResultsPanel,
     FontDialog, ModelComparisonDialog,
+    ConfidenceIntervalDialog, CorrelationMatrixDialog,
+    BruteCandidatesDialog, EmceeSummaryDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -47,6 +50,10 @@ class CurveLabApp(ttk.Frame):
         self._ui_size = 10
         self._plot_family = "sans-serif"
         self._plot_size = 10
+
+        # Threading state for async fits
+        self._fit_thread: threading.Thread | None = None
+        self._fit_abort = threading.Event()
 
         self._build_layout()
         self._build_menu()
@@ -122,6 +129,7 @@ class CurveLabApp(ttk.Frame):
             on_delete_session=self._on_delete_session,
             on_batch_fit=self._on_batch_fit,
             on_toggle_session_visible=self._on_toggle_session_visible,
+            on_abort=self._abort_fit,
         )
         left_pane.add(self.fit_panel, weight=1)
 
@@ -182,9 +190,20 @@ class CurveLabApp(ttk.Frame):
         file_menu.add_command(label="Export Parameters...", command=self._export_params)
         file_menu.add_command(label="Export Fit Report...", command=self._export_report)
         file_menu.add_command(label="Save Plot...", command=self._save_plot)
-        file_menu.add_separator()
-        file_menu.add_command(label="Model Comparison...", command=self._show_model_comparison)
         menubar.add_cascade(label="File", menu=file_menu)
+
+        analysis_menu = tk.Menu(menubar, tearoff=0)
+        analysis_menu.add_command(
+            label="Confidence Intervals...", command=self._show_confidence_intervals
+        )
+        analysis_menu.add_command(
+            label="Correlation Matrix...", command=self._show_correlations
+        )
+        analysis_menu.add_separator()
+        analysis_menu.add_command(
+            label="Model Comparison...", command=self._show_model_comparison
+        )
+        menubar.add_cascade(label="Analysis", menu=analysis_menu)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="Fonts...", command=self._open_font_dialog)
@@ -713,6 +732,8 @@ class CurveLabApp(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Guess Error", str(e))
 
+    _SLOW_METHODS = {"emcee", "brute", "differential_evolution", "basinhopping"}
+
     def _on_fit(self):
         rec = self._active_record
         sess = self._active_session
@@ -724,36 +745,176 @@ class CurveLabApp(ttk.Frame):
             messagebox.showwarning("No Model", "Add at least one model component.")
             return
 
+        method = self.fit_panel.method_var.get()
+
+        # Brute validation: all varied params need finite bounds
+        if method == "brute":
+            if fm.params is not None:
+                for name, par in fm.params.items():
+                    if par.vary and (par.min == float("-inf") or par.max == float("inf")):
+                        messagebox.showwarning(
+                            "Brute Requires Bounds",
+                            f"Parameter '{name}' needs finite min and max bounds "
+                            f"for brute-force search.",
+                        )
+                        return
+
+        if method in self._SLOW_METHODS:
+            self._run_fit_async(rec, sess, method)
+        else:
+            self._run_fit_sync(rec, sess, method)
+
+    def _run_fit_sync(self, rec, sess, method):
+        """Run fit synchronously (fast methods)."""
+        fm = sess.fit_manager
         try:
             x, y, yerr = self._get_fit_data(rec)
-            method = self.fit_panel.method_var.get()
             result = fm.run_fit(x, y, yerr=yerr, method=method)
             sess.result = result
-
-            skey = _make_session_key(self._active_series_id, sess.name)
-            series_label = rec.style.get("label", self._active_series_id)
-            label = f"{series_label} \u2014 {sess.name}"
-
-            # Clear previous fit for this session, then plot new
-            self.plot_mgr.clear_fit_session(skey)
-            self._plot_fit_for_session(skey, sess, label)
-
-            # Residuals
-            if self.plot_controls.residuals_var.get():
-                self._plot_residuals_for_session(skey, sess, rec)
-
-            # Show results
-            self.fit_results.set_params(result.params)
-            self.fit_results.set_report(result.report)
-
-            # Show params on plot if toggled
-            if self.plot_controls.show_params_var.get():
-                self.plot_mgr.annotate_params(
-                    result.params, gof=result.gof, session_key=skey
-                )
-
+            self._post_fit_update(sess, rec)
         except Exception as e:
             messagebox.showerror("Fit Error", str(e))
+
+    def _run_fit_async(self, rec, sess, method):
+        """Run fit in a background thread (slow methods)."""
+        if self._fit_thread is not None and self._fit_thread.is_alive():
+            messagebox.showwarning("Busy", "A fit is already running.")
+            return
+
+        self._fit_abort.clear()
+        self.fit_panel.set_fitting_state(True)
+
+        fm = sess.fit_manager
+        try:
+            x, y, yerr = self._get_fit_data(rec)
+        except Exception as e:
+            messagebox.showerror("Fit Error", str(e))
+            self.fit_panel.set_fitting_state(False)
+            return
+
+        # Build iter_cb that checks abort flag
+        def iter_cb(params, iter, resid, *args, **kw):
+            if self._fit_abort.is_set():
+                return True
+
+        # Build fit_kws for emcee
+        fit_kws = {}
+        if method == "emcee":
+            fit_kws["is_weighted"] = yerr is not None
+
+        # Container for result/error from the thread
+        container = {"result": None, "error": None}
+
+        def _run():
+            try:
+                result = fm.run_fit(
+                    x, y, yerr=yerr, method=method,
+                    iter_cb=iter_cb, fit_kws=fit_kws,
+                )
+                container["result"] = result
+            except Exception as e:
+                container["error"] = e
+
+        self._fit_thread = threading.Thread(target=_run, daemon=True)
+        self._fit_thread.start()
+
+        def _poll():
+            if self._fit_thread.is_alive():
+                self.after(100, _poll)
+                return
+            self._fit_thread = None
+            self.fit_panel.set_fitting_state(False)
+
+            if container["error"] is not None:
+                if not self._fit_abort.is_set():
+                    messagebox.showerror("Fit Error", str(container["error"]))
+                return
+            if self._fit_abort.is_set():
+                return
+
+            sess.result = container["result"]
+            self._post_fit_update(sess, rec)
+
+            # Auto-show special result dialogs
+            if sess.result.candidates:
+                self._show_candidates_dialog(sess)
+            if sess.result.flatchain is not None:
+                self._show_emcee_summary_dialog(sess)
+
+        self.after(100, _poll)
+
+    def _abort_fit(self):
+        """Signal the background fit to stop."""
+        self._fit_abort.set()
+
+    def _post_fit_update(self, sess, rec):
+        """Update plot, params, and report after a fit completes."""
+        result = sess.result
+        skey = _make_session_key(self._active_series_id, sess.name)
+        series_label = rec.style.get("label", self._active_series_id)
+        label = f"{series_label} \u2014 {sess.name}"
+
+        self.plot_mgr.clear_fit_session(skey)
+        self._plot_fit_for_session(skey, sess, label)
+
+        if self.plot_controls.residuals_var.get():
+            self._plot_residuals_for_session(skey, sess, rec)
+
+        self.fit_results.set_params(result.params)
+        self.fit_results.set_report(result.report)
+
+        if self.plot_controls.show_params_var.get():
+            self.plot_mgr.annotate_params(
+                result.params, gof=result.gof, session_key=skey
+            )
+
+    # --- Analysis handlers ---
+
+    def _show_confidence_intervals(self):
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+        try:
+            ci_text = fm.compute_confidence_intervals()
+            ConfidenceIntervalDialog(self, ci_text)
+        except Exception as e:
+            messagebox.showerror("CI Error", str(e))
+
+    def _show_correlations(self):
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+        try:
+            correlations = fm.get_correlations()
+            if not correlations:
+                messagebox.showinfo("No Correlations", "No parameter correlations available.")
+                return
+            CorrelationMatrixDialog(self, correlations)
+        except Exception as e:
+            messagebox.showerror("Correlation Error", str(e))
+
+    def _show_candidates_dialog(self, sess):
+        """Show brute-force candidates dialog with option to load values."""
+        if sess.result is None or not sess.result.candidates:
+            return
+
+        def on_select(params_dict):
+            fm = sess.fit_manager
+            for name, val in params_dict.items():
+                fm.set_param(name, value=val)
+            self._refresh_param_display()
+
+        BruteCandidatesDialog(self, sess.result.candidates, on_select=on_select)
+
+    def _show_emcee_summary_dialog(self, sess):
+        """Show emcee MCMC summary dialog."""
+        if sess.result is None or sess.result.flatchain is None:
+            return
+        EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params)
 
     def _on_batch_fit(self):
         """Apply the active session's model to all plotted series."""
@@ -1003,6 +1164,8 @@ class CurveLabApp(ttk.Frame):
                         "params": r.params,
                         "gof": r.gof,
                         "report": r.report,
+                        "candidates": r.candidates,
+                        # flatchain (emcee DataFrame) is not serialized
                     })
                 fit_sessions[sess_name] = sess_data
 
@@ -1155,6 +1318,8 @@ class CurveLabApp(ttk.Frame):
                         params=rdata.get("params", {}),
                         gof=rdata.get("gof", {}),
                         report=rdata.get("report", ""),
+                        candidates=rdata.get("candidates"),
+                        # flatchain is not serialized
                     )
 
                 rec.fit_sessions[sess_name] = sess

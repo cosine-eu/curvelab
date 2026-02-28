@@ -23,6 +23,8 @@ class FitResult:
     gof: dict[str, float] = field(default_factory=dict)
     component_curves: dict[str, np.ndarray] = field(default_factory=dict)
     y_uncertainty: np.ndarray | None = None  # 1-sigma band on dense grid
+    candidates: list[dict] | None = None  # brute-force candidates
+    flatchain: object | None = None  # emcee DataFrame
 
 
 @runtime_checkable

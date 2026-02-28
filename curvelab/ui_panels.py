@@ -462,6 +462,7 @@ class FitPanel(ttk.LabelFrame):
         on_delete_session=None,
         on_batch_fit=None,
         on_toggle_session_visible=None,
+        on_abort=None,
     ):
         super().__init__(parent, text="Fit", padding=5)
         self._on_add_component = on_add_component
@@ -478,6 +479,7 @@ class FitPanel(ttk.LabelFrame):
         self._on_delete_session = on_delete_session
         self._on_batch_fit = on_batch_fit
         self._on_toggle_session_visible = on_toggle_session_visible
+        self._on_abort = on_abort
         self._session_names: list[str] = []
 
         self._build_ui()
@@ -573,6 +575,7 @@ class FitPanel(ttk.LabelFrame):
             values=[
                 "leastsq", "least_squares", "nelder", "powell",
                 "differential_evolution", "basinhopping",
+                "brute", "emcee",
             ],
             state="readonly",
             width=20,
@@ -584,9 +587,8 @@ class FitPanel(ttk.LabelFrame):
         ttk.Button(fit_btn_frame, text="Auto Guess", command=self._auto_guess).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
         )
-        ttk.Button(fit_btn_frame, text="Fit", command=self._fit).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
-        )
+        self._fit_btn = ttk.Button(fit_btn_frame, text="Fit", command=self._fit)
+        self._fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(fit_btn_frame, text="Batch Fit", command=self._batch_fit).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2
         )
@@ -726,6 +728,17 @@ class FitPanel(ttk.LabelFrame):
     def _clear_fit(self):
         if self._on_clear_fit:
             self._on_clear_fit()
+
+    def set_fitting_state(self, fitting: bool):
+        """Toggle the Fit button between Fit and Abort modes."""
+        if fitting:
+            self._fit_btn.configure(text="Abort", command=self._abort)
+        else:
+            self._fit_btn.configure(text="Fit", command=self._fit)
+
+    def _abort(self):
+        if self._on_abort:
+            self._on_abort()
 
     def set_components(self, components: list[str]):
         """Update the component listbox."""
@@ -1003,3 +1016,196 @@ class ModelComparisonDialog(tk.Toplevel):
         scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
 
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
+
+
+class ConfidenceIntervalDialog(tk.Toplevel):
+    """Display confidence interval report in monospace text."""
+
+    def __init__(self, parent, ci_text: str):
+        super().__init__(parent)
+        self.title("Confidence Intervals")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("600x400")
+
+        text = tk.Text(self, wrap=tk.NONE, font=("Courier", 10))
+        text.insert("1.0", ci_text)
+        text.config(state=tk.DISABLED)
+
+        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=text.xview)
+        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=text.yview)
+        text.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+
+        text.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 0))
+        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 0))
+        xscroll.grid(row=1, column=0, sticky="ew", padx=(10, 0))
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        ttk.Button(self, text="Close", command=self.destroy).grid(
+            row=2, column=0, columnspan=2, pady=10
+        )
+
+
+class CorrelationMatrixDialog(tk.Toplevel):
+    """Display parameter correlation matrix in a Treeview."""
+
+    def __init__(self, parent, correlations: dict[str, dict[str, float]]):
+        super().__init__(parent)
+        self.title("Correlation Matrix")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("700x400")
+
+        # Collect all parameter names
+        all_params = list(correlations.keys())
+        if not all_params:
+            ttk.Label(self, text="No correlations available.").pack(padx=20, pady=20)
+            ttk.Button(self, text="Close", command=self.destroy).pack(pady=10)
+            return
+
+        tree = ttk.Treeview(self, columns=all_params, show=("tree", "headings"))
+        tree.column("#0", width=120, stretch=False)
+        tree.heading("#0", text="Parameter")
+
+        for p in all_params:
+            tree.heading(p, text=p)
+            tree.column(p, width=80)
+
+        tree.tag_configure("even", background="#f0f0f0")
+        tree.tag_configure("odd", background="#ffffff")
+
+        for i, name in enumerate(all_params):
+            vals = []
+            for other in all_params:
+                if name == other:
+                    vals.append("1.000")
+                elif other in correlations.get(name, {}):
+                    vals.append(f"{correlations[name][other]:.3f}")
+                else:
+                    vals.append("")
+            tag = "even" if i % 2 == 0 else "odd"
+            tree.insert("", tk.END, text=name, values=tuple(vals), tags=(tag,))
+
+        scroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=tree.yview)
+        tree.configure(yscrollcommand=scroll.set)
+        tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
+
+
+class BruteCandidatesDialog(tk.Toplevel):
+    """Display brute-force candidates with option to load one."""
+
+    def __init__(self, parent, candidates: list[dict], on_select=None):
+        super().__init__(parent)
+        self.title("Brute-Force Candidates")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("700x400")
+        self._on_select = on_select
+        self._candidates = candidates
+
+        if not candidates:
+            ttk.Label(self, text="No candidates available.").pack(padx=20, pady=20)
+            ttk.Button(self, text="Close", command=self.destroy).pack(pady=10)
+            return
+
+        # Get parameter names from first candidate
+        param_names = list(candidates[0]["params"].keys())
+        columns = ("score",) + tuple(param_names)
+
+        tree_frame = ttk.Frame(self)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(10, 0))
+
+        self._tree = ttk.Treeview(
+            tree_frame, columns=columns, show="headings", height=15
+        )
+        self._tree.heading("score", text="Score")
+        self._tree.column("score", width=100)
+        for p in param_names:
+            self._tree.heading(p, text=p)
+            self._tree.column(p, width=90)
+
+        self._tree.tag_configure("even", background="#f0f0f0")
+        self._tree.tag_configure("odd", background="#ffffff")
+        self._tree.tag_configure("best", background="#d4edda")
+
+        for i, cand in enumerate(candidates):
+            vals = [f"{cand['score']:.6g}"]
+            for p in param_names:
+                vals.append(f"{cand['params'][p]:.6g}")
+            tag = "best" if i == 0 else ("even" if i % 2 == 0 else "odd")
+            self._tree.insert("", tk.END, values=tuple(vals), tags=(tag,))
+
+        scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
+        self._tree.configure(yscrollcommand=scroll.set)
+        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Button(btn_frame, text="Load Selected", command=self._load_selected).pack(
+            side=tk.LEFT, padx=(0, 5)
+        )
+        ttk.Button(btn_frame, text="Close", command=self.destroy).pack(side=tk.LEFT)
+
+    def _load_selected(self):
+        sel = self._tree.selection()
+        if not sel:
+            return
+        idx = self._tree.index(sel[0])
+        if self._on_select and idx < len(self._candidates):
+            self._on_select(self._candidates[idx]["params"])
+            self.destroy()
+
+
+class EmceeSummaryDialog(tk.Toplevel):
+    """Display emcee MCMC summary statistics."""
+
+    def __init__(self, parent, flatchain, params_info: dict):
+        super().__init__(parent)
+        self.title("MCMC (emcee) Summary")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("600x400")
+
+        text = tk.Text(self, wrap=tk.NONE, font=("Courier", 10))
+
+        try:
+            import pandas as pd
+            if isinstance(flatchain, pd.DataFrame):
+                lines = [f"{'Parameter':<20s} {'Median':>12s} {'Mean':>12s} "
+                         f"{'Std':>12s} {'2.5%':>12s} {'97.5%':>12s}"]
+                lines.append("-" * 80)
+                for col in flatchain.columns:
+                    data = flatchain[col]
+                    lines.append(
+                        f"{col:<20s} {data.median():>12.6g} {data.mean():>12.6g} "
+                        f"{data.std():>12.6g} {data.quantile(0.025):>12.6g} "
+                        f"{data.quantile(0.975):>12.6g}"
+                    )
+                text.insert("1.0", "\n".join(lines))
+            else:
+                text.insert("1.0", "Flatchain data not available as DataFrame.")
+        except Exception as e:
+            text.insert("1.0", f"Error processing emcee results: {e}")
+
+        text.config(state=tk.DISABLED)
+
+        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=text.xview)
+        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=text.yview)
+        text.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+
+        text.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 0))
+        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 0))
+        xscroll.grid(row=1, column=0, sticky="ew", padx=(10, 0))
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        ttk.Button(self, text="Close", command=self.destroy).grid(
+            row=2, column=0, columnspan=2, pady=10
+        )
