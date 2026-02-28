@@ -10,7 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from .data_manager import DataManager
-from .fit_manager import FitManager, FitResult
+from .fit_manager import FitManager, FitResult, REDUCE_FUNCTIONS
 from .plot_manager import PlotManager, SeriesStyle
 from .session import FIT_COLORS, FitSession, ParamEdit, SeriesRecord
 from .ui_panels import (
@@ -18,6 +18,7 @@ from .ui_panels import (
     FontDialog, ModelComparisonDialog,
     ConfidenceIntervalDialog, CorrelationMatrixDialog,
     BruteCandidatesDialog, EmceeSummaryDialog,
+    DiagnosticPlotsDialog, ConfidenceContourDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -199,6 +200,12 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_command(
             label="Correlation Matrix...", command=self._show_correlations
         )
+        analysis_menu.add_command(
+            label="Diagnostic Plots...", command=self._show_diagnostic_plots
+        )
+        analysis_menu.add_command(
+            label="2D Confidence Contours...", command=self._show_confidence_contours
+        )
         analysis_menu.add_separator()
         analysis_menu.add_command(
             label="Model Comparison...", command=self._show_model_comparison
@@ -352,6 +359,10 @@ class CurveLabApp(ttk.Frame):
         for i, c in enumerate(fit_mgr.components):
             if c.name == "Expression" and c.expression:
                 display = f"Expression: {c.expression}"
+                if c.prefix:
+                    display = f"{display} ({c.prefix})"
+            elif c.name == "Spline" and c.expression:
+                display = f"Spline [{c.expression}]"
                 if c.prefix:
                     display = f"{display} ({c.prefix})"
             else:
@@ -764,12 +775,22 @@ class CurveLabApp(ttk.Frame):
         else:
             self._run_fit_sync(rec, sess, method)
 
+    def _get_fit_options(self):
+        """Read reduce function and weight mode from UI."""
+        reduce_fcn = REDUCE_FUNCTIONS.get(self.fit_panel.reduce_var.get())
+        weight_mode = self.fit_panel.weight_var.get()
+        return reduce_fcn, weight_mode
+
     def _run_fit_sync(self, rec, sess, method):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
             x, y, yerr = self._get_fit_data(rec)
-            result = fm.run_fit(x, y, yerr=yerr, method=method)
+            reduce_fcn, weight_mode = self._get_fit_options()
+            result = fm.run_fit(
+                x, y, yerr=yerr, method=method,
+                reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+            )
             sess.result = result
             self._post_fit_update(sess, rec)
         except Exception as e:
@@ -802,6 +823,8 @@ class CurveLabApp(ttk.Frame):
         if method == "emcee":
             fit_kws["is_weighted"] = yerr is not None
 
+        reduce_fcn, weight_mode = self._get_fit_options()
+
         # Container for result/error from the thread
         container = {"result": None, "error": None}
 
@@ -810,6 +833,7 @@ class CurveLabApp(ttk.Frame):
                 result = fm.run_fit(
                     x, y, yerr=yerr, method=method,
                     iter_cb=iter_cb, fit_kws=fit_kws,
+                    reduce_fcn=reduce_fcn, weight_mode=weight_mode,
                 )
                 container["result"] = result
             except Exception as e:
@@ -896,6 +920,35 @@ class CurveLabApp(ttk.Frame):
             CorrelationMatrixDialog(self, correlations)
         except Exception as e:
             messagebox.showerror("Correlation Error", str(e))
+
+    def _show_diagnostic_plots(self):
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        DiagnosticPlotsDialog(self, sess.result)
+
+    def _show_confidence_contours(self):
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+        if fm._last_result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        # Collect varied parameters
+        vary_params = [
+            name for name, par in fm._last_result.params.items()
+            if par.vary
+        ]
+        if len(vary_params) < 2:
+            messagebox.showwarning(
+                "Not Enough Parameters",
+                "Need at least 2 varied parameters for contour plots.",
+            )
+            return
+        ConfidenceContourDialog(self, fm._last_result, vary_params)
 
     def _show_candidates_dialog(self, sess):
         """Show brute-force candidates dialog with option to load values."""
@@ -1192,6 +1245,8 @@ class CurveLabApp(ttk.Frame):
                 "residuals": self.plot_controls.residuals_var.get(),
                 "confidence_band": self.plot_controls.confidence_band_var.get(),
                 "fit_method": self.fit_panel.method_var.get(),
+                "reduce_fcn": self.fit_panel.reduce_var.get(),
+                "weight_mode": self.fit_panel.weight_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
                 "ylabel": self.plot_controls.ylabel_var.get(),
             },
@@ -1343,6 +1398,8 @@ class CurveLabApp(ttk.Frame):
         self.plot_controls.residuals_var.set(pc.get("residuals", False))
         self.plot_controls.confidence_band_var.set(pc.get("confidence_band", False))
         self.fit_panel.method_var.set(pc.get("fit_method", "leastsq"))
+        self.fit_panel.reduce_var.set(pc.get("reduce_fcn", "Chi-square (default)"))
+        self.fit_panel.weight_var.set(pc.get("weight_mode", "1/yerr (default)"))
         self.plot_controls.xlabel_var.set(pc.get("xlabel", ""))
         self.plot_controls.ylabel_var.set(pc.get("ylabel", ""))
 

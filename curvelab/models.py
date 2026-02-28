@@ -1,11 +1,13 @@
 """lmfit 1D model registry."""
 
+import numpy as np
 from lmfit.models import (
     BreitWignerModel,
     ConstantModel,
     DampedHarmonicOscillatorModel,
     DampedOscillatorModel,
     DoniachModel,
+    ExponentialGaussianModel,
     ExponentialModel,
     ExpressionModel,
     GaussianModel,
@@ -23,6 +25,7 @@ from lmfit.models import (
     SineModel,
     SkewedGaussianModel,
     SkewedVoigtModel,
+    SplineModel,
     SplitLorentzianModel,
     StepModel,
     StudentsTModel,
@@ -63,7 +66,9 @@ MODEL_REGISTRY: dict[str, type] = {
     "Doniach": DoniachModel,
     "Sine": SineModel,
     "Constant": ConstantModel,
+    "ExponentialGaussian": ExponentialGaussianModel,
     "Expression": None,  # Sentinel: requires expression string at creation time
+    "Spline": None,  # Sentinel: requires knot count at creation time
 }
 
 MODEL_NAMES: list[str] = sorted(MODEL_REGISTRY.keys())
@@ -90,6 +95,12 @@ def create_expression_model(expr: str, prefix: str = ""):
         prefixed_expr = re.sub(r"\b" + re.escape(p) + r"\b", prefix + p, prefixed_expr)
 
     return ExpressionModel(prefixed_expr, independent_vars=["x"])
+
+
+def create_spline_model(n_knots: int, x_data: np.ndarray, prefix: str = ""):
+    """Create a SplineModel with evenly-spaced knots over the data range."""
+    xknots = np.linspace(x_data.min(), x_data.max(), n_knots)
+    return SplineModel(xknots=xknots, prefix=prefix)
 
 
 def create_model(name: str, prefix: str = ""):

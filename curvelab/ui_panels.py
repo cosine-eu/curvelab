@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, simpledialog
 import tkinter.font as tkfont
 
+from .fit_manager import REDUCE_FUNCTIONS, WEIGHT_MODES
 from .models import MODEL_NAMES
 
 # Marker choices for the style dropdown
@@ -581,6 +582,32 @@ class FitPanel(ttk.LabelFrame):
             width=20,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
+        # --- Reduce function ---
+        reduce_frame = ttk.Frame(self)
+        reduce_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(reduce_frame, text="Reduce:").pack(side=tk.LEFT)
+        self.reduce_var = tk.StringVar(value="Chi-square (default)")
+        ttk.Combobox(
+            reduce_frame,
+            textvariable=self.reduce_var,
+            values=list(REDUCE_FUNCTIONS.keys()),
+            state="readonly",
+            width=20,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
+        # --- Weights ---
+        weight_frame = ttk.Frame(self)
+        weight_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(weight_frame, text="Weights:").pack(side=tk.LEFT)
+        self.weight_var = tk.StringVar(value="1/yerr (default)")
+        ttk.Combobox(
+            weight_frame,
+            textvariable=self.weight_var,
+            values=WEIGHT_MODES,
+            state="readonly",
+            width=20,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
         fit_btn_frame.pack(fill=tk.X, pady=3)
@@ -684,6 +711,18 @@ class FitPanel(ttk.LabelFrame):
             )
             if not expression:
                 return
+        elif name == "Spline":
+            n_knots = simpledialog.askinteger(
+                "Spline Model",
+                "Number of knots (4\u2013100):",
+                initialvalue=8,
+                minvalue=4,
+                maxvalue=100,
+                parent=self,
+            )
+            if n_knots is None:
+                return
+            expression = f"knots:{n_knots}"
         self._on_add_component(name, self.operator_var.get(), expression=expression)
 
     def _remove_component(self):
@@ -1209,3 +1248,162 @@ class EmceeSummaryDialog(tk.Toplevel):
         ttk.Button(self, text="Close", command=self.destroy).grid(
             row=2, column=0, columnspan=2, pady=10
         )
+
+
+class DiagnosticPlotsDialog(tk.Toplevel):
+    """2x2 diagnostic plot grid: residuals vs fitted, Q-Q, scale-location, ACF."""
+
+    def __init__(self, parent, fit_result):
+        super().__init__(parent)
+        self.title("Fit Diagnostic Plots")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("800x600")
+
+        import numpy as np
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+        import scipy.stats as stats
+
+        r = fit_result
+        residuals = r.y_data - r.y_fit_data
+        fitted = r.y_fit_data
+
+        # Standardize residuals
+        std_resid = residuals - residuals.mean()
+        s = residuals.std()
+        if s > 0:
+            std_resid = std_resid / s
+
+        fig = Figure(figsize=(8, 6))
+
+        # 1. Residuals vs Fitted
+        ax1 = fig.add_subplot(2, 2, 1)
+        ax1.scatter(fitted, residuals, s=12, alpha=0.7)
+        ax1.axhline(0, color="red", linestyle="--", linewidth=0.8)
+        ax1.set_xlabel("Fitted values")
+        ax1.set_ylabel("Residuals")
+        ax1.set_title("Residuals vs Fitted")
+
+        # 2. Normal Q-Q
+        ax2 = fig.add_subplot(2, 2, 2)
+        stats.probplot(std_resid, plot=ax2)
+        ax2.set_title("Normal Q-Q")
+
+        # 3. Scale-Location
+        ax3 = fig.add_subplot(2, 2, 3)
+        sqrt_abs_resid = np.sqrt(np.abs(std_resid))
+        ax3.scatter(fitted, sqrt_abs_resid, s=12, alpha=0.7)
+        ax3.set_xlabel("Fitted values")
+        ax3.set_ylabel("\u221a|Standardized residuals|")
+        ax3.set_title("Scale-Location")
+
+        # 4. Autocorrelation
+        ax4 = fig.add_subplot(2, 2, 4)
+        n = len(residuals)
+        max_lag = min(20, n - 1)
+        mean_r = residuals.mean()
+        var_r = np.sum((residuals - mean_r) ** 2)
+        acf = []
+        for lag in range(max_lag + 1):
+            c = np.sum((residuals[:n - lag] - mean_r) * (residuals[lag:] - mean_r))
+            acf.append(c / var_r if var_r > 0 else 0.0)
+        lags = np.arange(max_lag + 1)
+        ax4.bar(lags, acf, width=0.4, color="steelblue")
+        ci = 1.96 / np.sqrt(n)
+        ax4.axhline(ci, color="red", linestyle="--", linewidth=0.8)
+        ax4.axhline(-ci, color="red", linestyle="--", linewidth=0.8)
+        ax4.axhline(0, color="black", linewidth=0.5)
+        ax4.set_xlabel("Lag")
+        ax4.set_ylabel("ACF")
+        ax4.set_title("Autocorrelation")
+
+        fig.tight_layout()
+
+        canvas = FigureCanvasTkAgg(fig, master=self)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
+
+
+class ConfidenceContourDialog(tk.Toplevel):
+    """Interactive 2D confidence contour plot using lmfit.conf_interval2d."""
+
+    def __init__(self, parent, last_result, vary_params: list[str]):
+        super().__init__(parent)
+        self.title("2D Confidence Contours")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("700x600")
+
+        self._last_result = last_result
+        self._vary_params = vary_params
+
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+
+        # Controls frame
+        ctrl = ttk.Frame(self, padding=5)
+        ctrl.pack(fill=tk.X)
+
+        ttk.Label(ctrl, text="Param X:").pack(side=tk.LEFT)
+        self._x_var = tk.StringVar(value=vary_params[0])
+        ttk.Combobox(
+            ctrl, textvariable=self._x_var, values=vary_params,
+            state="readonly", width=15,
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(ctrl, text="Param Y:").pack(side=tk.LEFT, padx=(10, 0))
+        self._y_var = tk.StringVar(value=vary_params[1] if len(vary_params) > 1 else vary_params[0])
+        ttk.Combobox(
+            ctrl, textvariable=self._y_var, values=vary_params,
+            state="readonly", width=15,
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(ctrl, text="Grid:").pack(side=tk.LEFT, padx=(10, 0))
+        self._grid_var = tk.IntVar(value=10)
+        ttk.Spinbox(
+            ctrl, textvariable=self._grid_var, from_=5, to=50, width=4,
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Button(ctrl, text="Compute", command=self._compute).pack(side=tk.LEFT, padx=(10, 0))
+
+        # Status
+        self._status_var = tk.StringVar(value="Select parameters and click Compute.")
+        ttk.Label(self, textvariable=self._status_var).pack(fill=tk.X, padx=10)
+
+        # Plot area
+        self._fig = Figure(figsize=(6, 5))
+        self._ax = self._fig.add_subplot(111)
+        self._canvas = FigureCanvasTkAgg(self._fig, master=self)
+        self._canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
+
+    def _compute(self):
+        x_name = self._x_var.get()
+        y_name = self._y_var.get()
+        if x_name == y_name:
+            self._status_var.set("Select two different parameters.")
+            return
+        nx = ny = self._grid_var.get()
+        self._status_var.set("Computing...")
+        self.update_idletasks()
+
+        try:
+            from lmfit import conf_interval2d
+            x_arr, y_arr, grid = conf_interval2d(
+                self._last_result, self._last_result,
+                x_name, y_name, nx=nx, ny=ny,
+            )
+            self._ax.clear()
+            self._ax.contourf(x_arr, y_arr, grid, cmap="coolwarm")
+            self._ax.set_xlabel(x_name)
+            self._ax.set_ylabel(y_name)
+            self._ax.set_title(f"Confidence: {x_name} vs {y_name}")
+            self._fig.tight_layout()
+            self._canvas.draw()
+            self._status_var.set("Done.")
+        except Exception as e:
+            self._status_var.set(f"Error: {e}")

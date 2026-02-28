@@ -5,9 +5,35 @@ from dataclasses import dataclass
 import numpy as np
 from lmfit import CompositeModel, Model, Parameters
 from lmfit.model import ModelResult
+from lmfit.models import SplineModel
 
-from .models import create_expression_model, create_model
+from .models import create_expression_model, create_model, create_spline_model
 from .session import FitResult  # re-export; canonical location is session.py
+
+
+def _reduce_negentropy(r):
+    """Neg-entropy reduce function for robust fitting."""
+    return -np.sum(r * np.log(np.maximum(np.abs(r), 1e-12)))
+
+
+def _reduce_cauchylogpdf(r):
+    """Cauchy log-pdf reduce function for outlier-tolerant fitting."""
+    return np.sum(np.log1p(r * r))
+
+
+REDUCE_FUNCTIONS = {
+    "Chi-square (default)": None,
+    "Neg. entropy": _reduce_negentropy,
+    "Cauchy log-pdf": _reduce_cauchylogpdf,
+}
+
+WEIGHT_MODES = [
+    "1/yerr (default)",
+    "1/yerr\u00b2",
+    "1/y",
+    "No weights",
+    "yerr as weights",
+]
 
 
 @dataclass
@@ -75,6 +101,41 @@ class FitManager:
         self._params = None
         self._last_result = None
 
+    def _build_component_model(self, comp: FitComponent, x_data: np.ndarray | None = None):
+        """Build a single component model. Uses x_data for Spline if available."""
+        if comp.name == "Expression":
+            return create_expression_model(comp.expression, prefix=comp.prefix)
+        elif comp.name == "Spline":
+            # Parse knot count from expression field (e.g. "knots:8")
+            n_knots = 8
+            if comp.expression and comp.expression.startswith("knots:"):
+                try:
+                    n_knots = int(comp.expression.split(":")[1])
+                except (ValueError, IndexError):
+                    pass
+            if x_data is not None:
+                return create_spline_model(n_knots, x_data, prefix=comp.prefix)
+            else:
+                # Placeholder knots when no data available yet
+                xknots = np.linspace(0, 1, n_knots)
+                return SplineModel(xknots=xknots, prefix=comp.prefix)
+        else:
+            return create_model(comp.name, prefix=comp.prefix)
+
+    def _assemble_model(self, models: list):
+        """Combine individual component models using operators."""
+        composite = models[0]
+        for comp, m in zip(self.components[1:], models[1:]):
+            if comp.operator == "*":
+                composite = composite * m
+            elif comp.operator == "-":
+                composite = composite - m
+            elif comp.operator == "/":
+                composite = composite / m
+            else:
+                composite = composite + m
+        return composite
+
     def _rebuild_model(self):
         """Rebuild the composite model from current components."""
         if not self.components:
@@ -82,30 +143,42 @@ class FitManager:
             self._params = None
             return
 
-        models = []
-        for comp in self.components:
-            if comp.name == "Expression":
-                m = create_expression_model(comp.expression, prefix=comp.prefix)
-            else:
-                m = create_model(comp.name, prefix=comp.prefix)
-            models.append(m)
-
-        self._model = models[0]
-        for comp, m in zip(self.components[1:], models[1:]):
-            if comp.operator == "*":
-                self._model = self._model * m
-            elif comp.operator == "-":
-                self._model = self._model - m
-            elif comp.operator == "/":
-                self._model = self._model / m
-            else:
-                self._model = self._model + m
+        models = [self._build_component_model(c) for c in self.components]
+        self._model = self._assemble_model(models)
         self._params = self._model.make_params()
 
         # ExpressionModel params default to -inf; set to 1.0 so fits don't NaN
         for par in self._params.values():
             if par.value == float("-inf"):
                 par.set(value=1.0)
+
+    def _rebuild_model_with_data(self, x: np.ndarray):
+        """Rebuild model using real x-data (needed for Spline knots)."""
+        if not self.components:
+            self._model = None
+            self._params = None
+            return
+
+        models = [self._build_component_model(c, x_data=x) for c in self.components]
+        self._model = self._assemble_model(models)
+
+        # Preserve existing param values where possible
+        old_params = self._params
+        self._params = self._model.make_params()
+        if old_params is not None:
+            for name, par in old_params.items():
+                if name in self._params:
+                    self._params[name].set(
+                        value=par.value, min=par.min, max=par.max,
+                        vary=par.vary, expr=par.expr,
+                    )
+        for par in self._params.values():
+            if par.value == float("-inf"):
+                par.set(value=1.0)
+
+    @property
+    def _has_spline(self) -> bool:
+        return any(c.name == "Spline" for c in self.components)
 
     @property
     def model(self) -> Model | None:
@@ -120,18 +193,16 @@ class FitManager:
         if self._model is None:
             raise ValueError("No model defined")
 
-        self._params = self._model.make_params()
-
-        # ExpressionModel params default to -inf; set to 1.0 so fits don't NaN
-        for par in self._params.values():
-            if par.value == float("-inf"):
-                par.set(value=1.0)
+        if self._has_spline:
+            self._rebuild_model_with_data(x)
+        else:
+            self._params = self._model.make_params()
+            for par in self._params.values():
+                if par.value == float("-inf"):
+                    par.set(value=1.0)
 
         for comp in self.components:
-            if comp.name == "Expression":
-                m = create_expression_model(comp.expression, prefix=comp.prefix)
-            else:
-                m = create_model(comp.name, prefix=comp.prefix)
+            m = self._build_component_model(comp, x_data=x)
             try:
                 guessed = m.guess(y, x=x)
                 for pname, par in guessed.items():
@@ -156,6 +227,22 @@ class FitManager:
         if self._params is not None and name in self._params:
             self._params[name].set(**kwargs)
 
+    @staticmethod
+    def _compute_weights(y, yerr, weight_mode):
+        """Compute weights array from y, yerr, and the selected weight mode."""
+        if weight_mode == "No weights":
+            return None
+        if weight_mode == "1/yerr\u00b2" and yerr is not None:
+            return 1.0 / (yerr * yerr)
+        if weight_mode == "1/y":
+            return 1.0 / np.maximum(np.abs(y), 1e-12)
+        if weight_mode == "yerr as weights" and yerr is not None:
+            return yerr
+        # Default: "1/yerr (default)"
+        if yerr is not None:
+            return 1.0 / yerr
+        return None
+
     def run_fit(
         self,
         x: np.ndarray,
@@ -165,16 +252,27 @@ class FitManager:
         method: str = "leastsq",
         iter_cb=None,
         fit_kws: dict | None = None,
+        reduce_fcn=None,
+        weight_mode: str = "1/yerr (default)",
     ) -> FitResult:
         """Run the fit and return results."""
         if self._model is None or self._params is None:
             raise ValueError("No model defined")
 
-        weights = 1.0 / yerr if yerr is not None else None
+        # Rebuild with real x-data if model contains a Spline component
+        if self._has_spline:
+            self._rebuild_model_with_data(x)
+
+        weights = self._compute_weights(y, yerr, weight_mode)
+
+        kws = dict(fit_kws or {})
+        if reduce_fcn is not None:
+            kws["reduce_fcn"] = reduce_fcn
+
         self._last_result = self._model.fit(
             y, self._params, x=x, weights=weights,
             method=method, nan_policy="omit",
-            iter_cb=iter_cb, fit_kws=fit_kws or {},
+            iter_cb=iter_cb, fit_kws=kws,
         )
 
         # Dense x-grid for smooth curve
