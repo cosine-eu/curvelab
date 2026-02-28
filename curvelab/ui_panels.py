@@ -644,9 +644,6 @@ class FitPanel(ttk.LabelFrame):
             self._on_session_selected(name)
 
     def _new_session(self):
-        if not self.series_var.get():
-            messagebox.showwarning("No Series", "Plot a series first, then select it.")
-            return
         # Generate a default name like "Fit 1", "Fit 2", ...
         existing = set(self._session_names)
         n = 1
