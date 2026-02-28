@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "curvelab"
+version = "0.1.0"
+description = "Data Plotter & Curve Fitter"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "numpy",
+    "pandas",
+    "matplotlib",
+    "lmfit",
+]
+
+[project.optional-dependencies]
+notebook = ["ipywidgets", "ipympl"]
+excel = ["openpyxl"]
+
+[project.scripts]
+curvelab = "curvelab.app:CurveLabApp.launch"
+
+[tool.setuptools.packages.find]
+include = ["curvelab*"]
