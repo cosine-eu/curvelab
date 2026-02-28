@@ -2,13 +2,13 @@
 
 import csv
 import json
-import re
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 
 from .data_manager import DataManager
 from .fit_manager import FitManager, FitResult, REDUCE_FUNCTIONS
@@ -24,9 +24,6 @@ from .ui_panels import (
     SimulateDataDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
-
-
-_SIMULATED_DATASET = "__simulated__"
 
 
 def _make_series_id(dataset: str, x_col: str, y_col: str) -> str:
@@ -409,46 +406,57 @@ class CurveLabApp(ttk.Frame):
         if xerr is not None:
             xerr = xerr[order]
 
-        # Reuse placeholder series if the active series is an empty simulated one
+        # Check if active series is an empty placeholder — reuse its dataset
         cur_rec = self._active_record
-        if (cur_rec is not None
-                and cur_rec.dataset_name == _SIMULATED_DATASET
-                and len(cur_rec.x) == 0):
-            sid = self._active_series_id
-            cur_rec.x = x
-            cur_rec.y = y
-            cur_rec.yerr = yerr
-            cur_rec.xerr = xerr
-            cur_rec.style["yerr"] = "yerr" if yerr is not None else ""
-            cur_rec.style["xerr"] = "xerr" if xerr is not None else ""
-            self._replot_all_series()
+        reuse_placeholder = (
+            cur_rec is not None
+            and len(cur_rec.x) == 0
+            and cur_rec.dataset_name in self.data_mgr.datasets
+        )
+
+        if reuse_placeholder:
+            ds_name = cur_rec.dataset_name
+            data = {"x": x, "y": y}
+            if yerr is not None:
+                data["yerr"] = yerr
+            if xerr is not None:
+                data["xerr"] = xerr
+            self.data_mgr.datasets[ds_name] = pd.DataFrame(data)
+            # Update column combos for this dataset
+            self.data_panel.set_columns(self.data_mgr.column_names(ds_name))
+            # Update the series entry in DataPanel to reflect new error columns
+            for item in self.data_panel._series_items:
+                if item["dataset"] == ds_name:
+                    item["yerr"] = "yerr" if yerr is not None else ""
+                    item["xerr"] = "xerr" if xerr is not None else ""
+                    break
         else:
             self._simulated_counter += 1
             n = self._simulated_counter
-            sid = f"__simulated_{n}__::x::y"
-            label = f"Simulated {n}"
-            style_dict = {
-                "dataset": _SIMULATED_DATASET,
+            data = {"x": x, "y": y}
+            if yerr is not None:
+                data["yerr"] = yerr
+            if xerr is not None:
+                data["xerr"] = xerr
+            df = pd.DataFrame(data)
+            ds_name, columns = self.data_mgr.add_dataframe(f"Simulated {n}", df)
+
+            self.data_panel.set_datasets(
+                self.data_mgr.dataset_names, select=ds_name
+            )
+            self.data_panel.set_columns(columns)
+
+            series_info = {
+                "dataset": ds_name,
                 "x": "x", "y": "y",
                 "yerr": "yerr" if yerr is not None else "",
                 "xerr": "xerr" if xerr is not None else "",
                 "marker": "o", "linestyle": "None", "color": "",
-                "label": label,
+                "label": ds_name,
             }
+            self.data_panel.add_series_entry(series_info)
 
-            rec = SeriesRecord(
-                x=x, y=y, yerr=yerr, xerr=xerr,
-                style=style_dict, dataset_name=_SIMULATED_DATASET,
-            )
-            self._series_records[sid] = rec
-
-            plot_style = SeriesStyle(marker="o", linestyle="None", color="", label=label)
-            self.plot_mgr.plot_series(x, y, yerr=yerr, xerr=xerr, style=plot_style)
-
-        self._active_series_id = sid
-        self._sync_series_combo()
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._on_plot(self.data_panel.series_list)
 
     # --- Sync helpers ---
 
@@ -647,21 +655,6 @@ class CurveLabApp(ttk.Frame):
             except Exception as e:
                 messagebox.showerror("Plot Error", f"Error plotting series: {e}")
 
-        # Carry forward simulated series
-        for sid, rec in self._series_records.items():
-            if rec.dataset_name == _SIMULATED_DATASET and sid not in new_records:
-                new_records[sid] = rec
-                s = rec.style
-                style = SeriesStyle(
-                    marker=s.get("marker", "o"),
-                    linestyle=s.get("linestyle", "None"),
-                    color=s.get("color", ""),
-                    label=s.get("label", ""),
-                )
-                self.plot_mgr.plot_series(
-                    rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
-                )
-
         self._series_records = new_records
         show_resid = self.plot_controls.residuals_var.get()
 
@@ -734,17 +727,27 @@ class CurveLabApp(ttk.Frame):
             return
         self._simulated_counter += 1
         n = self._simulated_counter
-        sid = f"__simulated_{n}__::x::y"
-        label = f"Simulated {n}"
-        style_dict = {
-            "dataset": _SIMULATED_DATASET,
+        df = pd.DataFrame({"x": pd.Series(dtype=float), "y": pd.Series(dtype=float)})
+        ds_name, columns = self.data_mgr.add_dataframe(f"Simulated {n}", df)
+
+        self.data_panel.set_datasets(
+            self.data_mgr.dataset_names, select=ds_name
+        )
+        self.data_panel.set_columns(columns)
+
+        series_info = {
+            "dataset": ds_name,
             "x": "x", "y": "y", "yerr": "", "xerr": "",
             "marker": "o", "linestyle": "None", "color": "",
-            "label": label,
+            "label": ds_name,
         }
+        self.data_panel.add_series_entry(series_info)
+
+        # Create the series record so it becomes the active series
+        sid = _make_series_id(ds_name, "x", "y")
         rec = SeriesRecord(
             x=np.array([]), y=np.array([]),
-            style=style_dict, dataset_name=_SIMULATED_DATASET,
+            style=series_info, dataset_name=ds_name,
         )
         self._series_records[sid] = rec
         self._active_series_id = sid
@@ -1570,11 +1573,6 @@ class CurveLabApp(ttk.Frame):
                 "fit_sessions": fit_sessions,
                 "active_session_name": rec.active_session_name,
             }
-            if rec.dataset_name == _SIMULATED_DATASET:
-                sdata["sim_data"] = encode_value({
-                    "x": rec.x, "y": rec.y,
-                    "yerr": rec.yerr, "xerr": rec.xerr,
-                })
             series[sid] = sdata
 
         return {
@@ -1662,44 +1660,23 @@ class CurveLabApp(ttk.Frame):
         for sid, sdata in ws.get("series", {}).items():
             ds_name = sdata.get("dataset_name", "")
 
-            if ds_name == _SIMULATED_DATASET:
-                # Reconstruct simulated series from saved arrays
-                sim = sdata.get("sim_data", {})
-                def to_arr(v):
-                    if isinstance(v, np.ndarray):
-                        return v
-                    if isinstance(v, list):
-                        return np.array(v)
-                    return v
-                x = to_arr(sim.get("x", []))
-                y = to_arr(sim.get("y", []))
-                yerr = to_arr(sim["yerr"]) if sim.get("yerr") is not None else None
-                xerr = to_arr(sim["xerr"]) if sim.get("xerr") is not None else None
-                style = sdata.get("style", {})
-                # Restore simulated counter from series ID
-                m = re.search(r"__simulated_(\d+)__", sid)
-                if m:
-                    self._simulated_counter = max(
-                        self._simulated_counter, int(m.group(1))
-                    )
-            else:
-                actual_ds = dataset_name_map.get(ds_name)
-                if actual_ds is None:
-                    continue  # dataset couldn't be reloaded
+            actual_ds = dataset_name_map.get(ds_name)
+            if actual_ds is None:
+                continue  # dataset couldn't be reloaded
 
-                style = sdata.get("style", {})
-                try:
-                    x_col = style.get("x", "")
-                    y_col = style.get("y", "")
-                    x = self.data_mgr.get_column(actual_ds, x_col)
-                    y = self.data_mgr.get_column(actual_ds, y_col)
-                    yerr_col = style.get("yerr")
-                    xerr_col = style.get("xerr")
-                    yerr = self.data_mgr.get_column(actual_ds, yerr_col) if yerr_col else None
-                    xerr = self.data_mgr.get_column(actual_ds, xerr_col) if xerr_col else None
-                except Exception:
-                    continue
-                ds_name = actual_ds
+            style = sdata.get("style", {})
+            try:
+                x_col = style.get("x", "")
+                y_col = style.get("y", "")
+                x = self.data_mgr.get_column(actual_ds, x_col)
+                y = self.data_mgr.get_column(actual_ds, y_col)
+                yerr_col = style.get("yerr")
+                xerr_col = style.get("xerr")
+                yerr = self.data_mgr.get_column(actual_ds, yerr_col) if yerr_col else None
+                xerr = self.data_mgr.get_column(actual_ds, xerr_col) if xerr_col else None
+            except Exception:
+                continue
+            ds_name = actual_ds
 
             rec = SeriesRecord(
                 x=x, y=y, yerr=yerr, xerr=xerr,

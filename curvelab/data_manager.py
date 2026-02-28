@@ -104,6 +104,20 @@ class DataManager:
         self.datasets[name] = df
         return name, list(df.columns)
 
+    def add_dataframe(self, name: str, df: pd.DataFrame) -> tuple[str, list[str]]:
+        """Register a DataFrame directly (no file path). Returns (name, column_names).
+
+        Uses the same name-deduplication logic as load().
+        """
+        base_name = name
+        counter = 2
+        while name in self.datasets:
+            name = f"{base_name} ({counter})"
+            counter += 1
+
+        self.datasets[name] = df
+        return name, list(df.columns)
+
     def column_names(self, dataset_name: str) -> list[str]:
         """Return column names for a dataset."""
         df = self.datasets.get(dataset_name)

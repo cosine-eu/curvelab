@@ -275,6 +275,14 @@ class DataPanel(ttk.LabelFrame):
         if self._on_plot:
             self._on_plot(self._series_items)
 
+    def add_series_entry(self, series_info: dict):
+        """Programmatically add a series entry (same effect as the Add Series button)."""
+        self._series_items.append(series_info)
+        self.series_listbox.insert(
+            tk.END,
+            f"{series_info['dataset']}::{series_info['x']} vs {series_info['y']}",
+        )
+
     @property
     def series_list(self) -> list[dict]:
         return list(self._series_items)
