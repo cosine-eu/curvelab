@@ -409,28 +409,41 @@ class CurveLabApp(ttk.Frame):
         if xerr is not None:
             xerr = xerr[order]
 
-        # Create series
-        self._simulated_counter += 1
-        n = self._simulated_counter
-        sid = f"__simulated_{n}__::x::y"
-        label = f"Simulated {n}"
-        style_dict = {
-            "dataset": _SIMULATED_DATASET,
-            "x": "x", "y": "y",
-            "yerr": "yerr" if yerr is not None else "",
-            "xerr": "xerr" if xerr is not None else "",
-            "marker": "o", "linestyle": "None", "color": "",
-            "label": label,
-        }
+        # Reuse placeholder series if the active series is an empty simulated one
+        cur_rec = self._active_record
+        if (cur_rec is not None
+                and cur_rec.dataset_name == _SIMULATED_DATASET
+                and len(cur_rec.x) == 0):
+            sid = self._active_series_id
+            cur_rec.x = x
+            cur_rec.y = y
+            cur_rec.yerr = yerr
+            cur_rec.xerr = xerr
+            cur_rec.style["yerr"] = "yerr" if yerr is not None else ""
+            cur_rec.style["xerr"] = "xerr" if xerr is not None else ""
+            self._replot_all_series()
+        else:
+            self._simulated_counter += 1
+            n = self._simulated_counter
+            sid = f"__simulated_{n}__::x::y"
+            label = f"Simulated {n}"
+            style_dict = {
+                "dataset": _SIMULATED_DATASET,
+                "x": "x", "y": "y",
+                "yerr": "yerr" if yerr is not None else "",
+                "xerr": "xerr" if xerr is not None else "",
+                "marker": "o", "linestyle": "None", "color": "",
+                "label": label,
+            }
 
-        rec = SeriesRecord(
-            x=x, y=y, yerr=yerr, xerr=xerr,
-            style=style_dict, dataset_name=_SIMULATED_DATASET,
-        )
-        self._series_records[sid] = rec
+            rec = SeriesRecord(
+                x=x, y=y, yerr=yerr, xerr=xerr,
+                style=style_dict, dataset_name=_SIMULATED_DATASET,
+            )
+            self._series_records[sid] = rec
 
-        plot_style = SeriesStyle(marker="o", linestyle="None", color="", label=label)
-        self.plot_mgr.plot_series(x, y, yerr=yerr, xerr=xerr, style=plot_style)
+            plot_style = SeriesStyle(marker="o", linestyle="None", color="", label=label)
+            self.plot_mgr.plot_series(x, y, yerr=yerr, xerr=xerr, style=plot_style)
 
         self._active_series_id = sid
         self._sync_series_combo()
@@ -715,10 +728,32 @@ class CurveLabApp(ttk.Frame):
         rec.active_session_name = session_name
         self._load_session_into_ui()
 
+    def _ensure_placeholder_series(self):
+        """Create a placeholder simulated series if no series exists."""
+        if self._active_series_id is not None:
+            return
+        self._simulated_counter += 1
+        n = self._simulated_counter
+        sid = f"__simulated_{n}__::x::y"
+        label = f"Simulated {n}"
+        style_dict = {
+            "dataset": _SIMULATED_DATASET,
+            "x": "x", "y": "y", "yerr": "", "xerr": "",
+            "marker": "o", "linestyle": "None", "color": "",
+            "label": label,
+        }
+        rec = SeriesRecord(
+            x=np.array([]), y=np.array([]),
+            style=style_dict, dataset_name=_SIMULATED_DATASET,
+        )
+        self._series_records[sid] = rec
+        self._active_series_id = sid
+        self._sync_series_combo()
+
     def _on_new_session(self, name: str):
+        self._ensure_placeholder_series()
         rec = self._active_record
         if rec is None:
-            messagebox.showwarning("No Series", "Plot a series first, then select it.")
             return
         if name in rec.fit_sessions:
             messagebox.showwarning("Duplicate", f"Session '{name}' already exists.")
