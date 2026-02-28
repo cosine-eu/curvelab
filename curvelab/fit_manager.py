@@ -33,6 +33,7 @@ WEIGHT_MODES = [
     "1/y",
     "No weights",
     "yerr as weights",
+    "Effective variance",
 ]
 
 
@@ -268,6 +269,7 @@ class FitManager:
         x: np.ndarray,
         y: np.ndarray,
         yerr: np.ndarray | None = None,
+        xerr: np.ndarray | None = None,
         n_dense: int = 500,
         method: str = "leastsq",
         iter_cb=None,
@@ -288,6 +290,19 @@ class FitManager:
         init_values = {name: par.value for name, par in self._params.items()}
 
         weights = self._compute_weights(y, yerr, weight_mode)
+
+        # Effective variance: w = 1/sqrt(yerr² + (df/dx)² · xerr²)
+        if weight_mode == "Effective variance":
+            if xerr is not None and yerr is not None:
+                h = np.maximum(np.abs(x) * 1e-8, 1e-10)
+                y_plus = self._model.eval(self._params, x=x + h)
+                y_minus = self._model.eval(self._params, x=x - h)
+                dfdx = (y_plus - y_minus) / (2 * h)
+                weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
+            elif yerr is not None:
+                weights = 1.0 / yerr
+            else:
+                weights = None
 
         kws = dict(fit_kws or {})
         if reduce_fcn is not None:
@@ -381,7 +396,7 @@ class FitManager:
 
     def run_global_fit(
         self,
-        datasets: list[tuple[np.ndarray, np.ndarray, np.ndarray | None]],
+        datasets: list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]],
         shared_params: set[str],
         method: str = "leastsq",
         max_nfev: int | None = None,
@@ -389,6 +404,7 @@ class FitManager:
     ) -> list[FitResult]:
         """Run a global fit across multiple datasets with shared parameters.
 
+        Each dataset is a tuple of (x, y, yerr, xerr).
         Parameters that are in *shared_params* get one entry in the combined
         Parameters object.  Non-shared params get per-dataset prefixed entries
         (s0_, s1_, ...).  Returns one FitResult per dataset.
@@ -418,7 +434,7 @@ class FitManager:
 
         def objective(params):
             all_resid = []
-            for i, (x, y, yerr) in enumerate(datasets):
+            for i, (x, y, yerr, xerr) in enumerate(datasets):
                 # Build per-dataset params
                 kw = {}
                 for name in base_names:
@@ -430,6 +446,18 @@ class FitManager:
                 y_model = self._model.eval(x=x, **kw)
                 resid = y - y_model
                 weights = self._compute_weights(y, yerr, weight_mode)
+                # Effective variance override
+                if weight_mode == "Effective variance":
+                    if xerr is not None and yerr is not None:
+                        h = np.maximum(np.abs(x) * 1e-8, 1e-10)
+                        y_plus = self._model.eval(x=x + h, **kw)
+                        y_minus = self._model.eval(x=x - h, **kw)
+                        dfdx = (y_plus - y_minus) / (2 * h)
+                        weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
+                    elif yerr is not None:
+                        weights = 1.0 / yerr
+                    else:
+                        weights = None
                 if weights is not None:
                     resid = resid * weights
                 all_resid.append(resid)
@@ -444,7 +472,7 @@ class FitManager:
 
         # Build per-dataset FitResults
         results = []
-        for i, (x, y, yerr) in enumerate(datasets):
+        for i, (x, y, yerr, xerr) in enumerate(datasets):
             # Extract per-dataset param values
             params_info = {}
             init_values = {}

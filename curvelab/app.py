@@ -689,14 +689,16 @@ class CurveLabApp(ttk.Frame):
         self._update_component_list()
 
     def _get_fit_data(self, rec: SeriesRecord):
-        """Return (x, y, yerr) cleaned and optionally masked to visible range.
+        """Return (x, y, yerr, xerr) cleaned and optionally masked to visible range.
 
         Guard-rails applied:
-        1. Filter out NaN/inf in x or y (and corresponding yerr entries)
+        1. Filter out NaN/inf in x or y (and corresponding yerr/xerr entries)
         2. Sort by x
         3. Warn (once per fit) if duplicate x values exist
         """
-        x, y, yerr = rec.x.copy(), rec.y.copy(), rec.yerr.copy() if rec.yerr is not None else None
+        x, y = rec.x.copy(), rec.y.copy()
+        yerr = rec.yerr.copy() if rec.yerr is not None else None
+        xerr = rec.xerr.copy() if rec.xerr is not None else None
 
         # 1. Visible-range mask (applied first so guard-rails only touch relevant data)
         if self.plot_controls.fit_visible_var.get():
@@ -704,15 +706,19 @@ class CurveLabApp(ttk.Frame):
             mask = (x >= xmin) & (x <= xmax)
             x, y = x[mask], y[mask]
             yerr = yerr[mask] if yerr is not None else None
+            xerr = xerr[mask] if xerr is not None else None
 
         # 2. Filter NaN / inf
         finite_mask = np.isfinite(x) & np.isfinite(y)
         if yerr is not None:
             finite_mask &= np.isfinite(yerr)
+        if xerr is not None:
+            finite_mask &= np.isfinite(xerr)
         n_dropped = int((~finite_mask).sum())
         if n_dropped > 0:
             x, y = x[finite_mask], y[finite_mask]
             yerr = yerr[finite_mask] if yerr is not None else None
+            xerr = xerr[finite_mask] if xerr is not None else None
             messagebox.showinfo(
                 "Data Cleaned",
                 f"Removed {n_dropped} point(s) with NaN/inf values.",
@@ -722,6 +728,7 @@ class CurveLabApp(ttk.Frame):
         order = np.argsort(x)
         x, y = x[order], y[order]
         yerr = yerr[order] if yerr is not None else None
+        xerr = xerr[order] if xerr is not None else None
 
         # 4. Warn on duplicate x values
         if len(x) > 0:
@@ -733,7 +740,7 @@ class CurveLabApp(ttk.Frame):
                     "This may cause issues with some models.",
                 )
 
-        return x, y, yerr
+        return x, y, yerr, xerr
 
     def _on_auto_guess(self):
         rec = self._active_record
@@ -746,7 +753,7 @@ class CurveLabApp(ttk.Frame):
             return
 
         try:
-            x, y, _ = self._get_fit_data(rec)
+            x, y, _, _ = self._get_fit_data(rec)
             params = fm.auto_guess(x, y)
             params_info = {}
             for name, par in params.items():
@@ -806,10 +813,10 @@ class CurveLabApp(ttk.Frame):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
-            x, y, yerr = self._get_fit_data(rec)
+            x, y, yerr, xerr = self._get_fit_data(rec)
             reduce_fcn, weight_mode, max_nfev = self._get_fit_options()
             result = fm.run_fit(
-                x, y, yerr=yerr, method=method,
+                x, y, yerr=yerr, xerr=xerr, method=method,
                 reduce_fcn=reduce_fcn, weight_mode=weight_mode,
                 max_nfev=max_nfev,
             )
@@ -829,7 +836,7 @@ class CurveLabApp(ttk.Frame):
 
         fm = sess.fit_manager
         try:
-            x, y, yerr = self._get_fit_data(rec)
+            x, y, yerr, xerr = self._get_fit_data(rec)
         except Exception as e:
             messagebox.showerror("Fit Error", str(e))
             self.fit_panel.set_fitting_state(False)
@@ -853,7 +860,7 @@ class CurveLabApp(ttk.Frame):
         def _run():
             try:
                 result = fm.run_fit(
-                    x, y, yerr=yerr, method=method,
+                    x, y, yerr=yerr, xerr=xerr, method=method,
                     iter_cb=iter_cb, fit_kws=fit_kws,
                     reduce_fcn=reduce_fcn, weight_mode=weight_mode,
                     max_nfev=max_nfev,
@@ -1026,8 +1033,8 @@ class CurveLabApp(ttk.Frame):
             selected_recs = []
             for sid in selected_ids:
                 r = self._series_records[sid]
-                x, y, yerr = self._get_fit_data(r)
-                datasets.append((x, y, yerr))
+                x, y, yerr, xerr = self._get_fit_data(r)
+                datasets.append((x, y, yerr, xerr))
                 selected_recs.append((sid, r))
 
             _, weight_mode, max_nfev = self._get_fit_options()
@@ -1179,11 +1186,11 @@ class CurveLabApp(ttk.Frame):
             source_fm.clone_components_to(target_fm)
 
             try:
-                x, y, yerr = self._get_fit_data(target_rec)
+                x, y, yerr, xerr = self._get_fit_data(target_rec)
                 target_fm.auto_guess(x, y)
                 method = self.fit_panel.method_var.get()
                 result = target_fm.run_fit(
-                    x, y, yerr=yerr, method=method,
+                    x, y, yerr=yerr, xerr=xerr, method=method,
                     reduce_fcn=reduce_fcn, weight_mode=weight_mode,
                     max_nfev=max_nfev,
                 )
