@@ -171,12 +171,13 @@ class DataPanel(ttk.LabelFrame):
     def _load_file(self):
         filepath = filedialog.askopenfilename(
             filetypes=[
-                ("All supported", "*.csv *.tsv *.xlsx *.xls *.json *.parquet"),
+                ("All supported", "*.csv *.tsv *.xlsx *.xls *.json *.parquet *.sqlite *.db"),
                 ("CSV", "*.csv"),
                 ("TSV", "*.tsv"),
                 ("Excel", "*.xlsx *.xls"),
                 ("JSON", "*.json"),
                 ("Parquet", "*.parquet"),
+                ("SQLite", "*.sqlite *.db"),
                 ("All files", "*.*"),
             ]
         )

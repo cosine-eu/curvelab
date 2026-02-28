@@ -1606,6 +1606,7 @@ class CurveLabApp(ttk.Frame):
         return {
             "version": 1,
             "data_filepaths": data_filepaths,
+            "table_names": self.data_mgr.table_names,
             "series": series,
             "active_series_id": self._active_series_id,
             "plot_controls": {
@@ -1667,10 +1668,34 @@ class CurveLabApp(ttk.Frame):
         # 1. Reload datasets from saved filepaths
         self.data_mgr = DataManager()
         dataset_name_map = {}  # old name -> new name (may differ on reload)
+        loaded_sqlite_files: set[str] = set()  # avoid loading same .sqlite/.db twice
+        saved_table_names = ws.get("table_names", {})
         for name, fpath in ws.get("data_filepaths", {}).items():
             try:
-                new_name, columns = self.data_mgr.load(fpath)
-                dataset_name_map[name] = new_name
+                fpath_str = str(fpath)
+                ext = Path(fpath).suffix.lower()
+                if ext in (".sqlite", ".db"):
+                    if fpath_str in loaded_sqlite_files:
+                        # Already loaded — find the matching dataset by table name
+                        table = saved_table_names.get(name, "")
+                        for ds_name, tbl in self.data_mgr.table_names.items():
+                            if tbl == table and str(self.data_mgr.filepaths.get(ds_name)) == fpath_str:
+                                dataset_name_map[name] = ds_name
+                                break
+                        continue
+                    loaded_sqlite_files.add(fpath_str)
+                    self.data_mgr.load(fpath)
+                    # Map all old names for this file to their new dataset names
+                    for old_name, old_fpath in ws.get("data_filepaths", {}).items():
+                        if str(old_fpath) == fpath_str:
+                            table = saved_table_names.get(old_name, "")
+                            for ds_name, tbl in self.data_mgr.table_names.items():
+                                if tbl == table and str(self.data_mgr.filepaths.get(ds_name)) == fpath_str:
+                                    dataset_name_map[old_name] = ds_name
+                                    break
+                else:
+                    new_name, columns = self.data_mgr.load(fpath)
+                    dataset_name_map[name] = new_name
             except Exception as e:
                 messagebox.showwarning(
                     "Missing File",

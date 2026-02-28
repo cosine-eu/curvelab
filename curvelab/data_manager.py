@@ -1,5 +1,6 @@
 """Data loading and column access via pandas."""
 
+import sqlite3
 from io import StringIO
 from pathlib import Path
 
@@ -13,14 +14,23 @@ class DataManager:
     def __init__(self):
         self.datasets: dict[str, pd.DataFrame] = {}
         self.filepaths: dict[str, Path] = {}
+        self.table_names: dict[str, str] = {}  # dataset_name -> SQLite table name
 
     def load(self, filepath: str | Path) -> tuple[str, list[str]]:
         """Load a data file and return (dataset_name, column_names).
 
-        Supported formats: CSV, TSV, Excel (.xlsx/.xls), JSON, Parquet.
+        Supported formats: CSV, TSV, Excel (.xlsx/.xls), JSON, Parquet,
+        SQLite (.sqlite/.db).
+
+        For SQLite files, all tables are loaded as separate datasets named
+        ``filename::table_name``. The first table's info is returned.
         """
         filepath = Path(filepath)
         ext = filepath.suffix.lower()
+
+        if ext in (".sqlite", ".db"):
+            return self._load_sqlite(filepath)
+
         loaders = {
             ".csv": lambda p: pd.read_csv(p),
             ".tsv": lambda p: pd.read_csv(p, sep="\t"),
@@ -46,6 +56,38 @@ class DataManager:
         self.datasets[name] = df
         self.filepaths[name] = filepath
         return name, list(df.columns)
+
+    def _load_sqlite(self, filepath: Path) -> tuple[str, list[str]]:
+        """Load all tables from a SQLite database as separate datasets."""
+        conn = sqlite3.connect(filepath)
+        try:
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+            tables = [row[0] for row in cursor.fetchall()]
+            if not tables:
+                raise ValueError(f"No tables found in '{filepath.name}'.")
+
+            first_name = None
+            first_columns = None
+            for table in tables:
+                df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+                base_name = f"{filepath.name}::{table}"
+                name = base_name
+                counter = 2
+                while name in self.datasets:
+                    name = f"{base_name} ({counter})"
+                    counter += 1
+                self.datasets[name] = df
+                self.filepaths[name] = filepath
+                self.table_names[name] = table
+                if first_name is None:
+                    first_name = name
+                    first_columns = list(df.columns)
+
+            return first_name, first_columns
+        finally:
+            conn.close()
 
     def load_from_text(self, text: str) -> tuple[str, list[str]]:
         """Load tabular data from a raw text string (e.g. clipboard).
@@ -136,6 +178,7 @@ class DataManager:
         """Remove a dataset by name."""
         self.datasets.pop(name, None)
         self.filepaths.pop(name, None)
+        self.table_names.pop(name, None)
 
     @property
     def dataset_names(self) -> list[str]:
