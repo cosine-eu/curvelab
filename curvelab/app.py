@@ -707,6 +707,7 @@ class CurveLabApp(ttk.Frame):
                     "min": par.min,
                     "max": par.max,
                     "vary": par.vary,
+                    "expr": par.expr or "",
                 }
             self.fit_results.set_params(params_info)
         except Exception as e:
@@ -725,7 +726,8 @@ class CurveLabApp(ttk.Frame):
 
         try:
             x, y, yerr = self._get_fit_data(rec)
-            result = fm.run_fit(x, y, yerr=yerr)
+            method = self.fit_panel.method_var.get()
+            result = fm.run_fit(x, y, yerr=yerr, method=method)
             sess.result = result
 
             skey = _make_session_key(self._active_series_id, sess.name)
@@ -791,7 +793,8 @@ class CurveLabApp(ttk.Frame):
             try:
                 x, y, yerr = self._get_fit_data(target_rec)
                 target_fm.auto_guess(x, y)
-                result = target_fm.run_fit(x, y, yerr=yerr)
+                method = self.fit_panel.method_var.get()
+                result = target_fm.run_fit(x, y, yerr=yerr, method=method)
                 target_sess.result = result
 
                 skey = _make_session_key(sid, session_name)
@@ -913,6 +916,13 @@ class CurveLabApp(ttk.Frame):
                 old_value = par.max
                 new_value = float("inf") if value in ("inf", "") else float(value)
                 fm.set_param(param_name, max=new_value)
+            elif field == "expr":
+                old_value = par.expr or ""
+                new_value = value.strip()
+                if new_value:
+                    fm.set_param(param_name, expr=new_value)
+                else:
+                    fm.set_param(param_name, expr="", vary=True)
             else:
                 return
             edit = ParamEdit(param_name=param_name, field=field,
@@ -935,6 +945,7 @@ class CurveLabApp(ttk.Frame):
                 "min": par.min,
                 "max": par.max,
                 "vary": par.vary,
+                "expr": par.expr or "",
             }
         self.fit_results.set_params(params_info)
 
@@ -1017,6 +1028,7 @@ class CurveLabApp(ttk.Frame):
                 "fit_visible": self.plot_controls.fit_visible_var.get(),
                 "residuals": self.plot_controls.residuals_var.get(),
                 "confidence_band": self.plot_controls.confidence_band_var.get(),
+                "fit_method": self.fit_panel.method_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
                 "ylabel": self.plot_controls.ylabel_var.get(),
             },
@@ -1165,6 +1177,7 @@ class CurveLabApp(ttk.Frame):
         self.plot_controls.fit_visible_var.set(pc.get("fit_visible", False))
         self.plot_controls.residuals_var.set(pc.get("residuals", False))
         self.plot_controls.confidence_band_var.set(pc.get("confidence_band", False))
+        self.fit_panel.method_var.set(pc.get("fit_method", "leastsq"))
         self.plot_controls.xlabel_var.set(pc.get("xlabel", ""))
         self.plot_controls.ylabel_var.set(pc.get("ylabel", ""))
 

@@ -543,7 +543,7 @@ class FitPanel(ttk.LabelFrame):
         ttk.Combobox(
             op_frame,
             textvariable=self.operator_var,
-            values=["+", "*"],
+            values=["+", "*", "-", "/"],
             state="readonly",
             width=3,
         ).pack(side=tk.LEFT, padx=2)
@@ -561,6 +561,22 @@ class FitPanel(ttk.LabelFrame):
         self.comp_listbox = tk.Listbox(self, height=3)
         self.comp_listbox.pack(fill=tk.X, pady=3)
         self.comp_listbox.bind("<Double-1>", self._edit_expression)
+
+        # --- Method selection ---
+        method_frame = ttk.Frame(self)
+        method_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(method_frame, text="Method:").pack(side=tk.LEFT)
+        self.method_var = tk.StringVar(value="leastsq")
+        ttk.Combobox(
+            method_frame,
+            textvariable=self.method_var,
+            values=[
+                "leastsq", "least_squares", "nelder", "powell",
+                "differential_evolution", "basinhopping",
+            ],
+            state="readonly",
+            width=20,
+        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
@@ -732,7 +748,7 @@ class FitResultsPanel(ttk.LabelFrame):
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill=tk.BOTH, expand=True)
 
-        columns = ("value", "stderr", "min", "max", "vary")
+        columns = ("value", "stderr", "min", "max", "vary", "expr")
         self.param_tree = ttk.Treeview(
             tree_frame, columns=columns, show="headings", height=6
         )
@@ -741,12 +757,14 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree.heading("min", text="Min")
         self.param_tree.heading("max", text="Max")
         self.param_tree.heading("vary", text="Vary")
+        self.param_tree.heading("expr", text="Expr")
 
         self.param_tree.column("value", width=80)
         self.param_tree.column("stderr", width=80)
         self.param_tree.column("min", width=60)
         self.param_tree.column("max", width=60)
         self.param_tree.column("vary", width=40)
+        self.param_tree.column("expr", width=120)
 
         # Add Name as a "tree" column
         self.param_tree["show"] = ("tree", "headings")
@@ -788,8 +806,9 @@ class FitResultsPanel(ttk.LabelFrame):
             mn = f"{info['min']:.6g}" if info["min"] not in (None, float("-inf")) else "-inf"
             mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
             vary = "Yes" if info.get("vary", True) else "No"
+            expr = info.get("expr") or ""
             tag = "even" if i % 2 == 0 else "odd"
-            self.param_tree.insert("", tk.END, text=name, values=(val, stderr, mn, mx, vary), tags=(tag,))
+            self.param_tree.insert("", tk.END, text=name, values=(val, stderr, mn, mx, vary, expr), tags=(tag,))
 
     def set_report(self, report: str):
         self.report_text.config(state=tk.NORMAL)
@@ -816,13 +835,13 @@ class FitResultsPanel(ttk.LabelFrame):
 
         # column is like "#1", "#2", etc.
         col_idx = int(column.replace("#", "")) - 1
-        col_names = ("value", "stderr", "min", "max", "vary")
+        col_names = ("value", "stderr", "min", "max", "vary", "expr")
         if col_idx < 0 or col_idx >= len(col_names):
             return
 
         col_name = col_names[col_idx]
-        # Only allow editing value, min, max, vary
-        if col_name not in ("value", "min", "max", "vary"):
+        # Only allow editing value, min, max, vary, expr
+        if col_name not in ("value", "min", "max", "vary", "expr"):
             return
 
         # Get cell bbox

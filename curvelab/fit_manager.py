@@ -94,6 +94,10 @@ class FitManager:
         for comp, m in zip(self.components[1:], models[1:]):
             if comp.operator == "*":
                 self._model = self._model * m
+            elif comp.operator == "-":
+                self._model = self._model - m
+            elif comp.operator == "/":
+                self._model = self._model / m
             else:
                 self._model = self._model + m
         self._params = self._model.make_params()
@@ -158,6 +162,7 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         n_dense: int = 500,
+        method: str = "leastsq",
     ) -> FitResult:
         """Run the fit and return results."""
         if self._model is None or self._params is None:
@@ -165,7 +170,8 @@ class FitManager:
 
         weights = 1.0 / yerr if yerr is not None else None
         self._last_result = self._model.fit(
-            y, self._params, x=x, weights=weights
+            y, self._params, x=x, weights=weights,
+            method=method, nan_policy="omit",
         )
 
         # Dense x-grid for smooth curve
@@ -195,6 +201,7 @@ class FitManager:
                 "min": par.min,
                 "max": par.max,
                 "vary": par.vary,
+                "expr": par.expr or "",
             }
 
         # Update internal params with fitted values
@@ -203,6 +210,7 @@ class FitManager:
         gof = {
             "chi-squared": self._last_result.chisqr,
             "reduced chi-squared": self._last_result.redchi,
+            "R-squared": self._last_result.rsquared,
             "AIC": self._last_result.aic,
             "BIC": self._last_result.bic,
         }
