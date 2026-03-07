@@ -22,7 +22,7 @@ from .ui_panels import (
     DiagnosticPlotsDialog, ConfidenceContourDialog,
     GlobalFitDialog, UncertaintyPropagationDialog,
     SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
-    ProfileLikelihoodDialog,
+    ProfileLikelihoodDialog, BootstrapDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -221,6 +221,9 @@ class CurveLabApp(ttk.Frame):
         )
         analysis_menu.add_command(
             label="Profile Likelihood...", command=self._show_profile_likelihood
+        )
+        analysis_menu.add_command(
+            label="Bootstrap CI...", command=self._show_bootstrap
         )
         analysis_menu.add_separator()
         analysis_menu.add_command(
@@ -1388,6 +1391,26 @@ class CurveLabApp(ttk.Frame):
             ProfileLikelihoodDialog(self, profiles, best_chi2)
         except Exception as e:
             messagebox.showerror("Profile Error", str(e))
+
+    def _show_bootstrap(self):
+        sess = self._active_session
+        rec = self._active_record
+        if sess is None or sess.result is None or rec is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+
+        def on_run(n_boot, boot_type):
+            x, y, yerr, xerr = self._get_fit_data(rec)
+            weight_mode = self.fit_panel.weight_var.get()
+            method = self.fit_panel.method_var.get()
+            return fm.run_bootstrap(
+                x, y, yerr=yerr, n_boot=n_boot,
+                method=method, boot_type=boot_type,
+                weight_mode=weight_mode,
+            )
+
+        BootstrapDialog(self, on_run=on_run)
 
     def _show_candidates_dialog(self, sess):
         """Show brute-force candidates dialog with option to load values."""

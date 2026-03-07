@@ -572,6 +572,58 @@ class FitManager:
                 profiles[pname] = points
         return profiles
 
+    def run_bootstrap(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        yerr: np.ndarray | None = None,
+        n_boot: int = 200,
+        method: str = "leastsq",
+        boot_type: str = "residual",
+        weight_mode: str = "1/yerr (default)",
+    ) -> dict[str, np.ndarray]:
+        """Run bootstrap resampling and return parameter distributions.
+
+        boot_type:
+          - "residual": Resample residuals and add to fitted values
+          - "case": Resample (x, y, yerr) rows with replacement
+
+        Returns {param_name: array of n_boot values}.
+        """
+        if self._last_result is None or self._model is None:
+            raise ValueError("Run a fit first")
+
+        best_params = self._last_result.params
+        y_fit = self._last_result.best_fit
+        residuals = y - y_fit
+
+        param_names = [n for n, p in best_params.items() if p.vary]
+        distributions: dict[str, list[float]] = {n: [] for n in param_names}
+
+        for _ in range(n_boot):
+            if boot_type == "case":
+                idx = np.random.randint(0, len(x), size=len(x))
+                x_b, y_b = x[idx], y[idx]
+                yerr_b = yerr[idx] if yerr is not None else None
+            else:
+                idx = np.random.randint(0, len(residuals), size=len(residuals))
+                x_b, y_b = x, y_fit + residuals[idx]
+                yerr_b = yerr
+
+            weights = self._compute_weights(y_b, yerr_b, weight_mode)
+            try:
+                params_copy = best_params.copy()
+                result = self._model.fit(
+                    y_b, params_copy, x=x_b, weights=weights,
+                    method=method, nan_policy="omit",
+                )
+                for n in param_names:
+                    distributions[n].append(result.params[n].value)
+            except Exception:
+                continue
+
+        return {n: np.array(v) for n, v in distributions.items()}
+
     def get_correlations(self) -> dict[str, dict[str, float]]:
         """Extract parameter correlations from the last fit result."""
         if self._last_result is None:

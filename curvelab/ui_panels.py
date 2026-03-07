@@ -1660,6 +1660,118 @@ class ConfidenceContourDialog(tk.Toplevel):
             self._status_var.set(f"Error: {e}")
 
 
+class BootstrapDialog(tk.Toplevel):
+    """Bootstrap confidence intervals with parameter histograms."""
+
+    def __init__(self, parent, on_run=None):
+        super().__init__(parent)
+        self.title("Bootstrap Confidence Intervals")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("900x650")
+        self._on_run = on_run
+
+        # Controls
+        ctrl = ttk.Frame(self, padding=5)
+        ctrl.pack(fill=tk.X)
+
+        ttk.Label(ctrl, text="N bootstrap:").pack(side=tk.LEFT)
+        self._n_var = tk.StringVar(value="200")
+        ttk.Entry(ctrl, textvariable=self._n_var, width=8).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(ctrl, text="Method:").pack(side=tk.LEFT, padx=(10, 0))
+        self._type_var = tk.StringVar(value="residual")
+        ttk.Combobox(ctrl, textvariable=self._type_var,
+                     values=["residual", "case"], state="readonly",
+                     width=10).pack(side=tk.LEFT, padx=5)
+
+        self._run_btn = ttk.Button(ctrl, text="Run", command=self._run)
+        self._run_btn.pack(side=tk.LEFT, padx=10)
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(ctrl, textvariable=self._status_var).pack(side=tk.LEFT, fill=tk.X)
+
+        # Results area
+        self._results_frame = ttk.Frame(self)
+        self._results_frame.pack(fill=tk.BOTH, expand=True)
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
+
+    def _run(self):
+        if self._on_run is None:
+            return
+        try:
+            n_boot = int(self._n_var.get())
+        except ValueError:
+            self._status_var.set("Invalid N.")
+            return
+        boot_type = self._type_var.get()
+        self._run_btn.config(state=tk.DISABLED)
+        self._status_var.set("Running...")
+        self.update_idletasks()
+        try:
+            distributions = self._on_run(n_boot, boot_type)
+            self._show_results(distributions)
+            self._status_var.set(f"Done ({n_boot} resamples).")
+        except Exception as e:
+            self._status_var.set(f"Error: {e}")
+        finally:
+            self._run_btn.config(state=tk.NORMAL)
+
+    def _show_results(self, distributions: dict):
+        import numpy as np
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+
+        # Clear previous results
+        for w in self._results_frame.winfo_children():
+            w.destroy()
+
+        n = len(distributions)
+        if n == 0:
+            ttk.Label(self._results_frame, text="No results.").pack()
+            return
+
+        ncols = min(3, n)
+        nrows = (n + ncols - 1) // ncols
+        fig = Figure(figsize=(4 * ncols, 3 * nrows))
+
+        summary_lines = []
+        for i, (pname, values) in enumerate(distributions.items()):
+            if len(values) < 2:
+                continue
+            ax = fig.add_subplot(nrows, ncols, i + 1)
+            ax.hist(values, bins=min(30, len(values) // 5 + 1),
+                    color="steelblue", alpha=0.7, edgecolor="white")
+            mean = np.mean(values)
+            std = np.std(values, ddof=1)
+            ci_lo, ci_hi = np.percentile(values, [2.5, 97.5])
+            ax.axvline(mean, color="red", linewidth=1.5, label=f"mean={mean:.4g}")
+            ax.axvline(ci_lo, color="orange", linestyle="--", linewidth=1)
+            ax.axvline(ci_hi, color="orange", linestyle="--", linewidth=1)
+            ax.set_xlabel(pname)
+            ax.set_title(f"{pname}\n{mean:.4g} \u00b1 {std:.4g}", fontsize=9)
+            summary_lines.append(
+                f"{pname}: {mean:.6g} \u00b1 {std:.4g}  "
+                f"[95% CI: {ci_lo:.4g}, {ci_hi:.4g}]"
+            )
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=self._results_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Summary text
+        if summary_lines:
+            summary_frame = ttk.LabelFrame(self._results_frame,
+                                            text="Summary", padding=5)
+            summary_frame.pack(fill=tk.X, padx=5, pady=5)
+            text = tk.Text(summary_frame, height=min(len(summary_lines) + 1, 8),
+                          font=("Courier", 9), wrap=tk.NONE)
+            text.insert("1.0", "\n".join(summary_lines))
+            text.config(state=tk.DISABLED)
+            text.pack(fill=tk.X)
+
+
 class ProfileLikelihoodDialog(tk.Toplevel):
     """Plot chi-squared profiles for each parameter."""
 
