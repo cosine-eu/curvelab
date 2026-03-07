@@ -277,6 +277,7 @@ class FitManager:
         weight_mode: str = "1/yerr (default)",
         max_nfev: int | None = None,
         band_sigma: int = 1,
+        scale_covar: bool = True,
     ) -> FitResult:
         """Run the fit and return results."""
         if self._model is None or self._params is None:
@@ -311,6 +312,7 @@ class FitManager:
         fit_kwargs = dict(
             method=method, nan_policy="omit",
             iter_cb=iter_cb, fit_kws=kws,
+            scale_covar=scale_covar,
         )
         if max_nfev is not None:
             fit_kwargs["max_nfev"] = max_nfev

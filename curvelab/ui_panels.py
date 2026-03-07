@@ -687,6 +687,13 @@ class FitPanel(ttk.LabelFrame):
         )
         ttk.Label(nfev_frame, text="(empty = unlimited)").pack(side=tk.LEFT, padx=2)
 
+        # --- Scale covariance ---
+        self.scale_covar_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            self, text="Scale covariance by reduced \u03c7\u00b2 (assume model is correct)",
+            variable=self.scale_covar_var,
+        ).pack(anchor=tk.W, pady=(3, 0))
+
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
         fit_btn_frame.pack(fill=tk.X, pady=3)
