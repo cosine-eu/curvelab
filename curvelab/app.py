@@ -21,7 +21,7 @@ from .ui_panels import (
     BruteCandidatesDialog, EmceeSummaryDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog,
     GlobalFitDialog, UncertaintyPropagationDialog,
-    SimulateDataDialog,
+    SimulateDataDialog, ColumnCalculatorDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -117,6 +117,7 @@ class CurveLabApp(ttk.Frame):
             on_dataset_selected=self._on_dataset_selected,
             on_remove_dataset=self._on_remove_dataset,
             on_toggle_series_visible=self._on_toggle_series_visible,
+            on_column_calc=self._on_column_calc,
         )
         left_pane.add(self.data_panel, weight=1)
 
@@ -644,6 +645,53 @@ class CurveLabApp(ttk.Frame):
     def _on_dataset_selected(self, name: str):
         columns = self.data_mgr.column_names(name)
         self.data_panel.set_columns(columns)
+
+    def _on_column_calc(self):
+        dataset = self.data_panel.dataset_var.get()
+        if not dataset:
+            messagebox.showwarning("No Dataset", "Load a dataset first.")
+            return
+        columns = self.data_mgr.column_names(dataset)
+
+        _SAFE_NAMES = {
+            "abs": np.abs, "sqrt": np.sqrt, "log": np.log, "log2": np.log2,
+            "log10": np.log10, "exp": np.exp, "sin": np.sin, "cos": np.cos,
+            "tan": np.tan, "arcsin": np.arcsin, "arccos": np.arccos,
+            "arctan": np.arctan, "arctan2": np.arctan2,
+            "sinh": np.sinh, "cosh": np.cosh, "tanh": np.tanh,
+            "floor": np.floor, "ceil": np.ceil, "round": np.round_,
+            "sign": np.sign, "clip": np.clip,
+            "pi": np.pi, "e": np.e, "inf": np.inf, "nan": np.nan,
+            "diff": np.diff, "cumsum": np.cumsum,
+            "mean": np.mean, "std": np.std, "min": np.min, "max": np.max,
+            "where": np.where, "isnan": np.isnan, "isinf": np.isinf,
+        }
+
+        def on_apply(name, expr, preview_only):
+            if not expr:
+                raise ValueError("Enter an expression.")
+            df = self.data_mgr.datasets[dataset]
+            namespace = dict(_SAFE_NAMES)
+            namespace["__builtins__"] = {}
+            for col in df.columns:
+                namespace[col] = df[col].to_numpy(dtype=float)
+            result = eval(expr, namespace)  # noqa: S307
+            result = np.asarray(result, dtype=float)
+            if result.ndim == 0:
+                result = np.full(len(df), result)
+            if len(result) != len(df):
+                raise ValueError(
+                    f"Result has {len(result)} values, expected {len(df)}. "
+                    f"(Functions like diff reduce length by 1.)"
+                )
+            if preview_only:
+                return result
+            df[name] = result
+            # Refresh column dropdowns
+            self.data_panel.set_columns(list(df.columns))
+            return result
+
+        ColumnCalculatorDialog(self, columns=columns, on_apply=on_apply)
 
     def _on_remove_dataset(self, name: str):
         to_remove = [

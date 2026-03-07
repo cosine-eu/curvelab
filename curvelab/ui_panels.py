@@ -29,6 +29,7 @@ class DataPanel(ttk.LabelFrame):
         on_dataset_selected=None,
         on_remove_dataset=None,
         on_toggle_series_visible=None,
+        on_column_calc=None,
     ):
         super().__init__(parent, text="Data", padding=5)
         self._on_load = on_load
@@ -37,14 +38,20 @@ class DataPanel(ttk.LabelFrame):
         self._on_dataset_selected = on_dataset_selected
         self._on_remove_dataset = on_remove_dataset
         self._on_toggle_series_visible = on_toggle_series_visible
+        self._on_column_calc = on_column_calc
         self._series_items = []  # list of dicts describing each series
 
         self._build_ui()
 
     def _build_ui(self):
-        # --- Load button ---
-        ttk.Button(self, text="Load File...", command=self._load_file).pack(
-            fill=tk.X, pady=(0, 5)
+        # --- Load button + Column calc ---
+        load_frame = ttk.Frame(self)
+        load_frame.pack(fill=tk.X, pady=(0, 5))
+        ttk.Button(load_frame, text="Load File...", command=self._load_file).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        )
+        ttk.Button(load_frame, text="Column Calc...", command=self._column_calc).pack(
+            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
         )
 
         # --- Dataset selector ---
@@ -167,6 +174,10 @@ class DataPanel(ttk.LabelFrame):
         self.series_listbox = tk.Listbox(self, height=4, exportselection=False)
         self.series_listbox.pack(fill=tk.BOTH, expand=True, pady=5)
         self.series_listbox.bind("<<ListboxSelect>>", self._on_select_series)
+
+    def _column_calc(self):
+        if self._on_column_calc:
+            self._on_column_calc()
 
     def _load_file(self):
         filepath = filedialog.askopenfilename(
@@ -1719,3 +1730,102 @@ class SimulateDataDialog(tk.Toplevel):
                 self.destroy()
             except Exception as e:
                 self._status_var.set(f"Error: {e}")
+
+
+class ColumnCalculatorDialog(tk.Toplevel):
+    """Dialog for creating new columns from expressions on existing columns."""
+
+    def __init__(self, parent, columns: list[str], on_apply=None):
+        super().__init__(parent)
+        self.title("Column Calculator")
+        self.resizable(True, False)
+        self.transient(parent)
+        self._columns = list(columns)
+        self._on_apply = on_apply
+
+        # --- Column name ---
+        name_frame = ttk.Frame(self)
+        name_frame.pack(fill=tk.X, padx=10, pady=(10, 5))
+        ttk.Label(name_frame, text="New column name:").pack(side=tk.LEFT)
+        self._name_var = tk.StringVar()
+        ttk.Entry(name_frame, textvariable=self._name_var, width=20).pack(
+            side=tk.LEFT, padx=(5, 0), fill=tk.X, expand=True
+        )
+
+        # --- Expression ---
+        expr_frame = ttk.LabelFrame(self, text="Expression", padding=5)
+        expr_frame.pack(fill=tk.X, padx=10, pady=5)
+        self._expr_var = tk.StringVar()
+        ttk.Entry(expr_frame, textvariable=self._expr_var, width=50).pack(
+            fill=tk.X, pady=(0, 5)
+        )
+
+        col_text = ", ".join(columns) if columns else "(no columns)"
+        ttk.Label(expr_frame, text=f"Columns: {col_text}",
+                  wraplength=400, justify=tk.LEFT).pack(anchor=tk.W)
+        ttk.Label(expr_frame,
+                  text="Functions: abs, sqrt, log, log10, exp, sin, cos, tan, "
+                       "diff, cumsum, mean, std, where, clip, pi, e",
+                  wraplength=400, justify=tk.LEFT,
+                  foreground="gray").pack(anchor=tk.W)
+        ttk.Label(expr_frame,
+                  text="Examples: log(intensity), col_0 / col_1, "
+                       "sqrt(x**2 + y**2)",
+                  wraplength=400, justify=tk.LEFT,
+                  foreground="gray").pack(anchor=tk.W)
+
+        # --- Preview ---
+        preview_frame = ttk.LabelFrame(self, text="Preview (first 10 values)", padding=5)
+        preview_frame.pack(fill=tk.X, padx=10, pady=5)
+        self._preview_text = tk.Text(preview_frame, height=3, state=tk.DISABLED,
+                                     wrap=tk.WORD)
+        self._preview_text.pack(fill=tk.X)
+
+        # --- Buttons ---
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(fill=tk.X, padx=10, pady=10)
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(btn_frame, textvariable=self._status_var,
+                  foreground="red").pack(side=tk.LEFT, fill=tk.X, expand=True)
+        ttk.Button(btn_frame, text="Preview", command=self._preview).pack(
+            side=tk.RIGHT, padx=(5, 0)
+        )
+        ttk.Button(btn_frame, text="Apply", command=self._apply).pack(
+            side=tk.RIGHT, padx=(5, 0)
+        )
+        ttk.Button(btn_frame, text="Close", command=self.destroy).pack(
+            side=tk.RIGHT
+        )
+
+    def _preview(self):
+        self._do_eval(preview_only=True)
+
+    def _apply(self):
+        self._do_eval(preview_only=False)
+
+    def _do_eval(self, preview_only: bool):
+        name = self._name_var.get().strip()
+        if not name and not preview_only:
+            self._status_var.set("Enter a column name.")
+            return
+        if self._on_apply is None:
+            return
+        try:
+            result = self._on_apply(name, self._expr_var.get().strip(), preview_only)
+            if preview_only and result is not None:
+                preview = ", ".join(f"{v:.6g}" for v in result[:10])
+                if len(result) > 10:
+                    preview += f", ... ({len(result)} values)"
+                self._preview_text.config(state=tk.NORMAL)
+                self._preview_text.delete("1.0", tk.END)
+                self._preview_text.insert("1.0", preview)
+                self._preview_text.config(state=tk.DISABLED)
+                self._status_var.set("")
+            elif not preview_only:
+                self._status_var.set("")
+                if name not in self._columns:
+                    self._columns.append(name)
+                messagebox.showinfo("Column Calculator",
+                                    f"Column '{name}' created.", parent=self)
+        except Exception as e:
+            self._status_var.set(str(e))
