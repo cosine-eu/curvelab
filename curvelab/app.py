@@ -1482,7 +1482,12 @@ class CurveLabApp(ttk.Frame):
             self.plot_mgr.clear_all_residuals()
 
     def _on_confidence_band_toggled(self, show: bool):
+        xlim = self.plot_mgr.ax.get_xlim()
+        ylim = self.plot_mgr.ax.get_ylim()
         self._replot_all_series()
+        self.plot_mgr.ax.set_xlim(xlim)
+        self.plot_mgr.ax.set_ylim(ylim)
+        self.plot_mgr.draw()
 
     def _on_axis_labels(self, xlabel: str, ylabel: str):
         self.plot_mgr.set_axis_labels(xlabel, ylabel)
