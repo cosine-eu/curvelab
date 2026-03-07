@@ -351,6 +351,7 @@ class PlotControlPanel(ttk.Frame):
         on_confidence_band_toggled=None,
         on_axis_labels=None,
         on_data_toggled=None,
+        on_weighted_resid_toggled=None,
     ):
         super().__init__(parent, padding=5)
         self._on_xscale = on_xscale
@@ -363,6 +364,7 @@ class PlotControlPanel(ttk.Frame):
         self._on_confidence_band_toggled = on_confidence_band_toggled
         self._on_axis_labels = on_axis_labels
         self._on_data_toggled = on_data_toggled
+        self._on_weighted_resid_toggled = on_weighted_resid_toggled
 
         self._build_ui()
 
@@ -445,6 +447,12 @@ class PlotControlPanel(ttk.Frame):
         ).pack(side=tk.LEFT)
         ttk.Label(row1, text="\u03c3").pack(side=tk.LEFT, padx=(0, 5))
 
+        self.weighted_resid_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            row1, text="Wt. resid", variable=self.weighted_resid_var,
+            command=self._fire_weighted_resid,
+        ).pack(side=tk.LEFT, padx=5)
+
         self.exclude_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Exclude pts", variable=self.exclude_var,
@@ -500,6 +508,10 @@ class PlotControlPanel(ttk.Frame):
     def _fire_residuals(self):
         if self._on_residuals_toggled:
             self._on_residuals_toggled(self.residuals_var.get())
+
+    def _fire_weighted_resid(self):
+        if self._on_weighted_resid_toggled:
+            self._on_weighted_resid_toggled(self.weighted_resid_var.get())
 
     def _fire_confidence_band(self):
         if self._on_confidence_band_toggled:

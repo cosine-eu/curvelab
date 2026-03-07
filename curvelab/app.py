@@ -172,6 +172,7 @@ class CurveLabApp(ttk.Frame):
             on_confidence_band_toggled=self._on_confidence_band_toggled,
             on_axis_labels=self._on_axis_labels,
             on_data_toggled=self._on_data_toggled,
+            on_weighted_resid_toggled=self._on_weighted_resid_toggled,
         )
         self.plot_controls.grid(row=1, column=0, sticky="ew", pady=2)
 
@@ -630,7 +631,7 @@ class CurveLabApp(ttk.Frame):
         if result is None:
             return
         residuals = result.y_data - result.y_fit_data
-        if result.yerr_data is not None:
+        if result.yerr_data is not None and self.plot_controls.weighted_resid_var.get():
             residuals = residuals / result.yerr_data
         self.plot_mgr.plot_residuals(skey, result.x_data, residuals, color=sess.color)
 
@@ -1781,6 +1782,19 @@ class CurveLabApp(ttk.Frame):
                             self._plot_residuals_for_session(skey, sess, rec)
         else:
             self.plot_mgr.clear_all_residuals()
+
+    def _on_weighted_resid_toggled(self, _weighted: bool):
+        """Re-plot residuals when weighted/raw toggle changes."""
+        if not self.plot_controls.residuals_var.get():
+            return
+        # Clear and re-plot all residuals
+        self.plot_mgr.clear_all_residuals()
+        for sid, rec in self._series_records.items():
+            for sess_name, sess in rec.fit_sessions.items():
+                if sess.result is not None and sess.visible:
+                    skey = _make_session_key(sid, sess_name)
+                    self._plot_residuals_for_session(skey, sess, rec)
+        self.plot_mgr.canvas.draw_idle()
 
     def _on_confidence_band_toggled(self, show: bool):
         xlim = self.plot_mgr.ax.get_xlim()
