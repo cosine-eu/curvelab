@@ -195,6 +195,7 @@ class CurveLabApp(ttk.Frame):
         file_menu.add_separator()
         file_menu.add_command(label="Export Parameters...", command=self._export_params)
         file_menu.add_command(label="Export Fit Report...", command=self._export_report)
+        file_menu.add_command(label="Export Curve Data...", command=self._export_curve_data)
         file_menu.add_separator()
         file_menu.add_command(label="Export Model Result...", command=self._export_model_result)
         file_menu.add_command(label="Import Model Result...", command=self._import_model_result)
@@ -298,6 +299,68 @@ class CurveLabApp(ttk.Frame):
             return
         with open(filepath, "w") as f:
             f.write(sess.result.report)
+
+    def _export_curve_data(self):
+        """Export fit curve, residuals, and component curves as CSV."""
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        filepath = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV", "*.csv"), ("TSV", "*.tsv"), ("All files", "*.*")],
+            title="Export Curve Data",
+        )
+        if not filepath:
+            return
+
+        result = sess.result
+
+        # Build dense curve data (fit curve + components)
+        dense_data = {"x": result.x_dense, "y_fit": result.y_fit_dense}
+        if result.y_uncertainty is not None:
+            dense_data["y_uncertainty"] = result.y_uncertainty
+        for comp_name, comp_curve in result.component_curves.items():
+            dense_data[f"component_{comp_name.rstrip('_')}"] = comp_curve
+
+        # Build data-point residuals
+        residuals = result.y_data - result.y_fit_data
+        weighted_residuals = None
+        if result.yerr_data is not None:
+            safe_yerr = np.maximum(np.abs(result.yerr_data), 1e-12)
+            weighted_residuals = residuals / safe_yerr
+
+        try:
+            import pandas as pd
+
+            # Sheet 1: dense fit curve
+            df_curve = pd.DataFrame(dense_data)
+
+            # Sheet 2: data-point residuals
+            resid_data = {
+                "x": result.x_data,
+                "y_data": result.y_data,
+                "y_fit": result.y_fit_data,
+                "residuals": residuals,
+            }
+            if weighted_residuals is not None:
+                resid_data["weighted_residuals"] = weighted_residuals
+            df_resid = pd.DataFrame(resid_data)
+
+            if filepath.endswith(".tsv"):
+                sep = "\t"
+            else:
+                sep = ","
+
+            # Write both tables separated by a blank line
+            with open(filepath, "w", newline="") as f:
+                f.write("# Fit curve (dense grid)\n")
+                df_curve.to_csv(f, sep=sep, index=False)
+                f.write("\n# Data points and residuals\n")
+                df_resid.to_csv(f, sep=sep, index=False)
+
+        except Exception as e:
+            messagebox.showerror("Export Error", str(e))
 
     def _save_plot(self):
         filepath = filedialog.asksaveasfilename(
