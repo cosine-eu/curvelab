@@ -1149,6 +1149,117 @@ class ModelComparisonDialog(tk.Toplevel):
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
 
 
+class FTestDialog(tk.Toplevel):
+    """F-test for nested model comparison between two fit sessions."""
+
+    def __init__(self, parent, sessions: dict[str, dict]):
+        """sessions: {name: {n_params, chisqr, n_data}}."""
+        super().__init__(parent)
+        self.title("F-Test for Nested Models")
+        self.resizable(False, False)
+        self.transient(parent)
+        self._sessions = sessions
+        names = list(sessions.keys())
+
+        # Session selectors
+        sel_frame = ttk.LabelFrame(self, text="Select two sessions (simpler vs more complex)", padding=5)
+        sel_frame.pack(fill=tk.X, padx=10, pady=10)
+
+        ttk.Label(sel_frame, text="Reduced model (fewer params):").grid(row=0, column=0, sticky=tk.W)
+        self._reduced_var = tk.StringVar(value=names[0] if names else "")
+        ttk.Combobox(sel_frame, textvariable=self._reduced_var,
+                     values=names, state="readonly", width=25).grid(row=0, column=1, padx=5)
+
+        ttk.Label(sel_frame, text="Full model (more params):").grid(row=1, column=0, sticky=tk.W, pady=(5, 0))
+        self._full_var = tk.StringVar(value=names[1] if len(names) > 1 else "")
+        ttk.Combobox(sel_frame, textvariable=self._full_var,
+                     values=names, state="readonly", width=25).grid(row=1, column=1, padx=5, pady=(5, 0))
+
+        ttk.Button(self, text="Compute", command=self._compute).pack(pady=5)
+
+        self._result_text = tk.Text(self, height=10, width=60, wrap=tk.WORD,
+                                     font=("Courier", 10), state=tk.DISABLED)
+        self._result_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 5))
+
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
+
+    def _compute(self):
+        import scipy.stats as stats
+
+        r_name = self._reduced_var.get()
+        f_name = self._full_var.get()
+        if r_name == f_name:
+            self._show_result("Select two different sessions.")
+            return
+        if r_name not in self._sessions or f_name not in self._sessions:
+            self._show_result("Select valid sessions.")
+            return
+
+        r = self._sessions[r_name]
+        f = self._sessions[f_name]
+
+        p1, p2 = r["n_params"], f["n_params"]
+        chi1, chi2 = r["chisqr"], f["chisqr"]
+        n = r["n_data"]
+
+        # Ensure reduced model has fewer params
+        if p1 >= p2:
+            self._show_result(
+                f"Reduced model ({r_name}) has {p1} params, "
+                f"full model ({f_name}) has {p2} params.\n\n"
+                f"The reduced model must have fewer parameters than the full model."
+            )
+            return
+
+        if chi2 >= chi1:
+            self._show_result(
+                f"Full model has equal or worse \u03c7\u00b2 ({chi2:.4g}) "
+                f"than reduced model ({chi1:.4g}).\n\n"
+                f"The extra parameters do not improve the fit."
+            )
+            return
+
+        df1 = p2 - p1  # extra parameters
+        df2 = n - p2    # residual DOF of full model
+
+        if df2 <= 0:
+            self._show_result("Not enough data points for this comparison.")
+            return
+
+        f_stat = ((chi1 - chi2) / df1) / (chi2 / df2)
+        p_value = stats.f.sf(f_stat, df1, df2)
+
+        lines = [
+            f"Reduced model: {r_name}",
+            f"  Parameters: {p1},  \u03c7\u00b2 = {chi1:.6g}",
+            f"",
+            f"Full model: {f_name}",
+            f"  Parameters: {p2},  \u03c7\u00b2 = {chi2:.6g}",
+            f"",
+            f"Extra parameters: {df1}",
+            f"Residual DOF:     {df2}",
+            f"",
+            f"F-statistic: {f_stat:.4f}",
+            f"p-value:     {p_value:.6g}",
+            f"",
+        ]
+        if p_value < 0.01:
+            lines.append("The extra parameters significantly improve the fit (p < 0.01).")
+        elif p_value < 0.05:
+            lines.append("The extra parameters marginally improve the fit (p < 0.05).")
+        else:
+            lines.append("The extra parameters do NOT significantly improve the fit.")
+            lines.append("The simpler model is preferred.")
+
+        self._show_result("\n".join(lines))
+
+    def _show_result(self, text: str):
+        self._result_text.config(state=tk.NORMAL)
+        self._result_text.delete("1.0", tk.END)
+        self._result_text.insert("1.0", text)
+        self._result_text.config(state=tk.DISABLED)
+
+
 class ConfidenceIntervalDialog(tk.Toplevel):
     """Display confidence interval report in monospace text."""
 

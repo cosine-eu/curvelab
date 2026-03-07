@@ -21,7 +21,7 @@ from .ui_panels import (
     BruteCandidatesDialog, EmceeSummaryDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog,
     GlobalFitDialog, UncertaintyPropagationDialog,
-    SimulateDataDialog, ColumnCalculatorDialog,
+    SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -229,6 +229,9 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_command(
             label="Model Comparison...", command=self._show_model_comparison
         )
+        analysis_menu.add_command(
+            label="F-Test (Nested Models)...", command=self._show_f_test
+        )
         analysis_menu.add_separator()
         analysis_menu.add_command(
             label="Simulate Data...", command=self._on_simulate_data
@@ -411,6 +414,27 @@ class CurveLabApp(ttk.Frame):
             messagebox.showinfo("No Fits", "No completed fits to compare.")
             return
         ModelComparisonDialog(self, rows)
+
+    def _show_f_test(self):
+        rec = self._active_record
+        if rec is None:
+            messagebox.showwarning("No Series", "Select a series first.")
+            return
+        sessions = {}
+        for sess_name, sess in rec.fit_sessions.items():
+            if sess.result is None:
+                continue
+            gof = sess.result.gof
+            n_vary = sum(1 for p in sess.result.params.values() if p.get("vary", True))
+            sessions[sess_name] = {
+                "n_params": n_vary,
+                "chisqr": gof.get("chi-squared", 0),
+                "n_data": len(sess.result.x_data),
+            }
+        if len(sessions) < 2:
+            messagebox.showinfo("Need 2+ Fits", "Need at least two completed fits to compare.")
+            return
+        FTestDialog(self, sessions)
 
     # --- Simulate Data ---
 
