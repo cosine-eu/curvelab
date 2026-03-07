@@ -156,6 +156,7 @@ class CurveLabApp(ttk.Frame):
         self.plot_mgr = PlotManager(plot_frame)
         self.plot_mgr.toolbar.pack(side=tk.TOP, fill=tk.X)
         self.plot_mgr.get_canvas_widget().pack(fill=tk.BOTH, expand=True)
+        self.plot_mgr.canvas.mpl_connect("button_press_event", self._on_plot_click)
 
         # Plot controls strip
         self.plot_controls = PlotControlPanel(
@@ -231,6 +232,10 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_separator()
         analysis_menu.add_command(
             label="Simulate Data...", command=self._on_simulate_data
+        )
+        analysis_menu.add_separator()
+        analysis_menu.add_command(
+            label="Clear Point Exclusions", command=self._clear_exclusions
         )
         menubar.add_cascade(label="Analysis", menu=analysis_menu)
 
@@ -810,15 +815,45 @@ class CurveLabApp(ttk.Frame):
         for sid, rec in self._series_records.items():
             s = rec.style
             if rec.visible:
-                style = SeriesStyle(
-                    marker=s.get("marker", "o"),
-                    linestyle=s.get("linestyle", "None"),
-                    color=s.get("color", ""),
-                    label=s.get("label", ""),
-                )
-                self.plot_mgr.plot_series(
-                    rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
-                )
+                mask = rec.mask
+                if mask is not None and not mask.all():
+                    # Plot included points normally
+                    style = SeriesStyle(
+                        marker=s.get("marker", "o"),
+                        linestyle=s.get("linestyle", "None"),
+                        color=s.get("color", ""),
+                        label=s.get("label", ""),
+                    )
+                    inc_yerr = rec.yerr[mask] if rec.yerr is not None else None
+                    inc_xerr = rec.xerr[mask] if rec.xerr is not None else None
+                    self.plot_mgr.plot_series(
+                        rec.x[mask], rec.y[mask],
+                        yerr=inc_yerr, xerr=inc_xerr, style=style,
+                    )
+                    # Plot excluded points as dimmed
+                    exc = ~mask
+                    exc_style = SeriesStyle(
+                        marker=s.get("marker", "o"),
+                        linestyle="None",
+                        color="gray",
+                        markersize=3.0,
+                    )
+                    exc_yerr = rec.yerr[exc] if rec.yerr is not None else None
+                    exc_xerr = rec.xerr[exc] if rec.xerr is not None else None
+                    self.plot_mgr.plot_series(
+                        rec.x[exc], rec.y[exc],
+                        yerr=exc_yerr, xerr=exc_xerr, style=exc_style,
+                    )
+                else:
+                    style = SeriesStyle(
+                        marker=s.get("marker", "o"),
+                        linestyle=s.get("linestyle", "None"),
+                        color=s.get("color", ""),
+                        label=s.get("label", ""),
+                    )
+                    self.plot_mgr.plot_series(
+                        rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
+                    )
             for sess_name, sess in rec.fit_sessions.items():
                 if sess.result is not None and sess.visible:
                     skey = _make_session_key(sid, sess_name)
@@ -1006,6 +1041,12 @@ class CurveLabApp(ttk.Frame):
         x, y = rec.x.copy(), rec.y.copy()
         yerr = rec.yerr.copy() if rec.yerr is not None else None
         xerr = rec.xerr.copy() if rec.xerr is not None else None
+
+        # 0. Apply point exclusion mask
+        if rec.mask is not None:
+            x, y = x[rec.mask], y[rec.mask]
+            yerr = yerr[rec.mask] if yerr is not None else None
+            xerr = xerr[rec.mask] if xerr is not None else None
 
         # 1. Visible-range mask (applied first so guard-rails only touch relevant data)
         if self.plot_controls.fit_visible_var.get():
@@ -1579,6 +1620,61 @@ class CurveLabApp(ttk.Frame):
     def _on_data_toggled(self, show: bool):
         self.plot_mgr.set_data_visible(show)
 
+    def _on_plot_click(self, event):
+        """Handle click on plot — toggle point exclusion when in exclude mode."""
+        if not self.plot_controls.exclude_var.get():
+            return
+        if event.inaxes != self.plot_mgr.ax:
+            return
+        if event.xdata is None or event.ydata is None:
+            return
+
+        # Find the closest point across all visible series
+        best_dist = float("inf")
+        best_sid = None
+        best_idx = None
+
+        # Get axis display transform for distance calculation
+        ax = self.plot_mgr.ax
+        for sid, rec in self._series_records.items():
+            if not rec.visible:
+                continue
+            for i in range(len(rec.x)):
+                # Transform data coords to display coords for fair distance
+                dx_display = ax.transData.transform((rec.x[i], rec.y[i]))
+                click_display = ax.transData.transform((event.xdata, event.ydata))
+                dist = ((dx_display[0] - click_display[0]) ** 2 +
+                        (dx_display[1] - click_display[1]) ** 2) ** 0.5
+                if dist < best_dist:
+                    best_dist = dist
+                    best_sid = sid
+                    best_idx = i
+
+        # Only toggle if click is within 10 pixels of a point
+        if best_sid is None or best_dist > 10:
+            return
+
+        rec = self._series_records[best_sid]
+        if rec.mask is None:
+            rec.mask = np.ones(len(rec.x), dtype=bool)
+        rec.mask[best_idx] = not rec.mask[best_idx]
+
+        n_excluded = int((~rec.mask).sum())
+        self._replot_all_series()
+        self.plot_mgr.canvas.draw_idle()
+        # Brief status in title
+        self.parent.title(f"CurveLab — {n_excluded} point(s) excluded")
+
+    def _clear_exclusions(self):
+        """Clear all point exclusions from the active series."""
+        rec = self._active_record
+        if rec is None:
+            return
+        rec.mask = None
+        self._replot_all_series()
+        self.plot_mgr.canvas.draw_idle()
+        self.parent.title("CurveLab")
+
     def _on_residuals_toggled(self, show: bool):
         self.plot_mgr.set_residuals_visible(show)
         if show:
@@ -1732,6 +1828,8 @@ class CurveLabApp(ttk.Frame):
                 "fit_sessions": fit_sessions,
                 "active_session_name": rec.active_session_name,
             }
+            if rec.mask is not None:
+                sdata["mask"] = encode_value(rec.mask)
             series[sid] = sdata
 
         return {
@@ -1862,10 +1960,15 @@ class CurveLabApp(ttk.Frame):
                 continue
             ds_name = actual_ds
 
+            saved_mask = sdata.get("mask")
+            if saved_mask is not None:
+                saved_mask = np.asarray(saved_mask, dtype=bool)
+
             rec = SeriesRecord(
                 x=x, y=y, yerr=yerr, xerr=xerr,
                 style=style, dataset_name=ds_name,
                 visible=sdata.get("visible", True),
+                mask=saved_mask,
                 active_session_name=sdata.get("active_session_name"),
             )
 

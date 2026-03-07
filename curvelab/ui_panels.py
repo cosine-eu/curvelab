@@ -445,6 +445,11 @@ class PlotControlPanel(ttk.Frame):
         ).pack(side=tk.LEFT)
         ttk.Label(row1, text="\u03c3").pack(side=tk.LEFT, padx=(0, 5))
 
+        self.exclude_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            row1, text="Exclude pts", variable=self.exclude_var,
+        ).pack(side=tk.LEFT, padx=5)
+
         # --- Row 2: Axis labels ---
         row2 = ttk.Frame(self)
         row2.pack(fill=tk.X, pady=(2, 0))

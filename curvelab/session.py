@@ -89,6 +89,7 @@ class SeriesRecord:
     style: dict = field(default_factory=dict)
     dataset_name: str = ""
     visible: bool = True
+    mask: np.ndarray | None = None  # True = included, None = all included
     fit_sessions: dict[str, FitSession] = field(default_factory=dict)
     active_session_name: str | None = None
 
