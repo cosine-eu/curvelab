@@ -2215,7 +2215,7 @@ class DerivativeIntegralDialog(tk.Toplevel):
         # Component areas if available
         if result.component_curves:
             for name, y_comp in result.component_curves.items():
-                area = np.trapezoid(y_comp, x)
+                area = np.trapz(y_comp, x)
                 ttk.Label(info_frame, text=f"  {name}: {area:.6g}").pack(anchor=tk.W)
 
         fig = Figure(figsize=(7, 4))
