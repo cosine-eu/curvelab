@@ -645,7 +645,7 @@ class FitPanel(ttk.LabelFrame):
                 "cobyla", "lbfgsb",
                 "differential_evolution", "basinhopping",
                 "dual_annealing", "shgo", "ampgo",
-                "brute", "emcee",
+                "brute", "emcee", "odr",
             ],
             state="readonly",
             width=20,

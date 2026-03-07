@@ -1176,7 +1176,9 @@ class CurveLabApp(ttk.Frame):
                         )
                         return
 
-        if method in self._SLOW_METHODS:
+        if method == "odr":
+            self._run_fit_odr(rec, sess)
+        elif method in self._SLOW_METHODS:
             self._run_fit_async(rec, sess, method)
         else:
             self._run_fit_sync(rec, sess, method)
@@ -1207,6 +1209,22 @@ class CurveLabApp(ttk.Frame):
             self._post_fit_update(sess, rec)
         except Exception as e:
             messagebox.showerror("Fit Error", str(e))
+
+    def _run_fit_odr(self, rec, sess):
+        """Run ODR fit using odrpack."""
+        fm = sess.fit_manager
+        try:
+            x, y, yerr, xerr = self._get_fit_data(rec)
+            _, _, _, band_sigma, _ = self._get_fit_options()
+            result = fm.run_odr(
+                x, y, yerr=yerr, xerr=xerr, band_sigma=band_sigma,
+            )
+            sess.result = result
+            self._post_fit_update(sess, rec)
+        except ImportError as e:
+            messagebox.showerror("Missing Package", str(e))
+        except Exception as e:
+            messagebox.showerror("ODR Error", str(e))
 
     def _run_fit_async(self, rec, sess, method):
         """Run fit in a background thread (slow methods)."""

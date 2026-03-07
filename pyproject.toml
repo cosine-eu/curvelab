@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 notebook = ["ipywidgets", "ipympl"]
 excel = ["openpyxl"]
+odr = ["odrpack"]
 
 [project.scripts]
 curvelab = "curvelab.app:CurveLabApp.launch"

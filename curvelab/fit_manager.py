@@ -578,6 +578,183 @@ class FitManager:
             profiles[pname] = list(zip(param_vals[order], chi2_vals[order]))
         return profiles
 
+    def run_odr(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        yerr: np.ndarray | None = None,
+        xerr: np.ndarray | None = None,
+        n_dense: int = 500,
+        band_sigma: int = 1,
+    ) -> FitResult:
+        """Run orthogonal distance regression using the odrpack package.
+
+        Requires both xerr and yerr for proper ODR weighting.
+        """
+        try:
+            from odrpack import odr_fit
+        except ImportError:
+            raise ImportError(
+                "ODR requires the 'odrpack' package. Install with: pip install odrpack"
+            )
+
+        if self._model is None or self._params is None:
+            raise ValueError("No model defined")
+
+        if self._has_spline:
+            self._rebuild_model_with_data(x)
+
+        # Snapshot initial parameter values
+        init_values = {name: par.value for name, par in self._params.items()}
+
+        # Build parameter arrays for odrpack
+        param_names = list(self._params.keys())
+        vary_mask = [self._params[n].vary for n in param_names]
+        beta0 = np.array([self._params[n].value for n in param_names])
+
+        # Build bounds
+        lower = np.array([self._params[n].min for n in param_names])
+        upper = np.array([self._params[n].max for n in param_names])
+        has_bounds = np.any(np.isfinite(lower)) or np.any(np.isfinite(upper))
+        # Replace -inf/inf with None-compatible values
+        lower = np.where(np.isfinite(lower), lower, -1e308)
+        upper = np.where(np.isfinite(upper), upper, 1e308)
+
+        # Fix non-varied parameters
+        fix_beta = np.array([0 if v else 1 for v in vary_mask], dtype=float)
+
+        # Wrap lmfit model to odrpack's f(x, beta) signature
+        model = self._model
+
+        def odr_func(x_arr, beta):
+            kw = {name: beta[i] for i, name in enumerate(param_names)}
+            return model.eval(x=x_arr, **kw)
+
+        # Weights: odrpack uses weight = 1/variance
+        weight_y = None
+        if yerr is not None:
+            safe_yerr = np.maximum(np.abs(yerr), 1e-12)
+            weight_y = 1.0 / (safe_yerr ** 2)
+
+        weight_x = None
+        if xerr is not None:
+            safe_xerr = np.maximum(np.abs(xerr), 1e-12)
+            weight_x = 1.0 / (safe_xerr ** 2)
+
+        odr_kwargs = dict(
+            weight_x=weight_x,
+            weight_y=weight_y,
+            fix_beta=fix_beta,
+        )
+        if has_bounds:
+            odr_kwargs["bounds"] = (lower, upper)
+
+        result = odr_fit(odr_func, x, y, beta0, **odr_kwargs)
+
+        if not result.success:
+            raise RuntimeError(f"ODR failed: {result.stopreason}")
+
+        # Update parameters with ODR results
+        for i, name in enumerate(param_names):
+            self._params[name].set(value=result.beta[i])
+            self._params[name].stderr = result.sd_beta[i] if vary_mask[i] else None
+
+        # Dense curve
+        x_dense = np.linspace(x.min(), x.max(), n_dense)
+        best_kw = {name: result.beta[i] for i, name in enumerate(param_names)}
+        y_fit_dense = model.eval(x=x_dense, **best_kw)
+        y_fit_data = model.eval(x=x, **best_kw)
+
+        # Confidence band via error propagation (numerical)
+        y_uncertainty = None
+        if any(result.sd_beta[i] > 0 for i in range(len(param_names)) if vary_mask[i]):
+            try:
+                # Simple numerical uncertainty propagation
+                var_y = np.zeros(n_dense)
+                for i, name in enumerate(param_names):
+                    if not vary_mask[i] or result.sd_beta[i] <= 0:
+                        continue
+                    h = max(abs(result.beta[i]) * 1e-6, 1e-10)
+                    kw_plus = dict(best_kw)
+                    kw_plus[name] = result.beta[i] + h
+                    kw_minus = dict(best_kw)
+                    kw_minus[name] = result.beta[i] - h
+                    dy = (model.eval(x=x_dense, **kw_plus) -
+                          model.eval(x=x_dense, **kw_minus)) / (2 * h)
+                    var_y += (dy * result.sd_beta[i]) ** 2
+                y_uncertainty = band_sigma * np.sqrt(var_y)
+            except Exception:
+                pass
+
+        # Component curves
+        component_curves = {}
+        if len(self.components) > 1:
+            comps = model.eval(x=x_dense, **best_kw)  # full eval
+            # Try to get individual components
+            try:
+                from lmfit.model import CompositeModel
+                if isinstance(model, CompositeModel):
+                    for comp in model.components:
+                        comp_kw = {n: best_kw[n] for n in comp.param_names if n in best_kw}
+                        component_curves[comp.prefix] = comp.eval(x=x_dense, **comp_kw)
+            except Exception:
+                pass
+
+        # Build params info
+        params_info = {}
+        for i, name in enumerate(param_names):
+            params_info[name] = {
+                "value": result.beta[i],
+                "stderr": result.sd_beta[i] if vary_mask[i] else None,
+                "min": self._params[name].min,
+                "max": self._params[name].max,
+                "vary": vary_mask[i],
+                "expr": "",
+            }
+
+        # GOF
+        n_data = len(x)
+        n_vary = sum(vary_mask)
+        dof = n_data - n_vary
+        chisqr = result.sum_square
+        redchi = chisqr / dof if dof > 0 else float("inf")
+        ss_tot = np.sum((y - y.mean()) ** 2)
+        r_squared = 1 - np.sum((y - y_fit_data) ** 2) / ss_tot if ss_tot > 0 else 0
+
+        gof = {
+            "chi-squared": chisqr,
+            "reduced chi-squared": redchi,
+            "R-squared": r_squared,
+        }
+
+        # Report
+        lines = ["Orthogonal Distance Regression (odrpack)"]
+        lines.append(f"  Stop reason: {result.stopreason}")
+        lines.append(f"  Function evals: {result.nfev}")
+        lines.append(f"  Iterations: {result.niter}")
+        lines.append(f"  Sum of squares: {chisqr:.6g}")
+        lines.append(f"  Residual variance: {result.res_var:.6g}")
+        lines.append("")
+        for name, info in params_info.items():
+            stderr_str = f" +/- {info['stderr']:.6g}" if info['stderr'] is not None else " (fixed)"
+            lines.append(f"  {name}: {info['value']:.6g}{stderr_str}")
+        report = "\n".join(lines)
+
+        return FitResult(
+            x_dense=x_dense,
+            y_fit_dense=y_fit_dense,
+            x_data=x,
+            y_data=y,
+            y_fit_data=y_fit_data,
+            yerr_data=yerr,
+            params=params_info,
+            report=report,
+            gof=gof,
+            component_curves=component_curves,
+            y_uncertainty=y_uncertainty,
+            init_params=init_values,
+        )
+
     def run_bootstrap(
         self,
         x: np.ndarray,
