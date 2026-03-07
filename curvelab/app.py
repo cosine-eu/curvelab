@@ -23,7 +23,7 @@ from .ui_panels import (
     GlobalFitDialog, UncertaintyPropagationDialog,
     SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
     ProfileLikelihoodDialog, BootstrapDialog, CovarianceMatrixDialog,
-    EvaluateModelDialog, FindPeaksDialog,
+    EvaluateModelDialog, FindPeaksDialog, DerivativeIntegralDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -259,6 +259,9 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_command(
             label="Find Peaks...", command=self._find_peaks
         )
+        analysis_menu.add_command(
+            label="Derivative / Integral...", command=self._show_derivative_integral
+        )
         analysis_menu.add_separator()
         analysis_menu.add_command(
             label="Clear Point Exclusions", command=self._clear_exclusions
@@ -482,6 +485,15 @@ class CurveLabApp(ttk.Frame):
             messagebox.showwarning("Insufficient Data", "Need at least 3 data points.")
             return
         FindPeaksDialog(self, x, y, fm, on_done=self._update_component_list)
+
+    def _show_derivative_integral(self):
+        """Show derivative and integral of the fitted curve."""
+        sess = self._active_session
+        fm = self._active_fit_mgr
+        if sess is None or sess.result is None or fm is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        DerivativeIntegralDialog(self, fm, sess.result)
 
     def _on_simulate_data(self):
         fm = self._active_fit_mgr

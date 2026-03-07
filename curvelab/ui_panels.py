@@ -2182,6 +2182,61 @@ class SimulateDataDialog(tk.Toplevel):
                 self._status_var.set(f"Error: {e}")
 
 
+class DerivativeIntegralDialog(tk.Toplevel):
+    """Plot derivative and integral of the fitted curve."""
+
+    def __init__(self, parent, fit_manager, result):
+        super().__init__(parent)
+        self.title("Derivative / Integral")
+        self.geometry("700x500")
+
+        import numpy as np
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+
+        x = result.x_dense
+        y = result.y_fit_dense
+
+        # Numerical derivative
+        dydx = np.gradient(y, x)
+
+        # Numerical integral (cumulative)
+        from scipy.integrate import cumulative_trapezoid
+        integral = cumulative_trapezoid(y, x, initial=0)
+
+        # Summary
+        total_area = integral[-1] if len(integral) > 0 else 0.0
+
+        info_frame = ttk.Frame(self)
+        info_frame.pack(fill=tk.X, padx=10, pady=5)
+        ttk.Label(info_frame, text=f"Total area (integral): {total_area:.6g}",
+                  font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W)
+
+        # Component areas if available
+        if result.component_curves:
+            for name, y_comp in result.component_curves.items():
+                area = np.trapezoid(y_comp, x)
+                ttk.Label(info_frame, text=f"  {name}: {area:.6g}").pack(anchor=tk.W)
+
+        fig = Figure(figsize=(7, 4))
+        ax1 = fig.add_subplot(2, 1, 1)
+        ax1.plot(x, dydx, "r-", linewidth=1)
+        ax1.set_ylabel("dy/dx")
+        ax1.axhline(0, color="gray", linewidth=0.5, linestyle="--")
+        ax1.set_title("Derivative")
+
+        ax2 = fig.add_subplot(2, 1, 2, sharex=ax1)
+        ax2.plot(x, integral, "b-", linewidth=1)
+        ax2.set_ylabel("∫y dx")
+        ax2.set_xlabel("x")
+        ax2.set_title("Cumulative Integral")
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, self)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+
 class FindPeaksDialog(tk.Toplevel):
     """Auto-detect peaks and add Gaussian components."""
 
