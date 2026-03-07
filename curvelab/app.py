@@ -998,23 +998,24 @@ class CurveLabApp(ttk.Frame):
             self._run_fit_sync(rec, sess, method)
 
     def _get_fit_options(self):
-        """Read reduce function, weight mode, and max_nfev from UI."""
+        """Read reduce function, weight mode, max_nfev, and band_sigma from UI."""
         reduce_fcn = REDUCE_FUNCTIONS.get(self.fit_panel.reduce_var.get())
         weight_mode = self.fit_panel.weight_var.get()
         max_nfev_str = self.fit_panel.max_nfev_var.get().strip()
         max_nfev = int(max_nfev_str) if max_nfev_str else None
-        return reduce_fcn, weight_mode, max_nfev
+        band_sigma = int(self.plot_controls.band_sigma_var.get())
+        return reduce_fcn, weight_mode, max_nfev, band_sigma
 
     def _run_fit_sync(self, rec, sess, method):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
             x, y, yerr, xerr = self._get_fit_data(rec)
-            reduce_fcn, weight_mode, max_nfev = self._get_fit_options()
+            reduce_fcn, weight_mode, max_nfev, band_sigma = self._get_fit_options()
             result = fm.run_fit(
                 x, y, yerr=yerr, xerr=xerr, method=method,
                 reduce_fcn=reduce_fcn, weight_mode=weight_mode,
-                max_nfev=max_nfev,
+                max_nfev=max_nfev, band_sigma=band_sigma,
             )
             sess.result = result
             self._post_fit_update(sess, rec)
@@ -1048,7 +1049,7 @@ class CurveLabApp(ttk.Frame):
         if method == "emcee":
             fit_kws["is_weighted"] = yerr is not None
 
-        reduce_fcn, weight_mode, max_nfev = self._get_fit_options()
+        reduce_fcn, weight_mode, max_nfev, band_sigma = self._get_fit_options()
 
         # Container for result/error from the thread
         container = {"result": None, "error": None}
@@ -1059,7 +1060,7 @@ class CurveLabApp(ttk.Frame):
                     x, y, yerr=yerr, xerr=xerr, method=method,
                     iter_cb=iter_cb, fit_kws=fit_kws,
                     reduce_fcn=reduce_fcn, weight_mode=weight_mode,
-                    max_nfev=max_nfev,
+                    max_nfev=max_nfev, band_sigma=band_sigma,
                 )
                 container["result"] = result
             except Exception as e:
@@ -1233,7 +1234,7 @@ class CurveLabApp(ttk.Frame):
                 datasets.append((x, y, yerr, xerr))
                 selected_recs.append((sid, r))
 
-            _, weight_mode, max_nfev = self._get_fit_options()
+            _, weight_mode, max_nfev, _ = self._get_fit_options()
             method = self.fit_panel.method_var.get()
             results = fm.run_global_fit(
                 datasets, shared, method=method,
@@ -1363,7 +1364,7 @@ class CurveLabApp(ttk.Frame):
         session_name = sess.name
         summary_rows = []
         show_resid = self.plot_controls.residuals_var.get()
-        reduce_fcn, weight_mode, max_nfev = self._get_fit_options()
+        reduce_fcn, weight_mode, max_nfev, band_sigma = self._get_fit_options()
 
         for sid, target_rec in self._series_records.items():
             # Ensure target series has a session with the same name
@@ -1388,7 +1389,7 @@ class CurveLabApp(ttk.Frame):
                 result = target_fm.run_fit(
                     x, y, yerr=yerr, xerr=xerr, method=method,
                     reduce_fcn=reduce_fcn, weight_mode=weight_mode,
-                    max_nfev=max_nfev,
+                    max_nfev=max_nfev, band_sigma=band_sigma,
                 )
                 target_sess.result = result
 

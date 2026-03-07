@@ -427,6 +427,13 @@ class PlotControlPanel(ttk.Frame):
             command=self._fire_confidence_band,
         ).pack(side=tk.LEFT, padx=5)
 
+        self.band_sigma_var = tk.StringVar(value="1")
+        ttk.Combobox(
+            row1, textvariable=self.band_sigma_var,
+            values=["1", "2", "3"], state="readonly", width=3,
+        ).pack(side=tk.LEFT)
+        ttk.Label(row1, text="\u03c3").pack(side=tk.LEFT, padx=(0, 5))
+
         # --- Row 2: Axis labels ---
         row2 = ttk.Frame(self)
         row2.pack(fill=tk.X, pady=(2, 0))

@@ -276,6 +276,7 @@ class FitManager:
         reduce_fcn=None,
         weight_mode: str = "1/yerr (default)",
         max_nfev: int | None = None,
+        band_sigma: int = 1,
     ) -> FitResult:
         """Run the fit and return results."""
         if self._model is None or self._params is None:
@@ -323,10 +324,10 @@ class FitManager:
         x_dense = np.linspace(x.min(), x.max(), n_dense)
         y_fit_dense = self._last_result.eval(x=x_dense)
 
-        # 1-sigma confidence band on dense grid
+        # Confidence band on dense grid
         y_uncertainty = None
         try:
-            y_uncertainty = self._last_result.eval_uncertainty(x=x_dense, sigma=1)
+            y_uncertainty = self._last_result.eval_uncertainty(x=x_dense, sigma=band_sigma)
         except Exception:
             pass  # Covariance matrix not available
 
