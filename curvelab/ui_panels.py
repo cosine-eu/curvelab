@@ -194,6 +194,16 @@ class DataPanel(ttk.LabelFrame):
         if name and self._on_remove_dataset:
             self._on_remove_dataset(name)
 
+    def remove_series_for_dataset(self, dataset_name: str):
+        """Remove all series entries that belong to the given dataset."""
+        indices = [
+            i for i, info in enumerate(self._series_items)
+            if info.get("dataset") == dataset_name
+        ]
+        for i in reversed(indices):
+            self._series_items.pop(i)
+            self.series_listbox.delete(i)
+
     def set_datasets(self, names: list[str], select: str = ""):
         """Update the dataset dropdown."""
         self.dataset_combo["values"] = names

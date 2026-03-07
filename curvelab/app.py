@@ -596,6 +596,7 @@ class CurveLabApp(ttk.Frame):
                 self._active_series_id = None
 
         self.data_mgr.remove_dataset(name)
+        self.data_panel.remove_series_for_dataset(name)
 
         names = self.data_mgr.dataset_names
         self.data_panel.set_datasets(names)
