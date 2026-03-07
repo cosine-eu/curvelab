@@ -891,6 +891,12 @@ class FitResultsPanel(ttk.LabelFrame):
         self._build_ui()
 
     def _build_ui(self):
+        # --- Goodness-of-fit summary ---
+        self.gof_var = tk.StringVar(value="")
+        self.gof_label = ttk.Label(self, textvariable=self.gof_var,
+                                   font=("TkDefaultFont", 9, "bold"))
+        self.gof_label.pack(anchor=tk.W, pady=(0, 3))
+
         # --- Parameter Treeview ---
         tree_frame = ttk.Frame(self)
         tree_frame.pack(fill=tk.BOTH, expand=True)
@@ -934,6 +940,10 @@ class FitResultsPanel(ttk.LabelFrame):
         # Double-click to edit
         self.param_tree.bind("<Double-1>", self._on_double_click)
 
+        # --- Copy button ---
+        ttk.Button(self, text="Copy Table", command=self._copy_table).pack(
+            anchor=tk.E, pady=(2, 0))
+
         # --- Fit report ---
         ttk.Label(self, text="Fit Report:").pack(anchor=tk.W, pady=(5, 0))
         report_frame = ttk.Frame(self)
@@ -960,13 +970,52 @@ class FitResultsPanel(ttk.LabelFrame):
             tag = "even" if i % 2 == 0 else "odd"
             self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=(tag,))
 
+    def set_gof(self, gof: dict | None):
+        """Update the goodness-of-fit summary line."""
+        if not gof:
+            self.gof_var.set("")
+            return
+        parts = []
+        if "chi-squared" in gof and gof["chi-squared"] is not None:
+            parts.append(f"\u03c7\u00b2={gof['chi-squared']:.4g}")
+        if "reduced chi-squared" in gof and gof["reduced chi-squared"] is not None:
+            parts.append(f"\u03c7\u00b2/\u03bd={gof['reduced chi-squared']:.4g}")
+        if "R-squared" in gof and gof["R-squared"] is not None:
+            parts.append(f"R\u00b2={gof['R-squared']:.6f}")
+        if "AIC" in gof and gof["AIC"] is not None:
+            parts.append(f"AIC={gof['AIC']:.4g}")
+        if "BIC" in gof and gof["BIC"] is not None:
+            parts.append(f"BIC={gof['BIC']:.4g}")
+        self.gof_var.set("  ".join(parts))
+
     def set_report(self, report: str):
         self.report_text.config(state=tk.NORMAL)
         self.report_text.delete("1.0", tk.END)
         self.report_text.insert("1.0", report)
         self.report_text.config(state=tk.DISABLED)
 
+    def _copy_table(self):
+        """Copy parameter table to clipboard as tab-separated text."""
+        rows = self.param_tree.get_children()
+        if not rows:
+            return
+        header = "Name\tValue\tInitial\tStdErr\tMin\tMax\tVary\tExpr"
+        lines = [header]
+        for item in rows:
+            name = self.param_tree.item(item, "text")
+            vals = self.param_tree.item(item, "values")
+            lines.append(f"{name}\t" + "\t".join(str(v) for v in vals))
+        # Append GOF summary if present
+        gof_text = self.gof_var.get()
+        if gof_text:
+            lines.append("")
+            lines.append(gof_text)
+        text = "\n".join(lines)
+        self.clipboard_clear()
+        self.clipboard_append(text)
+
     def clear(self):
+        self.gof_var.set("")
         self.param_tree.delete(*self.param_tree.get_children())
         self.report_text.config(state=tk.NORMAL)
         self.report_text.delete("1.0", tk.END)

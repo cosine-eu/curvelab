@@ -597,6 +597,7 @@ class CurveLabApp(ttk.Frame):
                     entry["init_value"] = sess.result.init_params[name]
                 params_display[name] = entry
             self.fit_results.set_params(params_display)
+            self.fit_results.set_gof(sess.result.gof)
             self.fit_results.set_report(sess.result.report)
         else:
             self.fit_results.clear()
@@ -1329,6 +1330,7 @@ class CurveLabApp(ttk.Frame):
             params_display[name] = entry
 
         self.fit_results.set_params(params_display)
+        self.fit_results.set_gof(result.gof)
         self.fit_results.set_report(result.report)
 
         if self.plot_controls.show_params_var.get():
@@ -1604,6 +1606,14 @@ class CurveLabApp(ttk.Frame):
                     "expr": par.expr or "",
                 }
             self.fit_results.set_params(params_info)
+            gof = {
+                "chi-squared": getattr(loaded, "chisqr", None),
+                "reduced chi-squared": getattr(loaded, "redchi", None),
+                "R-squared": getattr(loaded, "rsquared", None),
+                "AIC": getattr(loaded, "aic", None),
+                "BIC": getattr(loaded, "bic", None),
+            }
+            self.fit_results.set_gof(gof)
             self.fit_results.set_report(loaded.fit_report())
         except Exception as e:
             messagebox.showerror("Import Error", str(e))
