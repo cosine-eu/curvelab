@@ -314,7 +314,9 @@ class PlotManager:
         self.canvas.draw_idle()
 
     def set_equal_aspect(self, enabled: bool):
-        self.ax.set_aspect("equal" if enabled else "auto")
+        aspect = "equal" if enabled else "auto"
+        self.ax.set_aspect(aspect)
+        self.ax_resid.set_aspect(aspect)
         self.canvas.draw_idle()
 
     def set_legend(self, enabled: bool):
