@@ -23,7 +23,7 @@ from .ui_panels import (
     GlobalFitDialog, UncertaintyPropagationDialog,
     SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
     ProfileLikelihoodDialog, BootstrapDialog, CovarianceMatrixDialog,
-    EvaluateModelDialog,
+    EvaluateModelDialog, FindPeaksDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -256,6 +256,9 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_command(
             label="Evaluate Model...", command=self._evaluate_model
         )
+        analysis_menu.add_command(
+            label="Find Peaks...", command=self._find_peaks
+        )
         analysis_menu.add_separator()
         analysis_menu.add_command(
             label="Clear Point Exclusions", command=self._clear_exclusions
@@ -466,6 +469,19 @@ class CurveLabApp(ttk.Frame):
             messagebox.showwarning("No Fit", "Run a fit first.")
             return
         EvaluateModelDialog(self, fm)
+
+    def _find_peaks(self):
+        """Auto-detect peaks in active series and add Gaussian components."""
+        rec = self._active_record
+        fm = self._active_fit_mgr
+        if rec is None or fm is None:
+            messagebox.showwarning("No Data", "Load data and create a session first.")
+            return
+        x, y, yerr, xerr = self._get_fit_data(rec)
+        if len(x) < 3:
+            messagebox.showwarning("Insufficient Data", "Need at least 3 data points.")
+            return
+        FindPeaksDialog(self, x, y, fm, on_done=self._update_component_list)
 
     def _on_simulate_data(self):
         fm = self._active_fit_mgr

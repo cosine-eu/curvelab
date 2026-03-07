@@ -2182,6 +2182,108 @@ class SimulateDataDialog(tk.Toplevel):
                 self._status_var.set(f"Error: {e}")
 
 
+class FindPeaksDialog(tk.Toplevel):
+    """Auto-detect peaks and add Gaussian components."""
+
+    def __init__(self, parent, x, y, fit_manager, on_done=None):
+        super().__init__(parent)
+        self.title("Find Peaks")
+        self.geometry("500x420")
+        self._x = x
+        self._y = y
+        self._fm = fit_manager
+        self._on_done = on_done
+        self._peaks = []
+
+        # Controls
+        ctrl = ttk.Frame(self)
+        ctrl.pack(fill=tk.X, padx=10, pady=5)
+
+        ttk.Label(ctrl, text="Prominence:").pack(side=tk.LEFT)
+        self._prominence_var = tk.StringVar(value="")
+        ttk.Entry(ctrl, textvariable=self._prominence_var, width=8).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(ctrl, text="Min distance (pts):").pack(side=tk.LEFT, padx=(10, 0))
+        self._distance_var = tk.StringVar(value="")
+        ttk.Entry(ctrl, textvariable=self._distance_var, width=6).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(ctrl, text="Model:").pack(side=tk.LEFT, padx=(10, 0))
+        self._model_var = tk.StringVar(value="Gaussian")
+        ttk.Combobox(ctrl, textvariable=self._model_var, width=12,
+                     values=["Gaussian", "Lorentzian", "Voigt", "PseudoVoigt"],
+                     state="readonly").pack(side=tk.LEFT, padx=5)
+
+        btn_row = ttk.Frame(self)
+        btn_row.pack(pady=5)
+        ttk.Button(btn_row, text="Detect", command=self._detect).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_row, text="Add to Model", command=self._add_to_model).pack(side=tk.LEFT, padx=5)
+
+        # Results tree
+        cols = ("center", "amplitude", "width")
+        self._tree = ttk.Treeview(self, columns=cols, show="headings", height=8)
+        self._tree.heading("center", text="Center (x)")
+        self._tree.heading("amplitude", text="Amplitude (y)")
+        self._tree.heading("width", text="Est. Width")
+        for c in cols:
+            self._tree.column(c, width=130)
+        self._tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Auto-detect on open with defaults
+        self.after(100, self._detect)
+
+    def _detect(self):
+        from scipy.signal import find_peaks, peak_widths
+        import numpy as np
+
+        kwargs = {}
+        prom = self._prominence_var.get().strip()
+        if prom:
+            kwargs["prominence"] = float(prom)
+        else:
+            # Auto-prominence: 10% of data range
+            yrange = np.ptp(self._y)
+            if yrange > 0:
+                kwargs["prominence"] = yrange * 0.1
+        dist = self._distance_var.get().strip()
+        if dist:
+            kwargs["distance"] = int(dist)
+
+        indices, properties = find_peaks(self._y, **kwargs)
+        # Estimate widths
+        if len(indices) > 0:
+            widths_result = peak_widths(self._y, indices, rel_height=0.5)
+            widths_pts = widths_result[0]
+            dx = np.median(np.diff(self._x)) if len(self._x) > 1 else 1.0
+            widths_x = widths_pts * abs(dx)
+        else:
+            widths_x = []
+
+        self._peaks = []
+        self._tree.delete(*self._tree.get_children())
+        for i, idx in enumerate(indices):
+            cx, cy = self._x[idx], self._y[idx]
+            w = widths_x[i] if i < len(widths_x) else 0.0
+            self._peaks.append((cx, cy, w))
+            self._tree.insert("", tk.END, values=(
+                f"{cx:.6g}", f"{cy:.6g}", f"{w:.6g}"))
+
+    def _add_to_model(self):
+        if not self._peaks:
+            return
+        model_name = self._model_var.get()
+        for cx, cy, w in self._peaks:
+            self._fm.add_component(model_name, operator="+")
+            # Set initial guesses for the last added component
+            prefix = self._fm.components[-1].prefix
+            sigma = w / 2.355 if w > 0 else abs(cx) * 0.01 or 0.1  # FWHM to sigma
+            self._fm.set_param(f"{prefix}center", value=cx)
+            self._fm.set_param(f"{prefix}amplitude", value=cy * sigma * (2 * 3.14159) ** 0.5)
+            self._fm.set_param(f"{prefix}sigma", value=sigma)
+        if self._on_done:
+            self._on_done()
+        self.destroy()
+
+
 class EvaluateModelDialog(tk.Toplevel):
     """Evaluate fitted model at user-specified x values."""
 
