@@ -41,7 +41,7 @@ class DataManager:
         }
         loader = loaders.get(ext)
         if loader is None:
-            loader = loaders[".csv"]
+            loader = lambda p: self._load_text_columns(p)
 
         df = loader(filepath)
 
@@ -56,6 +56,64 @@ class DataManager:
         self.datasets[name] = df
         self.filepaths[name] = filepath
         return name, list(df.columns)
+
+    @staticmethod
+    def _load_text_columns(filepath: Path) -> pd.DataFrame:
+        """Load a whitespace-separated text file with comment line support.
+
+        Handles .txt, .dat, and other plain-text formats. Lines starting with
+        '#' are treated as comments. If the last comment line before data looks
+        like column headers, those are used as column names.
+        """
+        with open(filepath) as f:
+            lines = f.readlines()
+
+        # Separate comment lines and data lines
+        comment_lines = []
+        data_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                comment_lines.append(stripped)
+            else:
+                data_lines.append(line)
+
+        if not data_lines:
+            raise ValueError(f"No data found in '{filepath.name}'.")
+
+        # Check if the last comment line looks like column headers
+        header_names = None
+        if comment_lines:
+            last_comment = comment_lines[-1].lstrip("#").strip()
+            tokens = last_comment.split()
+            # Use as headers if token count matches the first data row's column count
+            first_data_tokens = data_lines[0].split()
+            if len(tokens) == len(first_data_tokens) and len(tokens) >= 2:
+                # Verify tokens aren't all numeric (would be data, not headers)
+                all_numeric = all(
+                    t.replace(".", "", 1).replace("-", "", 1)
+                    .replace("+", "", 1).replace("e", "", 1)
+                    .replace("E", "", 1).isdigit()
+                    for t in tokens
+                )
+                if not all_numeric:
+                    header_names = tokens
+
+        df = pd.read_csv(
+            StringIO("".join(data_lines)),
+            sep=r"\s+",
+            header=None,
+            engine="python",
+        )
+
+        if header_names is not None:
+            df.columns = header_names
+        else:
+            df.columns = [f"col_{i}" for i in range(df.shape[1])]
+
+        return df
 
     def _load_sqlite(self, filepath: Path) -> tuple[str, list[str]]:
         """Load all tables from a SQLite database as separate datasets."""
