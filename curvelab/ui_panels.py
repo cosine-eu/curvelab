@@ -1416,6 +1416,54 @@ class DiagnosticPlotsDialog(tk.Toplevel):
         canvas.draw()
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
+        # --- Residual statistics summary ---
+        stats_lines = []
+
+        # Durbin-Watson statistic
+        diff_resid = np.diff(residuals)
+        ss_resid = np.sum(residuals ** 2)
+        if ss_resid > 0:
+            dw = np.sum(diff_resid ** 2) / ss_resid
+            if dw < 1.5:
+                dw_interp = "positive autocorrelation (model may be systematically wrong)"
+            elif dw > 2.5:
+                dw_interp = "negative autocorrelation"
+            else:
+                dw_interp = "no significant autocorrelation"
+            stats_lines.append(f"Durbin-Watson: {dw:.4f} — {dw_interp}")
+
+        # Runs test (sign changes in residuals)
+        signs = np.sign(residuals)
+        signs = signs[signs != 0]  # drop zeros
+        if len(signs) >= 10:
+            n_pos = int(np.sum(signs > 0))
+            n_neg = int(np.sum(signs < 0))
+            n_total = n_pos + n_neg
+            runs = 1 + int(np.sum(signs[1:] != signs[:-1]))
+            # Expected runs and variance under H0 (random sequence)
+            expected = 1 + 2 * n_pos * n_neg / n_total
+            var_runs = (2 * n_pos * n_neg * (2 * n_pos * n_neg - n_total)) / (
+                n_total ** 2 * (n_total - 1)
+            )
+            if var_runs > 0:
+                z_runs = (runs - expected) / np.sqrt(var_runs)
+                p_runs = 2 * (1 - stats.norm.cdf(abs(z_runs)))
+                if p_runs < 0.05:
+                    runs_interp = "non-random pattern (systematic misfit)"
+                else:
+                    runs_interp = "consistent with random residuals"
+                stats_lines.append(
+                    f"Runs test: {runs} runs (expected {expected:.1f}), "
+                    f"z = {z_runs:.3f}, p = {p_runs:.4f} — {runs_interp}"
+                )
+
+        if stats_lines:
+            stats_frame = ttk.LabelFrame(self, text="Residual Statistics", padding=5)
+            stats_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
+            for line in stats_lines:
+                ttk.Label(stats_frame, text=line, wraplength=750,
+                          justify=tk.LEFT).pack(anchor=tk.W)
+
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
 
 
