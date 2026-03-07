@@ -22,7 +22,7 @@ from .ui_panels import (
     DiagnosticPlotsDialog, ConfidenceContourDialog,
     GlobalFitDialog, UncertaintyPropagationDialog,
     SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
-    ProfileLikelihoodDialog, BootstrapDialog,
+    ProfileLikelihoodDialog, BootstrapDialog, CovarianceMatrixDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -213,6 +213,9 @@ class CurveLabApp(ttk.Frame):
         )
         analysis_menu.add_command(
             label="Correlation Matrix...", command=self._show_correlations
+        )
+        analysis_menu.add_command(
+            label="Covariance Matrix...", command=self._show_covariance
         )
         analysis_menu.add_command(
             label="Diagnostic Plots...", command=self._show_diagnostic_plots
@@ -1361,6 +1364,19 @@ class CurveLabApp(ttk.Frame):
             CorrelationMatrixDialog(self, correlations)
         except Exception as e:
             messagebox.showerror("Correlation Error", str(e))
+
+    def _show_covariance(self):
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+        result = fm.get_covariance_matrix()
+        if result is None:
+            messagebox.showinfo("No Covariance", "Covariance matrix not available.")
+            return
+        param_names, cov_matrix = result
+        CovarianceMatrixDialog(self, param_names, cov_matrix)
 
     def _show_diagnostic_plots(self):
         sess = self._active_session

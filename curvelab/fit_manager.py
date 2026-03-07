@@ -807,6 +807,18 @@ class FitManager:
 
         return {n: np.array(v) for n, v in distributions.items()}
 
+    def get_covariance_matrix(self) -> tuple[list[str], np.ndarray] | None:
+        """Extract the covariance matrix from the last fit result.
+
+        Returns (param_names, cov_matrix) or None if unavailable.
+        """
+        if self._last_result is None:
+            return None
+        if self._last_result.covar is None:
+            return None
+        var_names = [n for n, p in self._last_result.params.items() if p.vary]
+        return var_names, self._last_result.covar
+
     def get_correlations(self) -> dict[str, dict[str, float]]:
         """Extract parameter correlations from the last fit result."""
         if self._last_result is None:

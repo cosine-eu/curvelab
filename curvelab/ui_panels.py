@@ -1272,6 +1272,54 @@ class FTestDialog(tk.Toplevel):
         self._result_text.config(state=tk.DISABLED)
 
 
+class CovarianceMatrixDialog(tk.Toplevel):
+    """Display the full parameter covariance matrix."""
+
+    def __init__(self, parent, param_names: list[str], cov_matrix):
+        super().__init__(parent)
+        self.title("Covariance Matrix")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("700x400")
+
+        import numpy as np
+
+        n = len(param_names)
+        # Format matrix as aligned text
+        max_name = max(len(n) for n in param_names)
+        col_width = 14
+
+        lines = []
+        # Header row
+        header = " " * (max_name + 2) + "".join(f"{n:>{col_width}}" for n in param_names)
+        lines.append(header)
+        lines.append("-" * len(header))
+        # Data rows
+        for i, name in enumerate(param_names):
+            row = f"{name:>{max_name}}  "
+            row += "".join(f"{cov_matrix[i, j]:>{col_width}.6g}" for j in range(n))
+            lines.append(row)
+
+        text = tk.Text(self, wrap=tk.NONE, font=("Courier", 10))
+        text.insert("1.0", "\n".join(lines))
+        text.config(state=tk.DISABLED)
+
+        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=text.xview)
+        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=text.yview)
+        text.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+
+        text.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 0))
+        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 0))
+        xscroll.grid(row=1, column=0, sticky="ew", padx=(10, 0))
+
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        ttk.Button(self, text="Close", command=self.destroy).grid(
+            row=2, column=0, columnspan=2, pady=10
+        )
+
+
 class ConfidenceIntervalDialog(tk.Toplevel):
     """Display confidence interval report in monospace text."""
 
