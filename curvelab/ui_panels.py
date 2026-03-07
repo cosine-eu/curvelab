@@ -953,7 +953,11 @@ class FitResultsPanel(ttk.LabelFrame):
         entry.focus_set()
         self._editing_entry = entry
 
+        cancelled = False
+
         def commit(e=None):
+            if cancelled:
+                return
             new_val = entry.get()
             entry.destroy()
             self._editing_entry = None
@@ -962,6 +966,8 @@ class FitResultsPanel(ttk.LabelFrame):
                 self._on_param_edited(param_name, col_name, new_val)
 
         def cancel(e=None):
+            nonlocal cancelled
+            cancelled = True
             entry.destroy()
             self._editing_entry = None
 

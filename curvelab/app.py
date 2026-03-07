@@ -1515,7 +1515,7 @@ class CurveLabApp(ttk.Frame):
             sess.undo_stack.append(edit)
             sess.redo_stack.clear()
         except ValueError:
-            pass
+            self._refresh_param_display()
 
     def _refresh_param_display(self):
         """Refresh the parameter table from the live FitManager params."""

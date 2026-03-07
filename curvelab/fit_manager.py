@@ -202,17 +202,16 @@ class FitManager:
         return self._params
 
     def auto_guess(self, x: np.ndarray, y: np.ndarray) -> Parameters:
-        """Auto-guess parameters for each component using lmfit's guess()."""
+        """Auto-guess parameters for each component using lmfit's guess().
+
+        Only updates value/min/max from guess; preserves user-edited vary,
+        expr, and param_hints.
+        """
         if self._model is None:
             raise ValueError("No model defined")
 
         if self._has_spline:
             self._rebuild_model_with_data(x)
-        else:
-            self._params = self._model.make_params()
-            for par in self._params.values():
-                if par.value == float("-inf"):
-                    par.set(value=1.0)
 
         for comp in self.components:
             m = self._build_component_model(comp, x_data=x)
@@ -223,9 +222,8 @@ class FitManager:
                         self._params[pname].set(
                             value=par.value, min=par.min, max=par.max
                         )
-            except (NotImplementedError, Exception):
-                # Some models don't implement guess(); skip
-                pass
+            except NotImplementedError:
+                pass  # Model doesn't implement guess()
 
         return self._params
 
@@ -254,14 +252,15 @@ class FitManager:
         if weight_mode == "No weights":
             return None
         if weight_mode == "1/yerr\u00b2" and yerr is not None:
-            return 1.0 / (yerr * yerr)
+            safe_yerr = np.maximum(np.abs(yerr), 1e-12)
+            return 1.0 / (safe_yerr * safe_yerr)
         if weight_mode == "1/y":
             return 1.0 / np.maximum(np.abs(y), 1e-12)
         if weight_mode == "yerr as weights" and yerr is not None:
             return yerr
         # Default: "1/yerr (default)"
         if yerr is not None:
-            return 1.0 / yerr
+            return 1.0 / np.maximum(np.abs(yerr), 1e-12)
         return None
 
     def run_fit(
@@ -432,6 +431,14 @@ class FitManager:
                     combined.add(pname, value=bp.value, min=bp.min, max=bp.max,
                                  vary=bp.vary, expr=bp.expr or None)
 
+        # Pre-compute constant weights (everything except Effective variance
+        # with xerr, which depends on the model derivative per iteration)
+        use_effective_variance = weight_mode == "Effective variance"
+        precomputed_weights = [
+            self._compute_weights(y, yerr, weight_mode)
+            for _, y, yerr, _ in datasets
+        ]
+
         def objective(params):
             all_resid = []
             for i, (x, y, yerr, xerr) in enumerate(datasets):
@@ -445,19 +452,14 @@ class FitManager:
                 # Evaluate model
                 y_model = self._model.eval(x=x, **kw)
                 resid = y - y_model
-                weights = self._compute_weights(y, yerr, weight_mode)
-                # Effective variance override
-                if weight_mode == "Effective variance":
-                    if xerr is not None and yerr is not None:
-                        h = np.maximum(np.abs(x) * 1e-8, 1e-10)
-                        y_plus = self._model.eval(x=x + h, **kw)
-                        y_minus = self._model.eval(x=x - h, **kw)
-                        dfdx = (y_plus - y_minus) / (2 * h)
-                        weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
-                    elif yerr is not None:
-                        weights = 1.0 / yerr
-                    else:
-                        weights = None
+                weights = precomputed_weights[i]
+                # Effective variance: recompute per iteration (depends on df/dx)
+                if use_effective_variance and xerr is not None and yerr is not None:
+                    h = np.maximum(np.abs(x) * 1e-8, 1e-10)
+                    y_plus = self._model.eval(x=x + h, **kw)
+                    y_minus = self._model.eval(x=x - h, **kw)
+                    dfdx = (y_plus - y_minus) / (2 * h)
+                    weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
                 if weights is not None:
                     resid = resid * weights
                 all_resid.append(resid)

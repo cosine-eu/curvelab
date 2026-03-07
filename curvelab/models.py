@@ -106,9 +106,4 @@ def create_spline_model(n_knots: int, x_data: np.ndarray, prefix: str = ""):
 def create_model(name: str, prefix: str = ""):
     """Create a fresh model instance by registry name, with optional prefix."""
     factory = MODEL_REGISTRY[name]
-    # Polynomial lambdas accept prefix kwarg; lmfit Model classes accept it too
-    if callable(factory) and isinstance(factory, type):
-        return factory(prefix=prefix)
-    else:
-        # Lambda factory for PolynomialModel
-        return factory(prefix=prefix)
+    return factory(prefix=prefix)
