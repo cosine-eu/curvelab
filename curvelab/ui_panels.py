@@ -241,6 +241,8 @@ class DataPanel(ttk.LabelFrame):
         self.series_listbox.insert(
             tk.END, f"{dataset}::{series_info['x']} vs {series_info['y']}"
         )
+        self.series_listbox.selection_clear(0, tk.END)
+        self.series_listbox.selection_set(tk.END)
         if self._on_add_series:
             self._on_add_series(series_info)
 
