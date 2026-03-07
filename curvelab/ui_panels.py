@@ -2182,6 +2182,71 @@ class SimulateDataDialog(tk.Toplevel):
                 self._status_var.set(f"Error: {e}")
 
 
+class EvaluateModelDialog(tk.Toplevel):
+    """Evaluate fitted model at user-specified x values."""
+
+    def __init__(self, parent, fit_manager):
+        super().__init__(parent)
+        self.title("Evaluate Model")
+        self.geometry("500x400")
+        self._fm = fit_manager
+
+        ttk.Label(self, text="Enter x values (comma or space separated, or start:stop:npoints):").pack(
+            anchor=tk.W, padx=10, pady=(10, 0))
+        self._x_entry = ttk.Entry(self, width=60)
+        self._x_entry.pack(padx=10, pady=5, fill=tk.X)
+
+        btn_frame = ttk.Frame(self)
+        btn_frame.pack(pady=5)
+        ttk.Button(btn_frame, text="Evaluate", command=self._evaluate).pack(side=tk.LEFT, padx=5)
+        ttk.Button(btn_frame, text="Copy", command=self._copy).pack(side=tk.LEFT, padx=5)
+
+        self._result_text = tk.Text(self, height=18, wrap=tk.NONE, state=tk.DISABLED,
+                                    font=("TkFixedFont", 10))
+        scroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self._result_text.yview)
+        self._result_text.configure(yscrollcommand=scroll.set)
+        self._result_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=(0, 10))
+        scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=(0, 10))
+
+    def _parse_x(self):
+        import numpy as np
+        text = self._x_entry.get().strip()
+        if not text:
+            return None
+        # Range syntax: start:stop:npoints
+        if text.count(":") == 2:
+            parts = text.split(":")
+            return np.linspace(float(parts[0]), float(parts[1]), int(parts[2]))
+        # Comma or space separated
+        text = text.replace(",", " ")
+        return np.array([float(v) for v in text.split()])
+
+    def _evaluate(self):
+        import numpy as np
+        try:
+            x = self._parse_x()
+            if x is None or len(x) == 0:
+                return
+            y = self._fm.evaluate(x)
+            lines = [f"{'x':>16s}  {'y':>16s}"]
+            lines.append("-" * 34)
+            for xi, yi in zip(x, y):
+                lines.append(f"{xi:16.8g}  {yi:16.8g}")
+            self._last_text = "\n".join(lines)
+            self._result_text.config(state=tk.NORMAL)
+            self._result_text.delete("1.0", tk.END)
+            self._result_text.insert("1.0", self._last_text)
+            self._result_text.config(state=tk.DISABLED)
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror("Evaluate Error", str(e), parent=self)
+
+    def _copy(self):
+        if hasattr(self, "_last_text"):
+            self.clipboard_clear()
+            self.clipboard_append(self._last_text)
+
+
 class ColumnCalculatorDialog(tk.Toplevel):
     """Dialog for creating new columns from expressions on existing columns."""
 

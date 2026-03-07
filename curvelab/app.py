@@ -23,6 +23,7 @@ from .ui_panels import (
     GlobalFitDialog, UncertaintyPropagationDialog,
     SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
     ProfileLikelihoodDialog, BootstrapDialog, CovarianceMatrixDialog,
+    EvaluateModelDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -252,6 +253,9 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_command(
             label="Simulate Data...", command=self._on_simulate_data
         )
+        analysis_menu.add_command(
+            label="Evaluate Model...", command=self._evaluate_model
+        )
         analysis_menu.add_separator()
         analysis_menu.add_command(
             label="Clear Point Exclusions", command=self._clear_exclusions
@@ -453,6 +457,15 @@ class CurveLabApp(ttk.Frame):
         FTestDialog(self, sessions)
 
     # --- Simulate Data ---
+
+    def _evaluate_model(self):
+        """Evaluate the fitted model at user-specified x values."""
+        sess = self._active_session
+        fm = self._active_fit_mgr
+        if sess is None or sess.result is None or fm is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        EvaluateModelDialog(self, fm)
 
     def _on_simulate_data(self):
         fm = self._active_fit_mgr

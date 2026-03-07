@@ -807,6 +807,12 @@ class FitManager:
 
         return {n: np.array(v) for n, v in distributions.items()}
 
+    def evaluate(self, x: np.ndarray) -> np.ndarray:
+        """Evaluate the current model at given x values using fitted parameters."""
+        if self._model is None or self._params is None:
+            raise RuntimeError("No model or parameters available.")
+        return self._model.eval(self._params, x=x)
+
     def get_covariance_matrix(self) -> tuple[list[str], np.ndarray] | None:
         """Extract the covariance matrix from the last fit result.
 
