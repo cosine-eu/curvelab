@@ -22,6 +22,7 @@ from .ui_panels import (
     DiagnosticPlotsDialog, ConfidenceContourDialog,
     GlobalFitDialog, UncertaintyPropagationDialog,
     SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
+    ProfileLikelihoodDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -217,6 +218,9 @@ class CurveLabApp(ttk.Frame):
         )
         analysis_menu.add_command(
             label="2D Confidence Contours...", command=self._show_confidence_contours
+        )
+        analysis_menu.add_command(
+            label="Profile Likelihood...", command=self._show_profile_likelihood
         )
         analysis_menu.add_separator()
         analysis_menu.add_command(
@@ -1364,6 +1368,26 @@ class CurveLabApp(ttk.Frame):
             )
             return
         ConfidenceContourDialog(self, fm._last_result, vary_params)
+
+    def _show_profile_likelihood(self):
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        fm = sess.fit_manager
+        if fm._last_result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return
+        try:
+            profiles = fm.compute_ci_profiles()
+            if not profiles:
+                messagebox.showinfo("No Profiles",
+                                    "Could not compute profile traces.")
+                return
+            best_chi2 = fm._last_result.chisqr
+            ProfileLikelihoodDialog(self, profiles, best_chi2)
+        except Exception as e:
+            messagebox.showerror("Profile Error", str(e))
 
     def _show_candidates_dialog(self, sess):
         """Show brute-force candidates dialog with option to load values."""

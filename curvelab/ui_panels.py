@@ -1660,6 +1660,55 @@ class ConfidenceContourDialog(tk.Toplevel):
             self._status_var.set(f"Error: {e}")
 
 
+class ProfileLikelihoodDialog(tk.Toplevel):
+    """Plot chi-squared profiles for each parameter."""
+
+    def __init__(self, parent, profiles: dict[str, list[tuple[float, float]]],
+                 best_chi2: float):
+        super().__init__(parent)
+        self.title("Profile Likelihood")
+        self.resizable(True, True)
+        self.transient(parent)
+        self.geometry("900x600")
+
+        import numpy as np
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+        from matplotlib.figure import Figure
+
+        n = len(profiles)
+        if n == 0:
+            ttk.Label(self, text="No profile data available.").pack(pady=20)
+            ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
+            return
+
+        ncols = min(3, n)
+        nrows = (n + ncols - 1) // ncols
+        fig = Figure(figsize=(4 * ncols, 3 * nrows))
+
+        for i, (pname, points) in enumerate(profiles.items()):
+            if not points:
+                continue
+            ax = fig.add_subplot(nrows, ncols, i + 1)
+            pvals = [p[0] for p in points]
+            chi2s = [p[1] for p in points]
+            ax.plot(pvals, chi2s, "o-", markersize=3, color="steelblue")
+            ax.axhline(best_chi2, color="red", linestyle="--", linewidth=0.8,
+                       label=f"\u03c7\u00b2_min = {best_chi2:.4g}")
+            # 1-sigma threshold
+            ax.axhline(best_chi2 + 1, color="orange", linestyle=":",
+                       linewidth=0.8, label="\u03c7\u00b2_min + 1")
+            ax.set_xlabel(pname)
+            ax.set_ylabel("\u03c7\u00b2")
+            ax.set_title(pname)
+            ax.legend(fontsize=7)
+
+        fig.tight_layout()
+        canvas = FigureCanvasTkAgg(fig, master=self)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
+
+
 class GlobalFitDialog(tk.Toplevel):
     """Dialog for global fitting across multiple series with shared parameters."""
 

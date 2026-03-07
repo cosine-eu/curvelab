@@ -547,6 +547,31 @@ class FitManager:
         ci = conf_interval(self._last_result, self._last_result, sigmas=sigmas)
         return ci_report(ci)
 
+    def compute_ci_profiles(self, sigmas=None) -> dict[str, list[tuple[float, float]]]:
+        """Compute profile likelihood traces for each parameter.
+
+        Returns {param_name: [(param_value, chi_squared), ...]}.
+        """
+        if self._last_result is None:
+            raise ValueError("No fit result available")
+        from lmfit import conf_interval
+        ci = conf_interval(self._last_result, self._last_result,
+                           sigmas=sigmas, trace=True)
+        profiles = {}
+        for pname, trace_data in ci.items():
+            if isinstance(trace_data, dict) and "trace" in trace_data:
+                trace = trace_data["trace"]
+                # trace is a list of (sigma, [{param: val}, chi2]) tuples
+                points = []
+                for entry in trace:
+                    prob, pars_chi = entry
+                    # pars_chi is a dict of {param: value, ...} plus a special key
+                    # or it may be a MinimizerResult — extract chi2
+                    if hasattr(pars_chi, "chisqr"):
+                        points.append((pars_chi.params[pname].value, pars_chi.chisqr))
+                profiles[pname] = points
+        return profiles
+
     def get_correlations(self) -> dict[str, dict[str, float]]:
         """Extract parameter correlations from the last fit result."""
         if self._last_result is None:
