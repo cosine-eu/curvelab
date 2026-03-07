@@ -428,6 +428,13 @@ class PlotControlPanel(ttk.Frame):
             row1, text="Fit visible range", variable=self.fit_visible_var,
         ).pack(side=tk.LEFT, padx=5)
 
+        ttk.Label(row1, text="x:").pack(side=tk.LEFT, padx=(5, 0))
+        self.fit_xmin_var = tk.StringVar(value="")
+        ttk.Entry(row1, textvariable=self.fit_xmin_var, width=8).pack(side=tk.LEFT, padx=1)
+        ttk.Label(row1, text="–").pack(side=tk.LEFT)
+        self.fit_xmax_var = tk.StringVar(value="")
+        ttk.Entry(row1, textvariable=self.fit_xmax_var, width=8).pack(side=tk.LEFT, padx=1)
+
         self.residuals_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Residuals", variable=self.residuals_var,

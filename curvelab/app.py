@@ -158,6 +158,11 @@ class CurveLabApp(ttk.Frame):
         self.plot_mgr.toolbar.pack(side=tk.TOP, fill=tk.X)
         self.plot_mgr.get_canvas_widget().pack(fill=tk.BOTH, expand=True)
         self.plot_mgr.canvas.mpl_connect("button_press_event", self._on_plot_click)
+        self.plot_mgr.canvas.mpl_connect("motion_notify_event", self._on_mouse_motion)
+
+        self._coord_var = tk.StringVar(value="")
+        ttk.Label(plot_frame, textvariable=self._coord_var,
+                  font=("TkFixedFont", 9)).pack(side=tk.BOTTOM, anchor=tk.W)
 
         # Plot controls strip
         self.plot_controls = PlotControlPanel(
@@ -1084,8 +1089,20 @@ class CurveLabApp(ttk.Frame):
             yerr = yerr[rec.mask] if yerr is not None else None
             xerr = xerr[rec.mask] if xerr is not None else None
 
-        # 1. Visible-range mask (applied first so guard-rails only touch relevant data)
-        if self.plot_controls.fit_visible_var.get():
+        # 1. Fit range mask: explicit typed range takes priority, then visible range
+        xmin_str = self.plot_controls.fit_xmin_var.get().strip()
+        xmax_str = self.plot_controls.fit_xmax_var.get().strip()
+        if xmin_str or xmax_str:
+            try:
+                xmin = float(xmin_str) if xmin_str else -np.inf
+                xmax = float(xmax_str) if xmax_str else np.inf
+            except ValueError:
+                xmin, xmax = -np.inf, np.inf
+            mask = (x >= xmin) & (x <= xmax)
+            x, y = x[mask], y[mask]
+            yerr = yerr[mask] if yerr is not None else None
+            xerr = xerr[mask] if xerr is not None else None
+        elif self.plot_controls.fit_visible_var.get():
             xmin, xmax = self.plot_mgr.ax.get_xlim()
             mask = (x >= xmin) & (x <= xmax)
             x, y = x[mask], y[mask]
@@ -1741,6 +1758,13 @@ class CurveLabApp(ttk.Frame):
     def _on_data_toggled(self, show: bool):
         self.plot_mgr.set_data_visible(show)
 
+    def _on_mouse_motion(self, event):
+        """Update coordinate readout on mouse motion."""
+        if event.inaxes is not None and event.xdata is not None:
+            self._coord_var.set(f"x={event.xdata:.6g}  y={event.ydata:.6g}")
+        else:
+            self._coord_var.set("")
+
     def _on_plot_click(self, event):
         """Handle click on plot — toggle point exclusion when in exclude mode."""
         if not self.plot_controls.exclude_var.get():
@@ -1980,6 +2004,8 @@ class CurveLabApp(ttk.Frame):
                 "legend": self.plot_controls.legend_var.get(),
                 "show_params": self.plot_controls.show_params_var.get(),
                 "fit_visible": self.plot_controls.fit_visible_var.get(),
+                "fit_xmin": self.plot_controls.fit_xmin_var.get(),
+                "fit_xmax": self.plot_controls.fit_xmax_var.get(),
                 "residuals": self.plot_controls.residuals_var.get(),
                 "confidence_band": self.plot_controls.confidence_band_var.get(),
                 "fit_method": self.fit_panel.method_var.get(),
@@ -2167,6 +2193,8 @@ class CurveLabApp(ttk.Frame):
         self.plot_controls.legend_var.set(pc.get("legend", True))
         self.plot_controls.show_params_var.set(pc.get("show_params", False))
         self.plot_controls.fit_visible_var.set(pc.get("fit_visible", False))
+        self.plot_controls.fit_xmin_var.set(pc.get("fit_xmin", ""))
+        self.plot_controls.fit_xmax_var.set(pc.get("fit_xmax", ""))
         self.plot_controls.residuals_var.set(pc.get("residuals", False))
         self.plot_controls.confidence_band_var.set(pc.get("confidence_band", False))
         self.fit_panel.method_var.set(pc.get("fit_method", "leastsq"))
