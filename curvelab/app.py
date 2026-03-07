@@ -1851,8 +1851,8 @@ class CurveLabApp(ttk.Frame):
         """Standalone launch: creates Tk root and runs mainloop."""
         root = tk.Tk()
         root.title("CurveLab - Data Plotter & Curve Fitter")
-        root.geometry("1200x850")
-        root.minsize(800, 600)
+        root.geometry("1400x950")
+        root.minsize(900, 700)
 
         app = cls(root)
         app.pack(fill=tk.BOTH, expand=True)
