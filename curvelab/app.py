@@ -587,6 +587,19 @@ class CurveLabApp(ttk.Frame):
             sid for sid, rec in self._series_records.items()
             if rec.dataset_name == name
         ]
+        n_sessions = sum(
+            len(rec.fit_sessions) for sid in to_remove
+            for rec in [self._series_records[sid]]
+        )
+        if n_sessions > 0:
+            ok = messagebox.askyesno(
+                "Confirm Remove",
+                f"Dataset '{name}' has {n_sessions} fit session(s) "
+                f"across {len(to_remove)} series.\n\n"
+                f"Remove dataset and discard all fit sessions?",
+            )
+            if not ok:
+                return
         for sid in to_remove:
             rec = self._series_records.pop(sid)
             for sess_name in list(rec.fit_sessions):
