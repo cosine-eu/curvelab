@@ -1117,7 +1117,8 @@ class CurveLabApp(ttk.Frame):
         except Exception as e:
             messagebox.showerror("Guess Error", str(e))
 
-    _SLOW_METHODS = {"emcee", "brute", "differential_evolution", "basinhopping"}
+    _SLOW_METHODS = {"emcee", "brute", "differential_evolution", "basinhopping",
+                      "dual_annealing", "shgo", "ampgo"}
 
     def _on_fit(self):
         rec = self._active_record

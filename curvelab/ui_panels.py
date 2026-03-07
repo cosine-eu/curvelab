@@ -642,7 +642,9 @@ class FitPanel(ttk.LabelFrame):
             textvariable=self.method_var,
             values=[
                 "leastsq", "least_squares", "nelder", "powell",
+                "cobyla", "lbfgsb",
                 "differential_evolution", "basinhopping",
+                "dual_annealing", "shgo", "ampgo",
                 "brute", "emcee",
             ],
             state="readonly",
