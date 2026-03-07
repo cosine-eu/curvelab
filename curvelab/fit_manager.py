@@ -555,21 +555,27 @@ class FitManager:
         if self._last_result is None:
             raise ValueError("No fit result available")
         from lmfit import conf_interval
-        ci = conf_interval(self._last_result, self._last_result,
-                           sigmas=sigmas, trace=True)
+        from scipy.stats import chi2
+
+        ci_result, trace = conf_interval(
+            self._last_result, self._last_result,
+            sigmas=sigmas, trace=True,
+        )
+        best_chi2 = self._last_result.chisqr
+
         profiles = {}
-        for pname, trace_data in ci.items():
-            if isinstance(trace_data, dict) and "trace" in trace_data:
-                trace = trace_data["trace"]
-                # trace is a list of (sigma, [{param: val}, chi2]) tuples
-                points = []
-                for entry in trace:
-                    prob, pars_chi = entry
-                    # pars_chi is a dict of {param: value, ...} plus a special key
-                    # or it may be a MinimizerResult — extract chi2
-                    if hasattr(pars_chi, "chisqr"):
-                        points.append((pars_chi.params[pname].value, pars_chi.chisqr))
-                profiles[pname] = points
+        for pname, tdata in trace.items():
+            if not isinstance(tdata, dict) or pname not in tdata or "prob" not in tdata:
+                continue
+            param_vals = np.asarray(tdata[pname])
+            probs = np.asarray(tdata["prob"])
+            # Convert probability to delta-chi2, then to absolute chi2
+            # prob=0 -> delta=0 (best fit), prob=0.68 -> delta~1 (1-sigma)
+            delta_chi2 = np.where(probs > 0, chi2.ppf(probs, 1), 0.0)
+            chi2_vals = best_chi2 + delta_chi2
+            # Sort by parameter value for clean plotting
+            order = np.argsort(param_vals)
+            profiles[pname] = list(zip(param_vals[order], chi2_vals[order]))
         return profiles
 
     def run_bootstrap(
