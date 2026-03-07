@@ -301,12 +301,15 @@ class DataPanel(ttk.LabelFrame):
 
     def set_series_visibility(self, visibility: list[bool]):
         """Refresh listbox labels to show [hidden] prefix for hidden series."""
+        sel = self.series_listbox.curselection()
         for i, (info, vis) in enumerate(zip(self._series_items, visibility)):
             label = f"{info['dataset']}::{info['x']} vs {info['y']}"
             if not vis:
                 label = f"[hidden] {label}"
             self.series_listbox.delete(i)
             self.series_listbox.insert(i, label)
+        if sel:
+            self.series_listbox.selection_set(sel[0])
 
     def add_series_entry(self, series_info: dict):
         """Programmatically add a series entry (same effect as the Add Series button)."""
