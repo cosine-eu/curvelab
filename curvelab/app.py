@@ -1087,10 +1087,7 @@ class CurveLabApp(ttk.Frame):
         # Re-key in PlotManager
         old_key = _make_session_key(self._active_series_id, old_name)
         new_key = _make_session_key(self._active_series_id, new_name)
-        for d in (self.plot_mgr._fit_lines, self.plot_mgr._annotations,
-                  self.plot_mgr._residual_lines):
-            if old_key in d:
-                d[new_key] = d.pop(old_key)
+        self.plot_mgr.rename_session_key(old_key, new_key)
 
         if rec.active_session_name == old_name:
             rec.active_session_name = new_name

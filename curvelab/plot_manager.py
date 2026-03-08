@@ -231,6 +231,12 @@ class PlotManager:
         self._update_legend()
         self.canvas.draw_idle()
 
+    def rename_session_key(self, old_key: str, new_key: str):
+        """Re-key a session's artists under a new session key."""
+        for d in (self._fit_lines, self._annotations, self._residual_lines):
+            if old_key in d:
+                d[new_key] = d.pop(old_key)
+
     def clear_all_fits(self):
         """Remove all fit lines, annotations, and residuals."""
         for lines in self._fit_lines.values():
