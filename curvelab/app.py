@@ -1166,74 +1166,31 @@ class CurveLabApp(ttk.Frame):
         self._update_component_list()
 
     def _get_fit_data(self, rec: SeriesRecord):
-        """Return (x, y, yerr, xerr) cleaned and optionally masked to visible range.
+        """Return (x, y, yerr, xerr) cleaned and optionally masked to fit range."""
+        from .preprocessing import prepare_fit_data
 
-        Guard-rails applied:
-        1. Filter out NaN/inf in x or y (and corresponding yerr/xerr entries)
-        2. Sort by x
-        3. Warn (once per fit) if duplicate x values exist
-        """
-        x, y = rec.x.copy(), rec.y.copy()
-        yerr = rec.yerr.copy() if rec.yerr is not None else None
-        xerr = rec.xerr.copy() if rec.xerr is not None else None
-
-        # 0. Apply point exclusion mask
-        if rec.mask is not None:
-            x, y = x[rec.mask], y[rec.mask]
-            yerr = yerr[rec.mask] if yerr is not None else None
-            xerr = xerr[rec.mask] if xerr is not None else None
-
-        # 1. Fit range mask: explicit typed range takes priority, then visible range
+        # Determine x range from UI
+        x_range = None
         xmin_str = self.plot_controls.fit_xmin_var.get().strip()
         xmax_str = self.plot_controls.fit_xmax_var.get().strip()
         if xmin_str or xmax_str:
             try:
                 xmin = float(xmin_str) if xmin_str else -np.inf
                 xmax = float(xmax_str) if xmax_str else np.inf
+                x_range = (xmin, xmax)
             except ValueError:
-                xmin, xmax = -np.inf, np.inf
-            mask = (x >= xmin) & (x <= xmax)
-            x, y = x[mask], y[mask]
-            yerr = yerr[mask] if yerr is not None else None
-            xerr = xerr[mask] if xerr is not None else None
+                pass
         elif self.plot_controls.fit_visible_var.get():
-            xmin, xmax = self.plot_mgr.ax.get_xlim()
-            mask = (x >= xmin) & (x <= xmax)
-            x, y = x[mask], y[mask]
-            yerr = yerr[mask] if yerr is not None else None
-            xerr = xerr[mask] if xerr is not None else None
+            x_range = self.plot_mgr.ax.get_xlim()
 
-        # 2. Filter NaN / inf
-        finite_mask = np.isfinite(x) & np.isfinite(y)
-        if yerr is not None:
-            finite_mask &= np.isfinite(yerr)
-        if xerr is not None:
-            finite_mask &= np.isfinite(xerr)
-        n_dropped = int((~finite_mask).sum())
-        if n_dropped > 0:
-            x, y = x[finite_mask], y[finite_mask]
-            yerr = yerr[finite_mask] if yerr is not None else None
-            xerr = xerr[finite_mask] if xerr is not None else None
-            messagebox.showinfo(
-                "Data Cleaned",
-                f"Removed {n_dropped} point(s) with NaN/inf values.",
-            )
+        x, y, yerr, xerr, warnings = prepare_fit_data(rec, x_range=x_range)
 
-        # 3. Sort by x
-        order = np.argsort(x)
-        x, y = x[order], y[order]
-        yerr = yerr[order] if yerr is not None else None
-        xerr = xerr[order] if xerr is not None else None
-
-        # 4. Warn on duplicate x values
-        if len(x) > 0:
-            n_dup = len(x) - len(np.unique(x))
-            if n_dup > 0:
-                messagebox.showwarning(
-                    "Duplicate X Values",
-                    f"{n_dup} duplicate x-value(s) detected. "
-                    "This may cause issues with some models.",
-                )
+        # Show warnings via UI
+        for w in warnings:
+            if "NaN" in w:
+                messagebox.showinfo("Data Cleaned", w)
+            else:
+                messagebox.showwarning("Duplicate X Values", w)
 
         return x, y, yerr, xerr
 
