@@ -39,6 +39,9 @@ class DataManager:
             ".ods": lambda p: pd.read_excel(p, engine="odfpy"),
             ".json": lambda p: pd.read_json(p),
             ".parquet": lambda p: pd.read_parquet(p),
+            ".h5": lambda p: pd.read_hdf(p),
+            ".hdf5": lambda p: pd.read_hdf(p),
+            ".hdf": lambda p: pd.read_hdf(p),
         }
         loader = loaders.get(ext)
         if loader is None:
