@@ -2324,32 +2324,7 @@ class SmoothOutlierDialog(tk.Toplevel):
         self._debounce_id = self.after(100, self._update_preview)
 
     def _compute_smooth(self):
-        import numpy as np
-        from scipy.signal import savgol_filter, medfilt
-        from scipy.ndimage import uniform_filter1d, gaussian_filter1d
-
-        y = self._y.copy()
-        method = self._method_var.get()
-        window = self._window_var.get()
-        # Ensure odd
-        if window % 2 == 0:
-            window += 1
-        # Clamp
-        window = min(window, len(y) - 1 if len(y) % 2 == 0 else len(y))
-        if window < 3:
-            window = 3
-
-        if method == "Savitzky-Golay":
-            order = min(self._param2_var.get(), window - 1)
-            return savgol_filter(y, window, order)
-        elif method == "Moving Average":
-            return uniform_filter1d(y, size=window)
-        elif method == "Median Filter":
-            return medfilt(y, kernel_size=window)
-        elif method == "Gaussian Filter":
-            sigma = max(1, self._param2_var.get())
-            return gaussian_filter1d(y, sigma=sigma)
-        return y
+        return self._compute_smooth_on(self._y.copy())
 
     def _compute_outliers(self, y_smooth):
         import numpy as np
