@@ -129,7 +129,7 @@ class DataManager:
             first_name = None
             first_columns = None
             for table in tables:
-                df = pd.read_sql_query(f"SELECT * FROM [{table}]", conn)
+                df = pd.read_sql_query(f'SELECT * FROM "{table}"', conn)
                 base_name = f"{filepath.name}::{table}"
                 name = base_name
                 counter = 2
