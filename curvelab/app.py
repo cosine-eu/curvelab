@@ -16,13 +16,18 @@ from .plot_manager import PlotManager, SeriesStyle
 from .session import FIT_COLORS, FitSession, ParamEdit, SeriesRecord
 from .ui_panels import (
     DataPanel, PlotControlPanel, FitPanel, FitResultsPanel,
+)
+from .ui_dialogs_analysis import (
     FontDialog, ModelComparisonDialog,
     ConfidenceIntervalDialog, CorrelationMatrixDialog,
     BruteCandidatesDialog, EmceeSummaryDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog,
     GlobalFitDialog, UncertaintyPropagationDialog,
-    SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
-    ProfileLikelihoodDialog, BootstrapDialog, CovarianceMatrixDialog,
+    FTestDialog, ProfileLikelihoodDialog, BootstrapDialog,
+    CovarianceMatrixDialog,
+)
+from .ui_dialogs_data import (
+    SimulateDataDialog, ColumnCalculatorDialog,
     EvaluateModelDialog, FindPeaksDialog, DerivativeIntegralDialog,
     SmoothOutlierDialog,
 )
