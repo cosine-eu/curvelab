@@ -18,6 +18,7 @@ dependencies = [
 [project.optional-dependencies]
 notebook = ["ipywidgets", "ipympl"]
 excel = ["openpyxl"]
+ods = ["odfpy"]
 odr = ["odrpack"]
 
 [project.scripts]
