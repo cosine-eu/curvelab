@@ -2071,12 +2071,17 @@ class UncertaintyPropagationDialog(tk.Toplevel):
             return
         try:
             from uncertainties import umath
-            # Build namespace with uvars and umath functions
-            ns = dict(self._uvars)
+            from asteval import Interpreter
+            aeval = Interpreter()
+            # Add uvars and umath functions to interpreter
+            for k, v in self._uvars.items():
+                aeval.symtable[k] = v
             for fname in dir(umath):
                 if not fname.startswith("_"):
-                    ns[fname] = getattr(umath, fname)
-            result = eval(expr, {"__builtins__": {}}, ns)
+                    aeval.symtable[fname] = getattr(umath, fname)
+            result = aeval(expr)
+            if aeval.error:
+                raise ValueError(aeval.error[0].get_error()[1])
             try:
                 self._result_var.set(
                     f"{expr} = {result.nominal_value:.6g} \u00b1 {result.std_dev:.6g}"

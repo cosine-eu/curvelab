@@ -804,12 +804,16 @@ class CurveLabApp(ttk.Frame):
         def on_apply(name, expr, preview_only):
             if not expr:
                 raise ValueError("Enter an expression.")
+            from asteval import Interpreter
+            aeval = Interpreter()
             df = self.data_mgr.datasets[dataset]
-            namespace = dict(_SAFE_NAMES)
-            namespace["__builtins__"] = {}
+            for k, v in _SAFE_NAMES.items():
+                aeval.symtable[k] = v
             for col in df.columns:
-                namespace[col] = df[col].to_numpy(dtype=float)
-            result = eval(expr, namespace)  # noqa: S307
+                aeval.symtable[col] = df[col].to_numpy(dtype=float)
+            result = aeval(expr)
+            if aeval.error:
+                raise ValueError(aeval.error[0].get_error()[1])
             result = np.asarray(result, dtype=float)
             if result.ndim == 0:
                 result = np.full(len(df), result)
