@@ -24,6 +24,7 @@ from .ui_panels import (
     SimulateDataDialog, ColumnCalculatorDialog, FTestDialog,
     ProfileLikelihoodDialog, BootstrapDialog, CovarianceMatrixDialog,
     EvaluateModelDialog, FindPeaksDialog, DerivativeIntegralDialog,
+    SmoothOutlierDialog,
 )
 from .workspace import WorkspaceEncoder, encode_value, decode_workspace
 
@@ -262,6 +263,9 @@ class CurveLabApp(ttk.Frame):
         analysis_menu.add_command(
             label="Derivative / Integral...", command=self._show_derivative_integral
         )
+        analysis_menu.add_command(
+            label="Smooth / Outlier Detection...", command=self._smooth_outlier_dialog
+        )
         analysis_menu.add_separator()
         analysis_menu.add_command(
             label="Clear Point Exclusions", command=self._clear_exclusions
@@ -485,6 +489,49 @@ class CurveLabApp(ttk.Frame):
             messagebox.showwarning("Insufficient Data", "Need at least 3 data points.")
             return
         FindPeaksDialog(self, x, y, fm, on_done=self._update_component_list)
+
+    def _smooth_outlier_dialog(self):
+        rec = self._active_record
+        if rec is None:
+            messagebox.showwarning("No Data", "Plot a series first.")
+            return
+        SmoothOutlierDialog(
+            self,
+            x=rec.x.copy(),
+            y=rec.y.copy(),
+            yerr=rec.yerr.copy() if rec.yerr is not None else None,
+            mask=rec.mask.copy() if rec.mask is not None else None,
+            ax=self.plot_mgr.ax,
+            canvas=self.plot_mgr.canvas,
+            on_apply_mask=self._apply_smooth_mask,
+            on_export_series=self._export_smooth_series,
+        )
+
+    def _apply_smooth_mask(self, new_mask):
+        rec = self._active_record
+        if rec is None:
+            return
+        rec.mask = new_mask
+        self._replot_all_series()
+        self.plot_mgr.canvas.draw_idle()
+
+    def _export_smooth_series(self, x, y, label_suffix):
+        import pandas as pd
+        rec = self._active_record
+        ds_base = rec.dataset_name if rec else "data"
+        ds_name = f"{ds_base} ({label_suffix})"
+        df = pd.DataFrame({"x": x, "y": y})
+        ds_name, columns = self.data_mgr.add_dataframe(ds_name, df)
+        self.data_panel.set_datasets(self.data_mgr.dataset_names, select=ds_name)
+        self.data_panel.set_columns(columns)
+        series_info = {
+            "dataset": ds_name,
+            "x": "x", "y": "y", "yerr": "", "xerr": "",
+            "marker": "o", "linestyle": "-", "color": "",
+            "label": ds_name,
+        }
+        self.data_panel.add_series_entry(series_info)
+        self._on_plot(self.data_panel.series_list)
 
     def _show_derivative_integral(self):
         """Show derivative and integral of the fitted curve."""

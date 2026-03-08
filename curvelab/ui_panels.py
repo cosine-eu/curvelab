@@ -2182,6 +2182,305 @@ class SimulateDataDialog(tk.Toplevel):
                 self._status_var.set(f"Error: {e}")
 
 
+class SmoothOutlierDialog(tk.Toplevel):
+    """Smooth data, detect outliers, export smoothed/baseline-subtracted series."""
+
+    _METHODS = ["Savitzky-Golay", "Moving Average", "Median Filter", "Gaussian Filter"]
+
+    def __init__(self, parent, x, y, yerr, mask, ax, canvas,
+                 on_apply_mask=None, on_export_series=None):
+        super().__init__(parent)
+        self.title("Smooth / Outlier Detection")
+        self.geometry("420x380")
+        self._x = x
+        self._y = y
+        self._yerr = yerr
+        self._orig_mask = mask  # may be None
+        self._ax = ax
+        self._canvas = canvas
+        self._on_apply_mask = on_apply_mask
+        self._on_export_series = on_export_series
+        self._smooth_line = None
+        self._outlier_scatter = None
+        self._debounce_id = None
+        self._y_smooth = None
+        self._outlier_mask = None  # True = inlier
+
+        self._build_ui()
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.after(200, self._update_preview)
+
+    def _build_ui(self):
+        import numpy as np
+        n = len(self._x)
+
+        # --- Smoothing ---
+        sf = ttk.LabelFrame(self, text="Smoothing", padding=5)
+        sf.pack(fill=tk.X, padx=10, pady=5)
+
+        row0 = ttk.Frame(sf)
+        row0.pack(fill=tk.X)
+        ttk.Label(row0, text="Method:").pack(side=tk.LEFT)
+        self._method_var = tk.StringVar(value=self._METHODS[0])
+        ttk.Combobox(row0, textvariable=self._method_var, values=self._METHODS,
+                     state="readonly", width=18).pack(side=tk.LEFT, padx=5)
+        self._method_var.trace_add("write", self._on_method_change)
+
+        row1 = ttk.Frame(sf)
+        row1.pack(fill=tk.X, pady=2)
+        ttk.Label(row1, text="Window:").pack(side=tk.LEFT)
+        max_win = min(n // 2 * 2 + 1, 201)  # odd, capped
+        self._window_var = tk.IntVar(value=min(11, max_win))
+        self._window_scale = tk.Scale(row1, variable=self._window_var, from_=3,
+                                       to=max(3, max_win), orient=tk.HORIZONTAL,
+                                       resolution=2, command=self._on_slider)
+        self._window_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self._param2_frame = ttk.Frame(sf)
+        self._param2_frame.pack(fill=tk.X, pady=2)
+        self._param2_label = ttk.Label(self._param2_frame, text="Order:")
+        self._param2_label.pack(side=tk.LEFT)
+        self._param2_var = tk.IntVar(value=3)
+        self._param2_scale = tk.Scale(self._param2_frame, variable=self._param2_var,
+                                       from_=1, to=7, orient=tk.HORIZONTAL,
+                                       command=self._on_slider)
+        self._param2_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        self._show_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(sf, text="Show smooth overlay", variable=self._show_var,
+                        command=self._schedule_update).pack(anchor=tk.W)
+
+        # --- Outlier Detection ---
+        of = ttk.LabelFrame(self, text="Outlier Detection", padding=5)
+        of.pack(fill=tk.X, padx=10, pady=5)
+
+        self._outlier_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(of, text="Enable", variable=self._outlier_var,
+                        command=self._schedule_update).pack(anchor=tk.W)
+
+        row_sigma = ttk.Frame(of)
+        row_sigma.pack(fill=tk.X, pady=2)
+        ttk.Label(row_sigma, text="Sigma:").pack(side=tk.LEFT)
+        self._sigma_var = tk.DoubleVar(value=3.0)
+        tk.Scale(row_sigma, variable=self._sigma_var, from_=1.0, to=10.0,
+                 orient=tk.HORIZONTAL, resolution=0.1,
+                 command=self._on_slider).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        row_iter = ttk.Frame(of)
+        row_iter.pack(fill=tk.X, pady=2)
+        ttk.Label(row_iter, text="Iterations:").pack(side=tk.LEFT)
+        self._iter_var = tk.IntVar(value=1)
+        tk.Scale(row_iter, variable=self._iter_var, from_=1, to=5,
+                 orient=tk.HORIZONTAL, command=self._on_slider).pack(
+                     side=tk.LEFT, fill=tk.X, expand=True)
+
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(of, textvariable=self._status_var,
+                  font=("TkDefaultFont", 9, "bold")).pack(anchor=tk.W, pady=(2, 0))
+
+        # --- Actions ---
+        af = ttk.Frame(self)
+        af.pack(fill=tk.X, padx=10, pady=10)
+        ttk.Button(af, text="Apply Exclusions", command=self._apply_exclusions).pack(
+            side=tk.LEFT, padx=3)
+        ttk.Button(af, text="Export Smoothed", command=self._export_smoothed).pack(
+            side=tk.LEFT, padx=3)
+        ttk.Button(af, text="Export Baseline-Sub.", command=self._export_baseline_sub).pack(
+            side=tk.LEFT, padx=3)
+        ttk.Button(af, text="Close", command=self.destroy).pack(side=tk.RIGHT, padx=3)
+
+    def _on_method_change(self, *_args):
+        method = self._method_var.get()
+        if method == "Savitzky-Golay":
+            self._param2_label.config(text="Order:")
+            self._param2_scale.config(from_=1, to=7, resolution=1)
+            self._param2_var.set(3)
+            self._param2_frame.pack(fill=tk.X, pady=2)
+            self._window_scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            self._window_scale.master.pack(fill=tk.X, pady=2)
+        elif method == "Gaussian Filter":
+            self._param2_label.config(text="Sigma:")
+            self._param2_scale.config(from_=1, to=50, resolution=1)
+            self._param2_var.set(5)
+            self._param2_frame.pack(fill=tk.X, pady=2)
+            # Hide window for Gaussian (uses sigma param instead)
+            self._window_scale.master.pack_forget()
+        else:
+            self._param2_frame.pack_forget()
+            self._window_scale.master.pack(fill=tk.X, pady=2)
+        self._schedule_update()
+
+    def _on_slider(self, *_args):
+        self._schedule_update()
+
+    def _schedule_update(self):
+        if self._debounce_id is not None:
+            self.after_cancel(self._debounce_id)
+        self._debounce_id = self.after(100, self._update_preview)
+
+    def _compute_smooth(self):
+        import numpy as np
+        from scipy.signal import savgol_filter, medfilt
+        from scipy.ndimage import uniform_filter1d, gaussian_filter1d
+
+        y = self._y.copy()
+        method = self._method_var.get()
+        window = self._window_var.get()
+        # Ensure odd
+        if window % 2 == 0:
+            window += 1
+        # Clamp
+        window = min(window, len(y) - 1 if len(y) % 2 == 0 else len(y))
+        if window < 3:
+            window = 3
+
+        if method == "Savitzky-Golay":
+            order = min(self._param2_var.get(), window - 1)
+            return savgol_filter(y, window, order)
+        elif method == "Moving Average":
+            return uniform_filter1d(y, size=window)
+        elif method == "Median Filter":
+            return medfilt(y, kernel_size=window)
+        elif method == "Gaussian Filter":
+            sigma = max(1, self._param2_var.get())
+            return gaussian_filter1d(y, sigma=sigma)
+        return y
+
+    def _compute_outliers(self, y_smooth):
+        import numpy as np
+        n = len(self._y)
+        inlier = np.ones(n, dtype=bool)
+        threshold = self._sigma_var.get()
+        n_iter = self._iter_var.get()
+
+        for _ in range(n_iter):
+            residuals = self._y - y_smooth
+            med = np.median(residuals[inlier]) if inlier.any() else 0.0
+            mad = np.median(np.abs(residuals[inlier] - med)) if inlier.any() else 1.0
+            sigma_est = 1.4826 * mad if mad > 0 else 1.0
+            inlier = np.abs(residuals - med) < threshold * sigma_est
+            # Re-smooth on inliers for next iteration
+            if not inlier.all() and inlier.sum() >= 3:
+                from scipy.interpolate import interp1d
+                f = interp1d(self._x[inlier], self._y[inlier], kind="linear",
+                             fill_value="extrapolate")
+                y_interp = f(self._x)
+                y_smooth = self._compute_smooth_on(y_interp)
+        return inlier
+
+    def _compute_smooth_on(self, y):
+        """Smooth a given y array with current settings (for iterative outlier rejection)."""
+        import numpy as np
+        from scipy.signal import savgol_filter, medfilt
+        from scipy.ndimage import uniform_filter1d, gaussian_filter1d
+
+        method = self._method_var.get()
+        window = self._window_var.get()
+        if window % 2 == 0:
+            window += 1
+        window = min(window, len(y) - 1 if len(y) % 2 == 0 else len(y))
+        if window < 3:
+            window = 3
+
+        if method == "Savitzky-Golay":
+            order = min(self._param2_var.get(), window - 1)
+            return savgol_filter(y, window, order)
+        elif method == "Moving Average":
+            return uniform_filter1d(y, size=window)
+        elif method == "Median Filter":
+            return medfilt(y, kernel_size=window)
+        elif method == "Gaussian Filter":
+            sigma = max(1, self._param2_var.get())
+            return gaussian_filter1d(y, sigma=sigma)
+        return y
+
+    def _update_preview(self):
+        import numpy as np
+        self._debounce_id = None
+
+        # Remove old artists
+        if self._smooth_line is not None:
+            self._smooth_line.remove()
+            self._smooth_line = None
+        if self._outlier_scatter is not None:
+            self._outlier_scatter.remove()
+            self._outlier_scatter = None
+
+        try:
+            self._y_smooth = self._compute_smooth()
+        except Exception:
+            self._canvas.draw_idle()
+            return
+
+        if self._show_var.get():
+            self._smooth_line, = self._ax.plot(
+                self._x, self._y_smooth, "--", color="orange", linewidth=1.5,
+                label="_smooth_preview", zorder=5)
+
+        if self._outlier_var.get():
+            self._outlier_mask = self._compute_outliers(self._y_smooth)
+            outliers = ~self._outlier_mask
+            n_out = int(outliers.sum())
+            self._status_var.set(
+                f"Outliers: {n_out} / {len(self._y)} ({100*n_out/len(self._y):.1f}%)")
+            if n_out > 0:
+                self._outlier_scatter = self._ax.scatter(
+                    self._x[outliers], self._y[outliers],
+                    s=60, facecolors="none", edgecolors="red", linewidths=1.5,
+                    zorder=6, label="_outlier_preview")
+        else:
+            self._outlier_mask = None
+            self._status_var.set("")
+
+        self._canvas.draw_idle()
+
+    def _apply_exclusions(self):
+        import numpy as np
+        from tkinter import messagebox
+        if self._outlier_mask is None:
+            messagebox.showinfo("No Outliers", "Enable outlier detection first.", parent=self)
+            return
+        if self._outlier_mask.all():
+            messagebox.showinfo("No Outliers", "No outliers detected with current settings.",
+                                parent=self)
+            return
+        if not self._outlier_mask.any():
+            messagebox.showwarning("All Excluded",
+                                   "All points flagged as outliers. Lower the sigma threshold.",
+                                   parent=self)
+            return
+        # AND-merge with existing mask
+        if self._orig_mask is not None:
+            combined = self._orig_mask & self._outlier_mask
+        else:
+            combined = self._outlier_mask.copy()
+        if self._on_apply_mask:
+            self._on_apply_mask(combined)
+        self.destroy()
+
+    def _export_smoothed(self):
+        if self._y_smooth is None:
+            return
+        if self._on_export_series:
+            self._on_export_series(self._x, self._y_smooth, "Smoothed")
+
+    def _export_baseline_sub(self):
+        if self._y_smooth is None:
+            return
+        if self._on_export_series:
+            self._on_export_series(self._x, self._y - self._y_smooth, "Baseline-subtracted")
+
+    def destroy(self):
+        if self._smooth_line is not None:
+            self._smooth_line.remove()
+            self._smooth_line = None
+        if self._outlier_scatter is not None:
+            self._outlier_scatter.remove()
+            self._outlier_scatter = None
+        self._canvas.draw_idle()
+        super().destroy()
+
+
 class DerivativeIntegralDialog(tk.Toplevel):
     """Plot derivative and integral of the fitted curve."""
 
