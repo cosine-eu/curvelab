@@ -88,4 +88,5 @@ Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.p
 
 ## License
 
-MIT
+GPL 2
+
