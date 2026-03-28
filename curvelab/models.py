@@ -33,6 +33,16 @@ from lmfit.models import (
     VoigtModel,
 )
 
+# lmfit >= 1.3 models (optional)
+try:
+    from lmfit.models import BoseModel
+except ImportError:
+    BoseModel = None
+try:
+    from lmfit.models import FermiModel
+except ImportError:
+    FermiModel = None
+
 # Display name -> factory callable (no-arg returns a fresh Model instance)
 MODEL_REGISTRY: dict[str, type] = {
     "Gaussian": GaussianModel,
@@ -70,6 +80,12 @@ MODEL_REGISTRY: dict[str, type] = {
     "Expression": None,  # Sentinel: requires expression string at creation time
     "Spline": None,  # Sentinel: requires knot count at creation time
 }
+
+# Add lmfit >= 1.3 models when available
+if BoseModel is not None:
+    MODEL_REGISTRY["Bose"] = BoseModel
+if FermiModel is not None:
+    MODEL_REGISTRY["Fermi"] = FermiModel
 
 MODEL_NAMES: list[str] = sorted(MODEL_REGISTRY.keys())
 
