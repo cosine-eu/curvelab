@@ -709,12 +709,14 @@ class CurveLabApp(ttk.Frame):
     def _sync_session_list(self):
         rec = self._active_record
         if rec is None:
-            self.fit_panel.set_sessions([])
+            self.fit_panel.set_sessions([], series_label="")
             return
         names = list(rec.fit_sessions.keys())
         visibility = {n: s.visible for n, s in rec.fit_sessions.items()}
+        series_label = rec.style.get("label", self._active_series_id or "")
         self.fit_panel.set_sessions(names, select=rec.active_session_name or "",
-                                    visibility=visibility)
+                                    visibility=visibility,
+                                    series_label=series_label)
 
     def _load_session_into_ui(self):
         sess = self._active_session

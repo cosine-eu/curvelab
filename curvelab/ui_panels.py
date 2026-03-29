@@ -602,7 +602,8 @@ class FitPanel(ttk.LabelFrame):
         # --- Session controls ---
         sess_label_frame = ttk.Frame(self)
         sess_label_frame.pack(fill=tk.X)
-        ttk.Label(sess_label_frame, text="Fit Sessions:").pack(side=tk.LEFT)
+        self._sess_label = ttk.Label(sess_label_frame, text="Fit Sessions:")
+        self._sess_label.pack(side=tk.LEFT)
 
         self.session_listbox = tk.Listbox(self, height=3, exportselection=False)
         self.session_listbox.pack(fill=tk.X, pady=2)
@@ -800,8 +801,13 @@ class FitPanel(ttk.LabelFrame):
             self.series_var.set("")
 
     def set_sessions(self, session_names: list[str], select: str = "",
-                     visibility: dict[str, bool] | None = None):
+                     visibility: dict[str, bool] | None = None,
+                     series_label: str = ""):
         """Update the session listbox. visibility maps name -> visible flag."""
+        if series_label:
+            self._sess_label.config(text=f"Sessions for: {series_label}")
+        else:
+            self._sess_label.config(text="Fit Sessions:")
         self._session_names = list(session_names)
         self.session_listbox.delete(0, tk.END)
         for name in session_names:
