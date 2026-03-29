@@ -62,6 +62,8 @@ class PlotManager:
         ylabel = self._ylabel
         self.ax.clear()
         self.ax_resid.clear()
+        # Re-establish shared X axis (ax.clear() breaks the link)
+        self.ax_resid.sharex(self.ax)
         self.ax_resid.axhline(y=0, color="gray", linestyle="--", linewidth=0.5)
         self._series_lines.clear()
         self._fit_lines.clear()
