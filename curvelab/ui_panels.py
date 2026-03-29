@@ -228,18 +228,33 @@ class DataPanel(ttk.LabelFrame):
     def set_columns(self, columns: list[str], filename: str = ""):
         """Populate dropdowns with column names."""
         err_columns = [""] + columns
+        # Preserve current selections if still valid
+        old_x = self.x_var.get()
+        old_y = self.y_var.get()
+        old_yerr = self.yerr_var.get()
+        old_xerr = self.xerr_var.get()
+
         self.x_combo["values"] = columns
         self.y_combo["values"] = columns
         self.yerr_combo["values"] = err_columns
         self.xerr_combo["values"] = err_columns
-        if columns:
+
+        if old_x in columns:
+            self.x_var.set(old_x)
+        elif columns:
             self.x_var.set(columns[0])
-            self.y_var.set(columns[1] if len(columns) > 1 else columns[0])
         else:
             self.x_var.set("")
+
+        if old_y in columns:
+            self.y_var.set(old_y)
+        elif columns:
+            self.y_var.set(columns[1] if len(columns) > 1 else columns[0])
+        else:
             self.y_var.set("")
-        self.yerr_var.set("")
-        self.xerr_var.set("")
+
+        self.yerr_var.set(old_yerr if old_yerr in err_columns else "")
+        self.xerr_var.set(old_xerr if old_xerr in err_columns else "")
 
     def _add_series(self):
         if not self.x_var.get() or not self.y_var.get():
