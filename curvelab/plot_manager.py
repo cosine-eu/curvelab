@@ -322,7 +322,8 @@ class PlotManager:
     def set_equal_aspect(self, enabled: bool):
         aspect = "equal" if enabled else "auto"
         self.ax.set_aspect(aspect)
-        self.ax_resid.set_aspect(aspect)
+        # Residuals axis always uses auto aspect — equal would squash it
+        self.ax_resid.set_aspect("auto")
         self.canvas.draw_idle()
 
     def set_legend(self, enabled: bool):
