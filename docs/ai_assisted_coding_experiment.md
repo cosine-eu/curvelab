@@ -51,14 +51,15 @@ Python fitting package lmfit, with a few extensions. Its features are:
 - Any of the one-dimensional models available in lmfit can be used and
   composed.
 
-- Series can be fitted using any of the minimisers made available by
+- Series can be fitted using any of the minimizers made available by
   lmfit. lmfit does not support fitting with errors in X; here we use
-  ZZZ.
+  Orthogonal Distance Regression (ODR) via the odrpack library.
 
 - Multiple series can be fitted to multiple models by creating
   multiple fitting sessions.
 
-- Models can be compared using an F-test and by examining their ZZZ.
+- Models can be compared using an F-test and by examining their
+  goodness-of-fit statistics (AIC, BIC, reduced chi-squared).
 
 - Fitting can be limited to part of a series.
 
@@ -119,4 +120,140 @@ instructions to an agent in natural language is subject to the same
 pitfalls that arise when a user tries to describe what a piece of
 software should do: natural language is ambiguous and the user may not
 be completely clear on what they really want. Second, given the first
-pitfall, [TEXT INCOMPLETE]
+pitfall, the agent will fill in the gaps with its own assumptions —
+assumptions that are often plausible but wrong in ways that only
+become apparent later, when the user exercises the software through
+real workflows.
+
+## Detailed Observations
+
+The experiment revealed several patterns worth noting.
+
+### What worked well
+
+- **Iterative bug fixing.** The user would test, report an error
+    traceback or unexpected behavior, and the agent would diagnose and
+    fix it — often in under a minute. This tight loop was highly
+    productive.
+
+- **Boilerplate and wiring.** Adding a new UI control, connecting it
+    to a callback, and threading it through the coordinator was fast
+    and reliable.
+
+- **Code generation from specification.** When the user described what
+    a feature should do (e.g., smooth/outlier detection with MAD-based
+    sigma-clipping), the agent could produce working code with correct
+    algorithms.
+
+- **Refactoring with tests as safety net.** Splitting files,
+    extracting pure functions, renaming — mechanical changes where the
+    test suite catches regressions.
+
+- **Documentation.** Generating comprehensive user manuals with
+    correct references to algorithms and papers.
+
+- **Test data generation.** Creating realistic synthetic datasets for
+    30+ model types.
+
+### What required human judgment
+
+- **UX decisions.** The agent could implement any of several options
+    but couldn't judge which one a user would actually prefer. Every UI
+    choice (how series/sessions relate, what "Show/Hide All" should do,
+    whether equal axes makes sense for curve fitting data) needed the
+    user's domain perspective.
+
+- **Feature scope.** The agent would happily add features,
+    abstractions, or "improvements" beyond what was asked. The user had
+    to repeatedly steer toward one change at a time.
+
+- **Algorithm selection.** When the user asked about RANSAC for
+    outlier detection, the agent needed to be told it was inappropriate
+    for arbitrary curves — domain knowledge the agent had but didn't
+    apply unprompted.
+
+- **Knowing when to stop.** The agent needed explicit direction on
+    what to defer vs. implement now.
+
+### What didn't work
+
+- **Getting the UI right first try.** Nearly every UI feature needed
+    at least one correction after testing — name collisions, callbacks
+    with wrong signatures, state not syncing between panels.
+
+- **Anticipating state interactions.** Bugs from workspace load not
+    populating the DataPanel, `ax.clear()` breaking shared axes,
+    `set_columns()` resetting dropdowns — the agent didn't foresee
+    these cross-component interactions until the user hit them.
+
+### Testing requires human workflows, not just unit tests
+
+The agent can write and run automated tests, but many bugs only
+surfaced when the user exercised the application through realistic
+workflows — sequences of actions that a developer sitting in front of
+the GUI would naturally try. Examples from this project:
+
+- Loading a workspace, then opening an analysis dialog. The dialogs
+    reported "no fit results" even though fit curves were visible on
+    the plot. The agent had serialized the custom `FitResult` dataclass
+    but not the lmfit `ModelResult` object that analysis tools depend
+    on. No unit test caught this because the test suite never tested
+    "load workspace then compute confidence intervals."
+
+- Loading data with error bars, using the column calculator to add a
+    derived column, then checking the original series. The error bars
+    had silently disappeared because the column calculator refreshed
+    the dropdown menus, which unconditionally reset the yerr/xerr
+    selections. The agent had no way to know this without stepping
+    through that specific sequence.
+
+- Plotting two series, fitting the first, switching to the second,
+    creating a new session. The new session attached to the first
+    series, not the second, because plotting a new series didn't
+    update the active selection. The agent's code was internally
+    consistent — it just didn't match how a user would expect the UI
+    to behave.
+
+- Using "Simulate Data" after loading a workspace. All previously
+    loaded series and fit sessions vanished because simulate data
+    called `_on_plot()` which rebuilt the series records from the
+    DataPanel's list — which was empty because workspace loading had
+    bypassed it.
+
+These bugs share a common pattern: they arise from the interaction
+between features, not from any single feature being wrong. The agent
+writes each feature correctly in isolation, but the state shared
+across features (dropdown selections, panel lists, internal caches,
+matplotlib axis links) creates coupling that only reveals itself
+through multi-step workflows. Unit tests cover individual functions;
+integration tests cover known scenarios; but exploratory testing by a
+human who thinks "what if I do X and then Y?" remains indispensable.
+
+This suggests that the most effective collaboration model is not
+"agent writes, tests pass, done" but rather "agent writes, user tests
+by using the application as an end user would, user reports what
+broke, agent fixes." The user's role is not just to specify
+requirements but to serve as the application's first real user.
+
+### Quantitative observations
+
+- The project grew to ~5000 lines of application code, ~1800 lines of
+    documentation, and ~700 lines of tests across approximately 60
+    commits.
+
+- The ratio of "agent writes code" to "user tests and reports issue"
+    was roughly 3:1 in time but each cycle was short (minutes, not
+    hours).
+
+- The user made zero direct code edits. All code was written by the
+    agent and validated by the user through testing.
+
+## Conclusion
+
+A coding agent can produce a substantial, working application — but it
+cannot replace the person who knows what the application should *do*.
+The agent is a fast, tireless implementer. The human provides taste,
+domain knowledge, and the quality bar. The most productive mode was
+rapid iteration: describe, implement, test, correct. The least
+productive mode was asking the agent to make unsupervised design
+decisions.
