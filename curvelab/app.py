@@ -893,6 +893,7 @@ class CurveLabApp(ttk.Frame):
         self.plot_mgr.clear_all()
 
         new_records: dict[str, SeriesRecord] = {}
+        latest_new_sid: str | None = None
 
         for s in series_list:
             dataset = s["dataset"]
@@ -914,6 +915,7 @@ class CurveLabApp(ttk.Frame):
                         x=x, y=y, yerr=yerr, xerr=xerr,
                         style=s, dataset_name=dataset,
                     )
+                    latest_new_sid = sid
 
                 if rec.visible:
                     style = SeriesStyle(
@@ -941,7 +943,10 @@ class CurveLabApp(ttk.Frame):
                     if show_resid:
                         self._plot_residuals_for_session(skey, sess, rec)
 
-        if self._active_series_id not in self._series_records:
+        # Switch to the most recently added series so new sessions target it
+        if latest_new_sid is not None:
+            self._active_series_id = latest_new_sid
+        elif self._active_series_id not in self._series_records:
             self._active_series_id = next(iter(self._series_records), None)
 
         self._sync_series_combo()
