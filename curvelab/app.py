@@ -303,7 +303,22 @@ class CurveLabApp(ttk.Frame):
         )
         menubar.add_cascade(label="Settings", menu=settings_menu)
 
+        help_menu = tk.Menu(menubar, tearoff=0)
+        help_menu.add_command(label="About CurveLab", command=self._show_about)
+        menubar.add_cascade(label="Help", menu=help_menu)
+
         self.parent.config(menu=menubar)
+
+    def _show_about(self):
+        from . import __version__
+        messagebox.showinfo(
+            "About CurveLab",
+            f"CurveLab {__version__}\n\n"
+            "A GUI interface for lmfit and an experiment\n"
+            "in AI-assisted coding.\n\n"
+            "By G. Vacanti\n"
+            "https://cosine.eu",
+        )
 
     def _open_font_dialog(self):
         FontDialog(
