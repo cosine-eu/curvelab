@@ -4,11 +4,13 @@ Interactive curve fitting application for 1D experimental data, built on [lmfit]
 
 CurveLab provides a desktop GUI (Tkinter) and a Jupyter notebook widget for loading data, building composite models, fitting curves, and analyzing results -- all without writing code.
 
+This project is also [an experiment in AI-assisted coding](docs/ai_assisted_coding_experiment.md).
+
 ## Features
 
-- **34 built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, and more. Custom expressions supported.
+- **34+ built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, Bose, Fermi, and more. Custom expressions supported.
 - **Composite models** -- combine components with `+`, `*`, `-`, `/` operators
-- **14 fitting methods** -- Levenberg-Marquardt, Nelder-Mead, differential evolution, basin-hopping, MCMC (emcee), brute-force grid search, ODR, and more
+- **14 fitting methods** -- Trust Region Reflective (default), Levenberg-Marquardt, Nelder-Mead, differential evolution, basin-hopping, MCMC (emcee), brute-force grid search, ODR, and more
 - **10 file formats** -- CSV, TSV, TXT/DAT, Excel, ODS, JSON, Parquet, HDF5, SQLite, plus clipboard paste
 - **Multi-series / multi-session** -- plot multiple datasets, run multiple fit sessions per series, batch fit across all series
 - **Statistical analysis** -- confidence intervals, correlation/covariance matrices, diagnostic plots, bootstrap CI, profile likelihood, F-test, model comparison (AIC/BIC), uncertainty propagation, 2D confidence contours
@@ -20,7 +22,7 @@ CurveLab provides a desktop GUI (Tkinter) and a Jupyter notebook widget for load
 ## Quick Start
 
 ```bash
-git clone https://github.com/your-username/curvelab.git
+git clone https://github.com/cosine-eu/curvelab.git
 cd curvelab
 pip install -e .
 curvelab
@@ -34,32 +36,13 @@ from curvelab.notebook import CurveLabWidget
 CurveLabWidget()
 ```
 
-## Installation
-
-Requires Python 3.10+.
-
-```bash
-# Core install
-pip install -e .
-
-# With all optional dependencies
-pip install -e ".[notebook,excel,ods,hdf5,odr]"
-```
-
-| Extra | Packages | Enables |
-|-------|----------|---------|
-| `notebook` | ipywidgets, ipympl | Jupyter notebook widget |
-| `excel` | openpyxl | Excel .xlsx/.xls files |
-| `ods` | odfpy | LibreOffice .ods files |
-| `hdf5` | tables | HDF5 .h5/.hdf5 files |
-| `odr` | odrpack | Orthogonal Distance Regression |
-
-See [docs/installation.md](docs/installation.md) for detailed instructions.
+See the [Installation Guide](docs/installation.md) for detailed instructions, optional dependencies, and troubleshooting.
 
 ## Documentation
 
-- [Installation Guide](docs/installation.md)
-- [User Manual](docs/user_manual.md) -- comprehensive guide with workflows and references
+- [Installation Guide](docs/installation.md) -- prerequisites, setup, optional dependencies, troubleshooting
+- [User Manual](docs/user_manual.md) -- comprehensive guide covering all features, workflows, and references
+- [AI-Assisted Coding Experiment](docs/ai_assisted_coding_experiment.md) -- background on how this project was built
 
 ## Architecture
 
@@ -68,13 +51,13 @@ DataManager --> SeriesRecord --> PlotManager (display)
                             --> FitManager --> lmfit.Model --> FitResult
 ```
 
-Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.py` for Jupyter) coordinate between the core modules:
+Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.py` for Jupyter) coordinate between the core modules. See the [User Manual](docs/user_manual.md) for details.
 
 | Module | Role |
 |--------|------|
 | `fit_manager.py` | Composite model building, auto-guess, fitting, GOF metrics |
 | `data_manager.py` | Tabular data loading with auto-detection |
-| `models.py` | Registry of 34 built-in lmfit models |
+| `models.py` | Registry of 34+ built-in lmfit models |
 | `plot_manager.py` | Matplotlib figure management (dual-axis, error bars, bands) |
 | `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, sort) |
 | `session.py` | Dataclasses: SeriesRecord, FitSession, FitResult |
@@ -86,7 +69,8 @@ Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.p
 
 **Optional:** ipywidgets/ipympl (notebook), openpyxl (Excel), odfpy (ODS), tables (HDF5), odrpack (ODR)
 
+See the [Installation Guide](docs/installation.md) for how to install optional dependency groups.
+
 ## License
 
 GPL 2
-
