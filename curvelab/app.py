@@ -2268,7 +2268,16 @@ class CurveLabApp(ttk.Frame):
                 plot_size=fonts.get("plot_size", self._plot_size),
             )
 
-        # 6. Replot everything and sync UI
+        # 6. Reconstruct lmfit ModelResult for analysis tools
+        for rec in self._series_records.values():
+            for sess in rec.fit_sessions.values():
+                if sess.result is not None and sess.fit_manager.model is not None:
+                    try:
+                        sess.fit_manager.refit_from_result(sess.result)
+                    except Exception:
+                        pass  # Analysis tools will show "run a fit first"
+
+        # 7. Replot everything and sync UI
         self._replot_all_series()
         self._sync_series_combo()
         self._sync_session_list()

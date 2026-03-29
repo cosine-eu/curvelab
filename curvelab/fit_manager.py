@@ -396,6 +396,25 @@ class FitManager:
             init_params=init_values,
         )
 
+    def refit_from_result(self, result: FitResult) -> None:
+        """Re-run the fit using stored result data to reconstruct _last_result.
+
+        This is used after loading a workspace to make analysis tools
+        (CIs, contours, profiles, etc.) available without manual re-fitting.
+        """
+        if self._model is None or self._params is None:
+            return
+        x, y = result.x_data, result.y_data
+        yerr = result.yerr_data
+        weights = 1.0 / yerr if yerr is not None else None
+        if self._has_spline:
+            self._rebuild_model_with_data(x)
+        self._last_result = self._model.fit(
+            y, self._params, x=x, weights=weights,
+            method="least_squares", nan_policy="omit",
+        )
+        self._params = self._last_result.params
+
     def run_global_fit(
         self,
         datasets: list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]],
