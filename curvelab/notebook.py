@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import tempfile
+import warnings
 from io import StringIO
 from pathlib import Path
 
@@ -51,8 +52,16 @@ class CurveLabWidget(widgets.VBox):
         CurveLabWidget()
     """
 
-    def __init__(self, figsize=(9, 5), **kwargs):
+    def __init__(self, figsize=(9, 5), show_warnings=False, **kwargs):
         super().__init__(**kwargs)
+
+        # Suppress noisy lmfit/scipy runtime warnings by default
+        self._show_warnings = show_warnings
+        if not show_warnings:
+            warnings.filterwarnings(
+                "ignore", category=RuntimeWarning,
+                module=r"(lmfit|scipy|uncertainties)\.",
+            )
 
         # Core state
         self._data_mgr = DataManager()

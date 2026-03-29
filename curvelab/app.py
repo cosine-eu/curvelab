@@ -4,6 +4,7 @@ import csv
 import json
 import threading
 import tkinter as tk
+import warnings
 from tkinter import ttk, messagebox, filedialog
 from pathlib import Path
 
@@ -66,6 +67,11 @@ class CurveLabApp(ttk.Frame):
         self._ui_size = 10
         self._plot_family = "sans-serif"
         self._plot_size = 10
+
+        # Suppress noisy lmfit/scipy runtime warnings by default
+        self._show_warnings = False
+        self._warnings_filter_installed = False
+        self._install_warnings_filter()
 
         # Threading state for async fits
         self._fit_thread: threading.Thread | None = None
@@ -282,6 +288,12 @@ class CurveLabApp(ttk.Frame):
 
         settings_menu = tk.Menu(menubar, tearoff=0)
         settings_menu.add_command(label="Fonts...", command=self._open_font_dialog)
+        self._show_warnings_var = tk.BooleanVar(value=self._show_warnings)
+        settings_menu.add_checkbutton(
+            label="Show numeric warnings",
+            variable=self._show_warnings_var,
+            command=self._toggle_warnings,
+        )
         menubar.add_cascade(label="Settings", menu=settings_menu)
 
         self.parent.config(menu=menubar)
@@ -308,6 +320,30 @@ class CurveLabApp(ttk.Frame):
         style.configure("Treeview.Heading", font=(ui_family, ui_size, "bold"))
 
         self.plot_mgr.set_font(plot_family, plot_size)
+
+    def _install_warnings_filter(self):
+        """Suppress RuntimeWarning from lmfit/scipy/uncertainties."""
+        if not self._warnings_filter_installed:
+            warnings.filterwarnings(
+                "ignore", category=RuntimeWarning,
+                module=r"(lmfit|scipy|uncertainties)\.",
+            )
+            self._warnings_filter_installed = True
+
+    def _remove_warnings_filter(self):
+        """Remove the RuntimeWarning suppression."""
+        warnings.filterwarnings(
+            "default", category=RuntimeWarning,
+            module=r"(lmfit|scipy|uncertainties)\.",
+        )
+        self._warnings_filter_installed = False
+
+    def _toggle_warnings(self):
+        self._show_warnings = self._show_warnings_var.get()
+        if self._show_warnings:
+            self._remove_warnings_filter()
+        else:
+            self._install_warnings_filter()
 
     # --- Export ---
 
