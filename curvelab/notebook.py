@@ -947,6 +947,11 @@ class CurveLabWidget(widgets.VBox):
         if rec is None or sess is None:
             self._set_status("Create a fit session first.", error=True)
             return
+        if not rec.visible:
+            self._set_status(
+                "Warning: active series is hidden. The fit curve will be shown "
+                "but the underlying data points are not visible."
+            )
         fm = sess.fit_manager
         if not fm.components:
             self._set_status("Add at least one model component.", error=True)

@@ -1274,6 +1274,12 @@ class CurveLabApp(ttk.Frame):
         if rec is None or sess is None:
             messagebox.showwarning("No Session", "Create a fit session first.")
             return
+        if not rec.visible:
+            messagebox.showwarning(
+                "Hidden Series",
+                "The active series is hidden. The fit curve will be shown "
+                "but the underlying data points are not visible on the plot.",
+            )
         fm = sess.fit_manager
         if not fm.components:
             messagebox.showwarning("No Model", "Add at least one model component.")
