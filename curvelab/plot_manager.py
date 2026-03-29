@@ -323,11 +323,16 @@ class PlotManager:
 
     def set_equal_aspect(self, enabled: bool):
         if enabled:
-            # Use adjustable="datalim" so equal aspect adjusts data limits
-            # rather than shrinking the axes box (which conflicts with sharex)
+            # Save original limits before equal aspect modifies them
+            self._saved_xlim = self.ax.get_xlim()
+            self._saved_ylim = self.ax.get_ylim()
             self.ax.set_aspect("equal", adjustable="datalim")
         else:
             self.ax.set_aspect("auto")
+            # Restore original limits
+            if hasattr(self, "_saved_xlim"):
+                self.ax.set_xlim(self._saved_xlim)
+                self.ax.set_ylim(self._saved_ylim)
         # Residuals axis always uses auto aspect
         self.ax_resid.set_aspect("auto")
         self.canvas.draw_idle()
