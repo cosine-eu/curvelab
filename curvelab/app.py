@@ -311,14 +311,33 @@ class CurveLabApp(ttk.Frame):
 
     def _show_about(self):
         from . import __version__
-        messagebox.showinfo(
-            "About CurveLab",
-            f"CurveLab {__version__}\n\n"
-            "A GUI interface for lmfit and an experiment\n"
-            "in AI-assisted coding.\n\n"
-            "By G. Vacanti\n"
-            "https://cosine.eu",
-        )
+        dlg = tk.Toplevel(self)
+        dlg.title("About CurveLab")
+        dlg.resizable(False, False)
+        dlg.transient(self.parent)
+
+        # Load logo
+        logo_path = Path(__file__).parent / "logo_small.png"
+        if logo_path.exists():
+            img = tk.PhotoImage(file=str(logo_path))
+            dlg._logo_img = img  # prevent garbage collection
+            tk.Label(dlg, image=img, bg="#1a1a2e").pack(padx=20, pady=(20, 10))
+
+        tk.Label(
+            dlg, text=f"CurveLab {__version__}",
+            font=("Helvetica", 16, "bold"),
+        ).pack(pady=(5, 5))
+        tk.Label(
+            dlg,
+            text="A GUI interface for lmfit and an experiment\nin AI-assisted coding.",
+            justify=tk.CENTER,
+        ).pack(pady=(0, 10))
+        tk.Label(dlg, text="By G. Vacanti").pack()
+        tk.Label(
+            dlg, text="https://cosine.eu",
+            fg="blue", cursor="hand2",
+        ).pack(pady=(0, 10))
+        ttk.Button(dlg, text="OK", command=dlg.destroy).pack(pady=(5, 15))
 
     def _open_font_dialog(self):
         FontDialog(
@@ -2309,11 +2328,35 @@ class CurveLabApp(ttk.Frame):
     def launch(cls):
         """Standalone launch: creates Tk root and runs mainloop."""
         root = tk.Tk()
+        root.withdraw()  # hide main window during splash
+
+        # Show splash screen
+        logo_path = Path(__file__).parent / "logo.png"
+        splash = None
+        if logo_path.exists():
+            splash = tk.Toplevel(root)
+            splash.overrideredirect(True)
+            img = tk.PhotoImage(file=str(logo_path))
+            splash._img = img
+            tk.Label(splash, image=img, bg="#1a1a2e").pack()
+            # Center on screen
+            splash.update_idletasks()
+            sw = splash.winfo_screenwidth()
+            sh = splash.winfo_screenheight()
+            w, h = img.width(), img.height()
+            splash.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
+
         root.title("CurveLab - Data Plotter & Curve Fitter")
         root.geometry("1400x950")
         root.minsize(900, 700)
 
         app = cls(root)
         app.pack(fill=tk.BOTH, expand=True)
+
+        # Close splash and show main window
+        if splash is not None:
+            root.after(1500, lambda: (splash.destroy(), root.deiconify()))
+        else:
+            root.deiconify()
 
         root.mainloop()
