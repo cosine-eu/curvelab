@@ -55,6 +55,8 @@ Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.p
 
 | Module | Role |
 |--------|------|
+| `app.py` | Main Tkinter application, central coordinator |
+| `notebook.py` | Jupyter notebook widget (ipywidgets) |
 | `fit_manager.py` | Composite model building, auto-guess, fitting, GOF metrics |
 | `data_manager.py` | Tabular data loading with auto-detection |
 | `models.py` | Registry of 34+ built-in lmfit models |
@@ -62,6 +64,9 @@ Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.p
 | `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, sort) |
 | `session.py` | Dataclasses: SeriesRecord, FitSession, FitResult |
 | `workspace.py` | JSON serialization for save/load |
+| `ui_panels.py` | Tkinter UI panels (data, fit, plot controls, results) |
+| `ui_dialogs_analysis.py` | Statistical analysis dialogs (CI, contours, bootstrap, etc.) |
+| `ui_dialogs_data.py` | Data tool dialogs (peaks, smooth, derivative, simulate) |
 
 ## Dependencies
 
