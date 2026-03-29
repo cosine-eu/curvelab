@@ -671,7 +671,7 @@ class FitPanel(ttk.LabelFrame):
         method_frame = ttk.Frame(self)
         method_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(method_frame, text="Method:").pack(side=tk.LEFT)
-        self.method_var = tk.StringVar(value="leastsq")
+        self.method_var = tk.StringVar(value="least_squares")
         ttk.Combobox(
             method_frame,
             textvariable=self.method_var,

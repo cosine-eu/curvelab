@@ -270,7 +270,7 @@ class FitManager:
         yerr: np.ndarray | None = None,
         xerr: np.ndarray | None = None,
         n_dense: int = 500,
-        method: str = "leastsq",
+        method: str = "least_squares",
         iter_cb=None,
         fit_kws: dict | None = None,
         reduce_fcn=None,
@@ -400,7 +400,7 @@ class FitManager:
         self,
         datasets: list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]],
         shared_params: set[str],
-        method: str = "leastsq",
+        method: str = "least_squares",
         max_nfev: int | None = None,
         weight_mode: str = "1/yerr (default)",
     ) -> list[FitResult]:
@@ -761,7 +761,7 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         n_boot: int = 200,
-        method: str = "leastsq",
+        method: str = "least_squares",
         boot_type: str = "residual",
         weight_mode: str = "1/yerr (default)",
     ) -> dict[str, np.ndarray]:

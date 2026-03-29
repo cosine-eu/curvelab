@@ -296,7 +296,7 @@ class CurveLabWidget(widgets.VBox):
                 "dual_annealing", "shgo", "ampgo",
                 "brute", "emcee",
             ],
-            value="leastsq",
+            value="least_squares",
         )
 
         # Reduce function
@@ -1501,7 +1501,7 @@ class CurveLabWidget(widgets.VBox):
         self._band_cb.value = pc.get("confidence_band", False)
         self._fit_xmin.value = pc.get("fit_xmin", "")
         self._fit_xmax.value = pc.get("fit_xmax", "")
-        self._method_dd.value = pc.get("fit_method", "leastsq")
+        self._method_dd.value = pc.get("fit_method", "least_squares")
         self._reduce_dd.value = pc.get("reduce_fcn", "Chi-square (default)")
         self._weight_dd.value = pc.get("weight_mode", "1/yerr (default)")
         self._max_nfev_text.value = pc.get("max_nfev", "")

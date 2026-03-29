@@ -2197,7 +2197,7 @@ class CurveLabApp(ttk.Frame):
         self.plot_controls.fit_xmax_var.set(pc.get("fit_xmax", ""))
         self.plot_controls.residuals_var.set(pc.get("residuals", False))
         self.plot_controls.confidence_band_var.set(pc.get("confidence_band", False))
-        self.fit_panel.method_var.set(pc.get("fit_method", "leastsq"))
+        self.fit_panel.method_var.set(pc.get("fit_method", "least_squares"))
         self.fit_panel.reduce_var.set(pc.get("reduce_fcn", "Chi-square (default)"))
         self.fit_panel.weight_var.set(pc.get("weight_mode", "1/yerr (default)"))
         self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))

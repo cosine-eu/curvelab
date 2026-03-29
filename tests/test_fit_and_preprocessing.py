@@ -101,6 +101,12 @@ class FitManagerRunFitTests(unittest.TestCase):
         self.fm.add_component("Gaussian")
         self.fm.add_component("Linear")
         self.fm.auto_guess(x, y)
+        # Provide reasonable initial guesses for the composite model
+        self.fm.set_param("gaussian1_center", value=5.0)
+        self.fm.set_param("gaussian1_sigma", value=0.5)
+        self.fm.set_param("gaussian1_amplitude", value=2.0)
+        self.fm.set_param("linear1_slope", value=0.3)
+        self.fm.set_param("linear1_intercept", value=1.0)
         result = self.fm.run_fit(x, y, weight_mode="No weights")
 
         self.assertGreater(result.gof["R-squared"], 0.99)
