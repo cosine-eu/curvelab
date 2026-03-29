@@ -153,6 +153,7 @@ class CurveLabApp(ttk.Frame):
             on_delete_session=self._on_delete_session,
             on_batch_fit=self._on_batch_fit,
             on_toggle_session_visible=self._on_toggle_session_visible,
+            on_toggle_series_visible=self._on_toggle_series_visible,
             on_abort=self._abort_fit,
         )
         left_pane.add(self.fit_panel, weight=1)
@@ -1184,6 +1185,18 @@ class CurveLabApp(ttk.Frame):
             return
         sess = rec.fit_sessions[name]
         sess.visible = not sess.visible
+        self._sync_session_list()
+        self._replot_all_series()
+
+    def _on_toggle_series_visible(self):
+        """Toggle visibility of the active series and all its fit sessions."""
+        rec = self._active_record
+        if rec is None:
+            return
+        new_visible = not rec.visible
+        rec.visible = new_visible
+        for sess in rec.fit_sessions.values():
+            sess.visible = new_visible
         self._sync_session_list()
         self._replot_all_series()
 

@@ -564,6 +564,7 @@ class FitPanel(ttk.LabelFrame):
         on_delete_session=None,
         on_batch_fit=None,
         on_toggle_session_visible=None,
+        on_toggle_series_visible=None,
         on_abort=None,
     ):
         super().__init__(parent, text="Fit", padding=5)
@@ -581,6 +582,7 @@ class FitPanel(ttk.LabelFrame):
         self._on_delete_session = on_delete_session
         self._on_batch_fit = on_batch_fit
         self._on_toggle_session_visible = on_toggle_session_visible
+        self._on_toggle_series_visible = on_toggle_series_visible
         self._on_abort = on_abort
         self._session_names: list[str] = []
 
@@ -598,6 +600,10 @@ class FitPanel(ttk.LabelFrame):
         )
         self.series_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
         self.series_combo.bind("<<ComboboxSelected>>", self._series_selected)
+        ttk.Button(
+            series_frame, text="Show/Hide All", width=12,
+            command=self._toggle_series_visible,
+        ).pack(side=tk.LEFT, padx=(2, 0))
 
         # --- Session controls ---
         sess_label_frame = ttk.Frame(self)
@@ -789,6 +795,10 @@ class FitPanel(ttk.LabelFrame):
         if sel and self._on_toggle_session_visible:
             name = self._session_names[sel[0]]
             self._on_toggle_session_visible(name)
+
+    def _toggle_series_visible(self):
+        if self._on_toggle_series_visible:
+            self._on_toggle_series_visible()
 
     def set_series_list(self, series_ids: list[str], select: str = ""):
         """Update the series combobox."""
