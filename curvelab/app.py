@@ -1937,7 +1937,7 @@ class CurveLabApp(ttk.Frame):
             return
         rec.mask = None
         self._replot_all_series()
-        self.plot_mgr.canvas.draw_idle()
+        self.plot_mgr.canvas.draw()
         self.parent.title("CurveLab")
 
     def _clear_all_exclusions(self):
@@ -1945,7 +1945,7 @@ class CurveLabApp(ttk.Frame):
         for rec in self._series_records.values():
             rec.mask = None
         self._replot_all_series()
-        self.plot_mgr.canvas.draw_idle()
+        self.plot_mgr.canvas.draw()
         self.parent.title("CurveLab")
 
     def _on_residuals_toggled(self, show: bool):
