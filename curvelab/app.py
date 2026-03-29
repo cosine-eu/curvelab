@@ -283,7 +283,10 @@ class CurveLabApp(ttk.Frame):
         )
         analysis_menu.add_separator()
         analysis_menu.add_command(
-            label="Clear Point Exclusions", command=self._clear_exclusions
+            label="Clear Exclusions (Active Series)", command=self._clear_exclusions
+        )
+        analysis_menu.add_command(
+            label="Clear Exclusions (All Series)", command=self._clear_all_exclusions
         )
         menubar.add_cascade(label="Analysis", menu=analysis_menu)
 
@@ -1928,11 +1931,19 @@ class CurveLabApp(ttk.Frame):
         self.parent.title(f"CurveLab — {n_excluded} point(s) excluded")
 
     def _clear_exclusions(self):
-        """Clear all point exclusions from the active series."""
+        """Clear point exclusions from the active series."""
         rec = self._active_record
         if rec is None:
             return
         rec.mask = None
+        self._replot_all_series()
+        self.plot_mgr.canvas.draw_idle()
+        self.parent.title("CurveLab")
+
+    def _clear_all_exclusions(self):
+        """Clear point exclusions from all series."""
+        for rec in self._series_records.values():
+            rec.mask = None
         self._replot_all_series()
         self.plot_mgr.canvas.draw_idle()
         self.parent.title("CurveLab")
