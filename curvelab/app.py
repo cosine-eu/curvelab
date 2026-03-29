@@ -491,7 +491,9 @@ class CurveLabApp(ttk.Frame):
         if not rows:
             messagebox.showinfo("No Fits", "No completed fits to compare.")
             return
-        ModelComparisonDialog(self, rows)
+        dlg = ModelComparisonDialog(self, rows)
+        series_label = rec.style.get("label", self._active_series_id or "")
+        dlg.title(f"Model Comparison — {series_label}")
 
     def _show_f_test(self):
         rec = self._active_record
@@ -512,7 +514,9 @@ class CurveLabApp(ttk.Frame):
         if len(sessions) < 2:
             messagebox.showinfo("Need 2+ Fits", "Need at least two completed fits to compare.")
             return
-        FTestDialog(self, sessions)
+        dlg = FTestDialog(self, sessions)
+        series_label = rec.style.get("label", self._active_series_id or "")
+        dlg.title(f"F-Test for Nested Models — {series_label}")
 
     # --- Simulate Data ---
 
@@ -1477,6 +1481,13 @@ class CurveLabApp(ttk.Frame):
 
     # --- Analysis handlers ---
 
+    def _analysis_title(self, base_title: str) -> str:
+        """Build a dialog title that includes the active session name."""
+        sess = self._active_session
+        if sess is not None:
+            return f"{base_title} — {sess.name}"
+        return base_title
+
     def _show_confidence_intervals(self):
         sess = self._active_session
         if sess is None or sess.result is None:
@@ -1485,7 +1496,8 @@ class CurveLabApp(ttk.Frame):
         fm = sess.fit_manager
         try:
             ci_text = fm.compute_confidence_intervals()
-            ConfidenceIntervalDialog(self, ci_text)
+            dlg = ConfidenceIntervalDialog(self, ci_text)
+            dlg.title(self._analysis_title("Confidence Intervals"))
         except Exception as e:
             messagebox.showerror("CI Error", str(e))
 
@@ -1500,7 +1512,8 @@ class CurveLabApp(ttk.Frame):
             if not correlations:
                 messagebox.showinfo("No Correlations", "No parameter correlations available.")
                 return
-            CorrelationMatrixDialog(self, correlations)
+            dlg = CorrelationMatrixDialog(self, correlations)
+            dlg.title(self._analysis_title("Correlation Matrix"))
         except Exception as e:
             messagebox.showerror("Correlation Error", str(e))
 
@@ -1515,14 +1528,16 @@ class CurveLabApp(ttk.Frame):
             messagebox.showinfo("No Covariance", "Covariance matrix not available.")
             return
         param_names, cov_matrix = result
-        CovarianceMatrixDialog(self, param_names, cov_matrix)
+        dlg = CovarianceMatrixDialog(self, param_names, cov_matrix)
+        dlg.title(self._analysis_title("Covariance Matrix"))
 
     def _show_diagnostic_plots(self):
         sess = self._active_session
         if sess is None or sess.result is None:
             messagebox.showwarning("No Fit", "Run a fit first.")
             return
-        DiagnosticPlotsDialog(self, sess.result)
+        dlg = DiagnosticPlotsDialog(self, sess.result)
+        dlg.title(self._analysis_title("Fit Diagnostic Plots"))
 
     def _show_confidence_contours(self):
         sess = self._active_session
@@ -1544,7 +1559,8 @@ class CurveLabApp(ttk.Frame):
                 "Need at least 2 varied parameters for contour plots.",
             )
             return
-        ConfidenceContourDialog(self, fm._last_result, vary_params)
+        dlg = ConfidenceContourDialog(self, fm._last_result, vary_params)
+        dlg.title(self._analysis_title("2D Confidence Contours"))
 
     def _show_profile_likelihood(self):
         sess = self._active_session
@@ -1562,7 +1578,8 @@ class CurveLabApp(ttk.Frame):
                                     "Could not compute profile traces.")
                 return
             best_chi2 = fm._last_result.chisqr
-            ProfileLikelihoodDialog(self, profiles, best_chi2)
+            dlg = ProfileLikelihoodDialog(self, profiles, best_chi2)
+            dlg.title(self._analysis_title("Profile Likelihood"))
         except Exception as e:
             messagebox.showerror("Profile Error", str(e))
 
@@ -1584,7 +1601,8 @@ class CurveLabApp(ttk.Frame):
                 weight_mode=weight_mode,
             )
 
-        BootstrapDialog(self, on_run=on_run)
+        dlg = BootstrapDialog(self, on_run=on_run)
+        dlg.title(self._analysis_title("Bootstrap Confidence Intervals"))
 
     def _show_candidates_dialog(self, sess):
         """Show brute-force candidates dialog with option to load values."""
@@ -1597,13 +1615,15 @@ class CurveLabApp(ttk.Frame):
                 fm.set_param(name, value=val)
             self._refresh_param_display()
 
-        BruteCandidatesDialog(self, sess.result.candidates, on_select=on_select)
+        dlg = BruteCandidatesDialog(self, sess.result.candidates, on_select=on_select)
+        dlg.title(self._analysis_title("Brute-Force Candidates"))
 
     def _show_emcee_summary_dialog(self, sess):
         """Show emcee MCMC summary dialog."""
         if sess.result is None or sess.result.flatchain is None:
             return
-        EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params)
+        dlg = EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params)
+        dlg.title(self._analysis_title("MCMC (emcee) Summary"))
 
     def _on_global_fit(self):
         """Open Global Fit dialog for simultaneous fitting across series."""
@@ -1694,7 +1714,8 @@ class CurveLabApp(ttk.Frame):
                 "No parameters with uncertainties available.",
             )
             return
-        UncertaintyPropagationDialog(self, uvars)
+        dlg = UncertaintyPropagationDialog(self, uvars)
+        dlg.title(self._analysis_title("Uncertainty Propagation"))
 
     def _export_model_result(self):
         """Export lmfit ModelResult to a .sav file."""
