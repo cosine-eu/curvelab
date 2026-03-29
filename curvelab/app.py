@@ -1969,7 +1969,7 @@ class CurveLabApp(ttk.Frame):
         self._replot_all_series()
         self.plot_mgr.ax.set_xlim(xlim)
         self.plot_mgr.ax.set_ylim(ylim)
-        self.plot_mgr.draw()
+        self.plot_mgr.canvas.draw_idle()
 
     def _on_axis_labels(self, xlabel: str, ylabel: str):
         self.plot_mgr.set_axis_labels(xlabel, ylabel)
