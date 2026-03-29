@@ -2204,9 +2204,10 @@ class CurveLabApp(ttk.Frame):
             first = self.data_mgr.dataset_names[0]
             self.data_panel.set_columns(self.data_mgr.column_names(first))
 
-        # 2. Reconstruct SeriesRecord objects
+        # 2. Reconstruct SeriesRecord objects and populate DataPanel series list
         self._series_records.clear()
         self._simulated_counter = 0
+        self.data_panel.clear_series_entries()
         for sid, sdata in ws.get("series", {}).items():
             ds_name = sdata.get("dataset_name", "")
             actual_ds = dataset_name_map.get(ds_name)
@@ -2224,6 +2225,9 @@ class CurveLabApp(ttk.Frame):
 
             rec = deserialize_series_record(sdata, x, y, yerr, xerr, actual_ds)
             self._series_records[sid] = rec
+
+            # Add to DataPanel so _on_plot sees it
+            self.data_panel.add_series_entry(style)
 
         # 3. Restore active series
         self._active_series_id = ws.get("active_series_id")

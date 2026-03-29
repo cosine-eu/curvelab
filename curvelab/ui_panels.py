@@ -345,6 +345,11 @@ class DataPanel(ttk.LabelFrame):
             f"{series_info['dataset']}::{series_info['x']} vs {series_info['y']}",
         )
 
+    def clear_series_entries(self):
+        """Remove all series entries from the list."""
+        self._series_items.clear()
+        self.series_listbox.delete(0, tk.END)
+
     @property
     def series_list(self) -> list[dict]:
         return list(self._series_items)
