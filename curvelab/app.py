@@ -87,6 +87,7 @@ class CurveLabApp(ttk.Frame):
         self.parent.bind("<Control-s>", self._save_workspace)
         self.parent.bind("<Control-o>", self._load_workspace)
         self.parent.bind("<Control-v>", self._on_paste_data)
+        self.parent.bind("<Control-q>", lambda e: self.parent.destroy())
 
     # --- Helper properties ---
 
@@ -227,6 +228,8 @@ class CurveLabApp(ttk.Frame):
         file_menu.add_command(label="Import Model Result...", command=self._import_model_result)
         file_menu.add_separator()
         file_menu.add_command(label="Save Plot...", command=self._save_plot)
+        file_menu.add_separator()
+        file_menu.add_command(label="Quit", command=self.parent.destroy, accelerator="Ctrl+Q")
         menubar.add_cascade(label="File", menu=file_menu)
 
         analysis_menu = tk.Menu(menubar, tearoff=0)
