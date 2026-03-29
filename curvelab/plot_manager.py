@@ -322,9 +322,13 @@ class PlotManager:
         self.canvas.draw_idle()
 
     def set_equal_aspect(self, enabled: bool):
-        aspect = "equal" if enabled else "auto"
-        self.ax.set_aspect(aspect)
-        # Residuals axis always uses auto aspect — equal would squash it
+        if enabled:
+            # Use adjustable="datalim" so equal aspect adjusts data limits
+            # rather than shrinking the axes box (which conflicts with sharex)
+            self.ax.set_aspect("equal", adjustable="datalim")
+        else:
+            self.ax.set_aspect("auto")
+        # Residuals axis always uses auto aspect
         self.ax_resid.set_aspect("auto")
         self.canvas.draw_idle()
 
