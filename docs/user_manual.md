@@ -1,6 +1,6 @@
 # CurveLab User Manual
 
-*A comprehensive guide to interactive curve fitting and statistical analysis*
+*Version 0.9.1 -- A comprehensive guide to interactive curve fitting and statistical analysis*
 
 ---
 
@@ -40,7 +40,7 @@
 32. [Export and Import](#32-export-and-import)
 33. [Workspace Persistence](#33-workspace-persistence)
 34. [Jupyter Notebook Widget](#34-jupyter-notebook-widget)
-35. [Font Settings](#35-font-settings)
+35. [Settings](#35-settings)
 36. [Keyboard Shortcuts](#36-keyboard-shortcuts)
 37. [Typical Workflows](#37-typical-workflows)
 38. [References](#38-references)
@@ -73,7 +73,8 @@ performing post-fit statistical diagnostics.
 ### Key features
 
 - 34 built-in model components (peaks, polynomials, decay, step functions,
-  splines, and user-defined expressions)
+  splines, and user-defined expressions), plus 2 additional models
+  (Bose, Fermi) when lmfit >= 1.3 is installed
 - 14 fitting methods (local, global, grid, Bayesian, and ODR)
 - Multi-series and multi-session architecture for systematic model
   comparison
@@ -99,6 +100,14 @@ python -m curvelab
 
 See [docs/installation.md](installation.md) for installation instructions.
 
+### Example data
+
+CurveLab ships with test data files in the `test-data/` directory. These
+include CSV files for all 34+ built-in models (e.g.,
+`model_gaussian.csv`, `model_voigt.csv`, `model_exponential.csv`) as well
+as multi-peak and composite model examples. These files are useful for
+learning how each model behaves and for testing your fitting workflow.
+
 ### The interface at a glance
 
 The window is divided into three regions:
@@ -116,8 +125,8 @@ Three menus are available in the menu bar:
 | Menu | Items |
 |------|-------|
 | **File** | Save/Load Workspace, Paste Data, Export Parameters/Report/Curve Data/Plot, Export/Import Model Result |
-| **Analysis** | Confidence Intervals, Correlation/Covariance Matrix, Diagnostic Plots, 2D Contours, Profile Likelihood, Bootstrap CI, Global Fit, Uncertainty Propagation, Model Comparison, F-Test, Simulate Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier Detection, Clear Exclusions |
-| **Settings** | Fonts |
+| **Analysis** | Confidence Intervals, Correlation/Covariance Matrix, Diagnostic Plots, 2D Contours, Profile Likelihood, Bootstrap CI, Global Fit, Uncertainty Propagation, Model Comparison, F-Test, Simulate Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier Detection, Clear Exclusions (Active Series), Clear Exclusions (All Series) |
+| **Settings** | Fonts, Show numeric warnings |
 
 ### A minimal workflow
 
@@ -200,6 +209,11 @@ The **Show/Hide** button toggles per-series visibility. Hidden series
 disappear from the plot but their fit sessions and data remain intact.
 The listbox shows a `[hidden]` prefix for hidden series.
 
+In the Fit panel, a **Show/Hide All** button next to the Series dropdown
+toggles the active series and all of its fit sessions at once. This is
+convenient for temporarily hiding an entire dataset and its fits when
+comparing results across multiple series.
+
 ---
 
 ## 4. Building Models
@@ -226,7 +240,7 @@ The operator dropdown next to the model selector controls how the new
 component combines with the existing model. The first component's
 operator is always ignored.
 
-### Built-in models (34 total)
+### Built-in models (34 + 2 conditional)
 
 #### Peak and line-shape models
 
@@ -272,6 +286,8 @@ operator is always ignored.
 |-------|-------------|
 | **Lognormal** | Log-normal distribution |
 | **ThermalDistribution** | Bose-Einstein, Fermi-Dirac, or Maxwell-Boltzmann distribution |
+| **Bose** | Bose-Einstein distribution (requires lmfit >= 1.3) |
+| **Fermi** | Fermi-Dirac step function (requires lmfit >= 1.3) |
 | **Step** | Step function (linear, arctan, error function, or logistic forms) |
 | **Rectangle** | Product of two step functions (box shape) |
 
@@ -317,30 +333,33 @@ packages.
 
 | Method | Algorithm | Bounds | Covariance | Speed |
 |--------|-----------|--------|------------|-------|
+| `least_squares` **(default)** | Trust Region Reflective | Yes | Yes | Fast |
 | `leastsq` | Levenberg-Marquardt (MINPACK) | No | Yes | Fast |
-| `least_squares` | Trust Region Reflective | Yes | Yes | Fast |
 | `nelder` | Nelder-Mead simplex | No | No | Moderate |
 | `powell` | Powell's conjugate directions | No | No | Moderate |
 | `cobyla` | Constrained Optimization BY Linear Approximation | Yes | No | Moderate |
 | `lbfgsb` | Limited-memory BFGS with bounds | Yes | No | Fast |
 
-#### Levenberg-Marquardt (`leastsq`)
+#### Trust Region Reflective (`least_squares`) -- default
 
-The default method. Interpolates between steepest descent and Gauss-Newton
-steps, adapting as it approaches a minimum. Computes the covariance matrix
-analytically from the Jacobian. Requires a reasonably good initial guess.
-
-See: More, J.J. (1978), *The Levenberg-Marquardt algorithm: implementation
-and theory*, Numerical Analysis, Lecture Notes in Mathematics vol. 630.
-
-#### Trust Region Reflective (`least_squares`)
-
-Unlike `leastsq`, this method natively supports box constraints (parameter
-bounds). Use it when parameters have physically meaningful bounds.
+The default fitting method. Natively supports box constraints (parameter
+bounds) and computes the covariance matrix from the Jacobian. Use this
+method for most fitting tasks, especially when parameters have physically
+meaningful bounds.
 
 See: Branch, M.A., Coleman, T.F. & Li, Y. (1999), *A subspace, interior,
 and conjugate gradient method for large-scale bound-constrained minimization
 problems*, SIAM J. Scientific Computing 21(1).
+
+#### Levenberg-Marquardt (`leastsq`)
+
+Interpolates between steepest descent and Gauss-Newton steps, adapting as
+it approaches a minimum. Computes the covariance matrix analytically from
+the Jacobian. Does not support parameter bounds. Requires a reasonably good
+initial guess.
+
+See: More, J.J. (1978), *The Levenberg-Marquardt algorithm: implementation
+and theory*, Numerical Analysis, Lecture Notes in Mathematics vol. 630.
 
 #### Nelder-Mead (`nelder`)
 
@@ -423,6 +442,12 @@ pip install -e ".[odr]"
 
 See: Boggs, P.T. & Rogers, J.E. (1990), *Orthogonal Distance Regression*,
 Contemporary Mathematics 112.
+
+### Hidden series warning
+
+If you attempt to fit a hidden series, CurveLab displays a warning that the
+fit curve will be plotted but the underlying data points are not visible.
+This helps avoid confusion when the fit curve appears without any data.
 
 ### Slow methods and threading
 
@@ -597,6 +622,10 @@ are cleared when the fit session is cleared.
 ---
 
 ## 9. Confidence Intervals and Bands
+
+**Note**: All analysis dialog title bars display the session name (and for
+Model Comparison and F-Test, the series label) to help you track which
+session's results you are viewing.
 
 ### Profile likelihood confidence intervals
 
@@ -860,7 +889,7 @@ ensemble sampler of Goodman & Weare (2010).
 
 ### Workflow
 
-1. First run a standard fit (e.g., `leastsq`) to find a good starting
+1. First run a standard fit (e.g., `least_squares`) to find a good starting
    point.
 2. Select **emcee** as the method and click **Fit**.
 3. The fit runs in a background thread (can be aborted).
@@ -910,7 +939,7 @@ listing all grid points sorted by score. You can:
 - Browse the candidates and their parameter values
 - Click **Load Selected** to transfer a candidate's parameters into the
   model
-- Switch to `leastsq` and re-fit for local refinement
+- Switch to `least_squares` and re-fit for local refinement
 
 ### Typical use
 
@@ -918,7 +947,7 @@ listing all grid points sorted by score. You can:
 2. Fix other parameters or set narrow bounds.
 3. Run **brute** to survey the landscape.
 4. Load the best candidate.
-5. Switch to **leastsq** and re-fit.
+5. Switch to **least_squares** and re-fit.
 
 See: Press, W.H. et al. (2007), *Numerical Recipes*, Section 10.5.
 
@@ -1254,8 +1283,12 @@ at once.
 
 ### Clearing exclusions
 
-Use Analysis > **Clear Point Exclusions** to restore all excluded points
-for the active series.
+Two options are available under the Analysis menu:
+
+- **Clear Exclusions (Active Series)**: Restores all excluded points for
+  the currently selected series only.
+- **Clear Exclusions (All Series)**: Restores all excluded points across
+  every series in the workspace.
 
 ### How exclusions work
 
@@ -1360,6 +1393,9 @@ The following numpy functions and constants are available in expressions:
 Note: Functions like `diff` reduce the array length by 1, which will
 produce an error since all columns must have the same length.
 
+When you create a new column, the column dropdowns in the Data panel are
+refreshed but your existing Y-error and X-error selections are preserved.
+
 ---
 
 ## 29. Session Management
@@ -1378,10 +1414,11 @@ result, undo/redo history, and plot color.
 | **Delete** | Removes a session, its model, fit result, and fit curve |
 | **Show/Hide** | Toggles the session's fit curve visibility |
 
-Sessions are listed in the Fit panel's session listbox. Hidden sessions show
-a `[hidden]` prefix. The active session (selected) is the one whose
-parameters are displayed in the results table and modified by fit
-operations.
+Sessions are listed in the Fit panel's session listbox. The header above
+the list reads "Sessions for: *series-label*" to indicate which series the
+sessions belong to. Hidden sessions show a `[hidden]` prefix. The active
+session (selected) is the one whose parameters are displayed in the results
+table and modified by fit operations.
 
 ### Fit colors
 
@@ -1415,6 +1452,10 @@ Use the **Series** dropdown in the Fit panel to switch between series. When
 you select a different series, the session list, model components, and
 fit results update to show the selected series' state.
 
+When you add a new series and click Plot, the newly plotted series is
+automatically selected in the Series dropdown so that new sessions and
+fit operations target it immediately.
+
 ### Series identification
 
 Each series is identified by a unique key: `dataset::x_column::y_column`.
@@ -1438,7 +1479,7 @@ fit sessions.
 |--------|-------------|
 | **Data** | Show/hide all data points (fit curves remain visible) |
 | **Grid** | Show/hide grid lines (enabled by default) |
-| **Equal Axes** | Equal aspect ratio (useful for spatial data) |
+| **Equal Axes** | Equal aspect ratio (useful for spatial data). Unchecking restores the original view. The residuals axis always uses auto aspect. |
 | **Legend** | Show/hide the legend (enabled by default) |
 | **Params** | Annotate the plot with fitted parameter values and GOF statistics |
 | **Fit visible range** | Restrict the fit to the currently visible x-range on the plot |
@@ -1523,9 +1564,20 @@ complete application state.
 | Plot control settings | Yes |
 | Font settings | Yes |
 | Brute-force candidates | Yes |
+| lmfit ModelResult (reconstructed on load) | Yes |
 | Confidence intervals | No (recompute via Analysis menu) |
 | MCMC flatchain | No (rerun emcee) |
 | Undo/redo history | No |
+
+### Immediate analysis after loading
+
+When you load a workspace, CurveLab automatically reconstructs the lmfit
+`ModelResult` object for each completed fit session. This means analysis
+tools (Confidence Intervals, Correlation Matrix, Diagnostic Plots, 2D
+Contours, Profile Likelihood, Uncertainty Propagation, etc.) are available
+immediately after loading -- you do not need to re-run the fit. The
+DataPanel series list is also fully populated so all series appear in the
+listbox.
 
 ### Portability
 
@@ -1565,18 +1617,22 @@ application:
 
 - Data loading (via file upload button or programmatic DataFrame loading)
 - Column selection and series management
-- Model building with the same 34 built-in models
+- Model building with the same 34+ built-in models
 - All 14 fitting methods
 - Parameter table with inline editing
 - Plot with residuals and confidence bands
 - Workspace save/load
+- Numeric warning suppression by default (controllable via the
+  `show_warnings` constructor argument)
 
 The widget layout uses ipywidgets `VBox`, `HBox`, `Tab`, and accordion
 containers to organize the controls in a notebook-friendly layout.
 
 ---
 
-## 35. Font Settings
+## 35. Settings
+
+### Fonts
 
 **Access**: Settings > Fonts
 
@@ -1592,6 +1648,27 @@ CurveLab allows separate font customization for the UI and the plot.
 Available sizes: 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24.
 
 Font settings are preserved in workspace files.
+
+### Numeric warning suppression
+
+**Access**: Settings > Show numeric warnings
+
+By default, CurveLab suppresses `RuntimeWarning` messages from lmfit,
+scipy, and uncertainties. These warnings are common during iterative
+fitting (e.g., overflow in exponential functions, division by zero in
+Jacobian evaluation) and are generally harmless -- the optimizer recovers
+automatically.
+
+If you want to see these warnings (for debugging or to diagnose convergence
+issues), check the **Show numeric warnings** option in the Settings menu.
+The setting is per-session and is not saved in workspace files.
+
+In the Jupyter notebook widget, warning suppression is controlled by the
+`show_warnings` constructor argument:
+
+```python
+w = CurveLabWidget(show_warnings=True)  # show all warnings
+```
 
 ---
 
@@ -1614,7 +1691,7 @@ Font settings are preserved in workspace files.
 1. Load a data file (CSV with x, y, yerr columns).
 2. Select columns, click Add Series, click Plot.
 3. Click New (session) > select Gaussian > click Add Component.
-4. Click Auto Guess, then Fit with `leastsq`.
+4. Click Auto Guess, then Fit (the default method is `least_squares`).
 5. Check reduced chi-squared. If >> 1, add a Linear background component
    and refit.
 6. Run Analysis > Diagnostic Plots to verify residual assumptions.
@@ -1633,7 +1710,7 @@ Font settings are preserved in workspace files.
 
 ### Workflow 3: Robust parameter uncertainties
 
-1. Fit with `leastsq` to get a starting point.
+1. Fit with `least_squares` (the default) to get a starting point.
 2. Run Analysis > Confidence Intervals for profile likelihood uncertainties.
 3. Run Analysis > Bootstrap CI for non-parametric uncertainties.
 4. Switch method to `emcee` and refit for full posterior distributions.
@@ -1674,7 +1751,7 @@ Font settings are preserved in workspace files.
 1. Set bounds on 2--3 key parameters.
 2. Run brute force to survey the landscape.
 3. Inspect the candidates list to identify local minima.
-4. Load the best candidate, switch to `leastsq`, and refine.
+4. Load the best candidate, switch to `least_squares`, and refine.
 5. Run Analysis > 2D Confidence Contours on the most correlated parameter
    pair to visualize the chi-squared surface.
 
