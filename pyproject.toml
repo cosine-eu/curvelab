@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "curvelab"
-version = "0.9.1"
+version = "0.9.2"
 description = "Data Plotter & Curve Fitter"
 requires-python = ">=3.10"
-license = "MIT"
+license = "BSD-3-Clause"
 dependencies = [
     "numpy",
     "pandas",
@@ -27,3 +27,6 @@ curvelab = "curvelab.app:CurveLabApp.launch"
 
 [tool.setuptools.packages.find]
 include = ["curvelab*"]
+
+[tool.setuptools.package-data]
+curvelab = ["*.png", "*.svg"]
