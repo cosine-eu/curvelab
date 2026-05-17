@@ -1,5 +1,7 @@
 # An Experiment in AI-Assisted Coding
 
+2026-05-17
+
 Coding agents have been with us for some time now, but since the
 release of Claude Code by Anthropic, interest in their use has reached
 a wider public.
@@ -73,7 +75,7 @@ Python fitting package lmfit, with a few extensions. Its features are:
 ## What We Concluded
 
 **Coding agents are a fantastic piece of technology.** The ability to
-  generate code by providing a description in natural language lowers
+  generate code by providing a description in a natural language lowers
   the bar for inexperienced coders and offers new and interesting
   perspectives for the more experienced ones.
 
@@ -84,7 +86,8 @@ clear manner.
 
 Coding agents are able to write good documentation, generate test
 data, and write test harnesses — and they never write just one; they
-always seem to write many.
+always seem to write many. Whether all of those tests are always
+relevant is another matter, but in general they are useful.
 
 Coding agents understand the build system in use and the repository
 structure. They can adjust build files as required, add and remove
@@ -116,7 +119,7 @@ human who wants to remain in control of what the software does can
 possibly keep up with this pace. The prevailing sales pitches
 encourage the user to give the agent free rein. We found, however,
 that this goes wrong for at least two reasons. First, giving
-instructions to an agent in natural language is subject to the same
+instructions to an agent in a natural language is subject to the same
 pitfalls that arise when a user tries to describe what a piece of
 software should do: natural language is ambiguous and the user may not
 be completely clear on what they really want. Second, given the first
@@ -246,7 +249,8 @@ requirements but to serve as the application's first real user.
     hours).
 
 - The user made zero direct code edits. All code was written by the
-    agent and validated by the user through testing.
+    agent and validated by the user through testing. This was on
+    purpose for this experiment.
 
 ## Conclusion
 
@@ -257,3 +261,15 @@ domain knowledge, and the quality bar. The most productive mode was
 rapid iteration: describe, implement, test, correct. The least
 productive mode was asking the agent to make unsupervised design
 decisions.
+
+Agents are evolving all the time, and one can predict that they will
+become better, and the the humans using them will also become better
+at understanding how to use them. The issue remains, at least for now,
+of who is ultimately responsible for critical code written with (or
+by) agents, and whether a large code base can be validated, trusted
+and maintained by simply observing that it does the right thing, even
+if we do not know why.
+
+Some of these questions are beyond the ability of the author to
+answer, but they are worth keeping in mind when deploying coding
+agents widely.
