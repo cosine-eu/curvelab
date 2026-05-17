@@ -4,7 +4,7 @@ Interactive curve fitting application for 1D experimental data, built on [lmfit]
 
 CurveLab provides a desktop GUI (Tkinter) and a Jupyter notebook widget for loading data, building composite models, fitting curves, and analyzing results -- all without writing code.
 
-[curvelab](docs/curvelab.png "Curvelab GUI")
+![curvelab](docs/curvelab.png "Curvelab GUI")
 
 This project is also [an experiment in AI-assisted coding](docs/ai_assisted_coding_experiment.md).
 
