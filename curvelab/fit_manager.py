@@ -318,9 +318,10 @@ class FitManager:
                 y_plus = self._model.eval(self._params, x=x + h)
                 y_minus = self._model.eval(self._params, x=x - h)
                 dfdx = (y_plus - y_minus) / (2 * h)
-                weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
+                denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), 1e-12)
+                weights = 1.0 / denom
             elif yerr is not None:
-                weights = 1.0 / yerr
+                weights = 1.0 / np.maximum(np.abs(yerr), 1e-12)
             else:
                 weights = None
 
@@ -500,7 +501,8 @@ class FitManager:
                     y_plus = self._model.eval(x=x + h, **kw)
                     y_minus = self._model.eval(x=x - h, **kw)
                     dfdx = (y_plus - y_minus) / (2 * h)
-                    weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
+                    denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), 1e-12)
+                    weights = 1.0 / denom
                 if weights is not None:
                     resid = resid * weights
                 all_resid.append(resid)
