@@ -958,6 +958,7 @@ class FitResultsPanel(ttk.LabelFrame):
         super().__init__(parent, text="Fit Results", padding=5)
         self._on_param_edited = on_param_edited
         self._editing_entry = None
+        self._editing_done = True  # no edit in progress
         self._locked = False
         self._build_ui()
 
@@ -965,6 +966,9 @@ class FitResultsPanel(ttk.LabelFrame):
         """Disable cell editing while a background fit is mutating params."""
         self._locked = locked
         if locked and self._editing_entry is not None:
+            # Mark done first so the <FocusOut> that destroy() triggers
+            # doesn't re-enter commit()/cancel() on a destroyed widget.
+            self._editing_done = True
             self._editing_entry.destroy()
             self._editing_entry = None
 
@@ -1141,12 +1145,18 @@ class FitResultsPanel(ttk.LabelFrame):
         entry.select_range(0, tk.END)
         entry.focus_set()
         self._editing_entry = entry
-
-        cancelled = False
+        self._editing_done = False
 
         def commit(e=None):
-            if cancelled:
+            # Destroying the Entry below triggers a deferred <FocusOut> on
+            # it, which would otherwise re-enter commit()/cancel() on an
+            # already-destroyed widget and raise TclError. Guard with
+            # self._editing_done (shared with set_locked()) instead of a
+            # closure-local flag, since set_locked() can also destroy this
+            # entry from outside these closures.
+            if self._editing_done:
                 return
+            self._editing_done = True
             new_val = entry.get()
             entry.destroy()
             self._editing_entry = None
@@ -1155,8 +1165,9 @@ class FitResultsPanel(ttk.LabelFrame):
                 self._on_param_edited(param_name, col_name, new_val)
 
         def cancel(e=None):
-            nonlocal cancelled
-            cancelled = True
+            if self._editing_done:
+                return
+            self._editing_done = True
             entry.destroy()
             self._editing_entry = None
 
