@@ -1981,19 +1981,24 @@ class CurveLabApp(ttk.Frame):
 
         # Get axis display transform for distance calculation
         ax = self.plot_mgr.ax
+        click_display = ax.transData.transform((event.xdata, event.ydata))
         for sid, rec in self._series_records.items():
-            if not rec.visible:
+            if not rec.visible or len(rec.x) == 0:
                 continue
-            for i in range(len(rec.x)):
-                # Transform data coords to display coords for fair distance
-                dx_display = ax.transData.transform((rec.x[i], rec.y[i]))
-                click_display = ax.transData.transform((event.xdata, event.ydata))
-                dist = ((dx_display[0] - click_display[0]) ** 2 +
-                        (dx_display[1] - click_display[1]) ** 2) ** 0.5
-                if dist < best_dist:
-                    best_dist = dist
-                    best_sid = sid
-                    best_idx = i
+            # Transform all of this series' points to display coords in one
+            # call instead of once per point -- click_display is constant
+            # per click, so it's computed outside both loops.
+            pts_display = ax.transData.transform(np.column_stack((rec.x, rec.y)))
+            dists = np.hypot(
+                pts_display[:, 0] - click_display[0],
+                pts_display[:, 1] - click_display[1],
+            )
+            i = int(np.argmin(dists))
+            dist = dists[i]
+            if dist < best_dist:
+                best_dist = dist
+                best_sid = sid
+                best_idx = i
 
         # Only toggle if click is within 10 pixels of a point
         if best_sid is None or best_dist > 10:
