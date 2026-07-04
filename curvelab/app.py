@@ -969,11 +969,11 @@ class CurveLabApp(ttk.Frame):
         if not self.data_mgr.is_loaded:
             messagebox.showwarning("No Data", "Load a data file first.")
             return
-        if not series_list:
-            messagebox.showwarning("No Series", "Add at least one series.")
-            return
 
         self.plot_mgr.clear_all()
+
+        if not series_list:
+            messagebox.showwarning("No Series", "Add at least one series.")
 
         new_records: dict[str, SeriesRecord] = {}
         latest_new_sid: str | None = None

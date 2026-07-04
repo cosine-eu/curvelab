@@ -315,6 +315,8 @@ class DataPanel(ttk.LabelFrame):
             idx = sel[0]
             self.series_listbox.delete(idx)
             self._series_items.pop(idx)
+            if self._on_plot:
+                self._on_plot(self._series_items)
 
     def _plot(self):
         if self._on_plot:
