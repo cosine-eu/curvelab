@@ -2095,8 +2095,10 @@ class CurveLabApp(ttk.Frame):
                 new_value = value.strip()
                 if new_value:
                     fm.set_param(param_name, expr=new_value)
+                    fm.set_param_hint(param_name, expr=new_value)
                 else:
                     fm.set_param(param_name, expr="", vary=True)
+                    fm.set_param_hint(param_name, expr="", vary=True)
             else:
                 return
             edit = ParamEdit(param_name=param_name, field=field,
@@ -2129,7 +2131,7 @@ class CurveLabApp(ttk.Frame):
         if sess is None or fm is None or not sess.undo_stack:
             return
         edit = sess.undo_stack.pop()
-        fm.set_param(edit.param_name, **{edit.field: edit.old_value})
+        fm.set_param_hint(edit.param_name, **{edit.field: edit.old_value})
         sess.redo_stack.append(edit)
         self._refresh_param_display()
 
@@ -2139,7 +2141,7 @@ class CurveLabApp(ttk.Frame):
         if sess is None or fm is None or not sess.redo_stack:
             return
         edit = sess.redo_stack.pop()
-        fm.set_param(edit.param_name, **{edit.field: edit.new_value})
+        fm.set_param_hint(edit.param_name, **{edit.field: edit.new_value})
         sess.undo_stack.append(edit)
         self._refresh_param_display()
 
