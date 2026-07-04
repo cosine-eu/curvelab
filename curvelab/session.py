@@ -8,6 +8,16 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 
 
+def make_series_id(dataset: str, x_col: str, y_col: str) -> str:
+    """Canonical id for a plotted series: 'dataset::x_col::y_col'."""
+    return f"{dataset}::{x_col}::{y_col}"
+
+
+def make_session_key(series_id: str, session_name: str) -> str:
+    """Canonical key for a fit session: 'series_id::session_name'."""
+    return f"{series_id}::{session_name}"
+
+
 @dataclass
 class FitResult:
     """Results from a fit."""

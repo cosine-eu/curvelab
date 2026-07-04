@@ -12,7 +12,11 @@ import pandas as pd
 from .data_manager import DataManager
 from .fit_manager import FitManager, REDUCE_FUNCTIONS
 from .plot_manager import PlotManager, SeriesStyle
-from .session import FIT_COLORS, FitSession, ParamEdit, SeriesRecord
+from .session import (
+    FIT_COLORS, FitSession, ParamEdit, SeriesRecord,
+    make_series_id as _make_series_id,
+    make_session_key as _make_session_key,
+)
 from .ui_panels import (
     DataPanel, PlotControlPanel, FitPanel, FitResultsPanel,
 )
@@ -22,14 +26,6 @@ from .ui_dialogs_analysis import (
 from .app_analysis_handlers import AnalysisHandlersMixin
 from .app_data_tools import DataToolsMixin
 from .app_workspace import WorkspaceMixin
-
-
-def _make_series_id(dataset: str, x_col: str, y_col: str) -> str:
-    return f"{dataset}::{x_col}::{y_col}"
-
-
-def _make_session_key(series_id: str, session_name: str) -> str:
-    return f"{series_id}::{session_name}"
 
 
 class CurveLabApp(AnalysisHandlersMixin, DataToolsMixin, WorkspaceMixin, ttk.Frame):
