@@ -1359,12 +1359,17 @@ class CurveLabApp(ttk.Frame):
                         )
                         return
 
+        # Capture the series id now, since an async fit can outlive the
+        # user's current selection (e.g. they switch to another series
+        # while a slow method like emcee is still running).
+        sid = self._active_series_id
+
         if method == "odr":
-            self._run_fit_odr(rec, sess)
+            self._run_fit_odr(rec, sess, sid)
         elif method in self._SLOW_METHODS:
-            self._run_fit_async(rec, sess, method)
+            self._run_fit_async(rec, sess, method, sid)
         else:
-            self._run_fit_sync(rec, sess, method)
+            self._run_fit_sync(rec, sess, method, sid)
 
     def _get_fit_options(self):
         """Read reduce function, weight mode, max_nfev, band_sigma, scale_covar from UI."""
@@ -1376,7 +1381,7 @@ class CurveLabApp(ttk.Frame):
         scale_covar = self.fit_panel.scale_covar_var.get()
         return reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar
 
-    def _run_fit_sync(self, rec, sess, method):
+    def _run_fit_sync(self, rec, sess, method, sid):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
@@ -1389,11 +1394,11 @@ class CurveLabApp(ttk.Frame):
                 scale_covar=scale_covar,
             )
             sess.result = result
-            self._post_fit_update(sess, rec)
+            self._post_fit_update(sess, rec, sid)
         except Exception as e:
             messagebox.showerror("Fit Error", str(e))
 
-    def _run_fit_odr(self, rec, sess):
+    def _run_fit_odr(self, rec, sess, sid):
         """Run ODR fit using odrpack."""
         fm = sess.fit_manager
         try:
@@ -1403,7 +1408,7 @@ class CurveLabApp(ttk.Frame):
                 x, y, yerr=yerr, xerr=xerr, band_sigma=band_sigma,
             )
             sess.result = result
-            self._post_fit_update(sess, rec)
+            self._post_fit_update(sess, rec, sid)
         except ImportError as e:
             messagebox.showerror("Missing Package", str(e))
         except Exception as e:
@@ -1417,7 +1422,7 @@ class CurveLabApp(ttk.Frame):
         self.fit_panel.set_fitting_state(running)
         self.fit_results.set_locked(running)
 
-    def _run_fit_async(self, rec, sess, method):
+    def _run_fit_async(self, rec, sess, method, sid):
         """Run fit in a background thread (slow methods)."""
         if self._fit_thread is not None and self._fit_thread.is_alive():
             messagebox.showwarning("Busy", "A fit is already running.")
@@ -1480,7 +1485,7 @@ class CurveLabApp(ttk.Frame):
                 return
 
             sess.result = container["result"]
-            self._post_fit_update(sess, rec)
+            self._post_fit_update(sess, rec, sid)
 
             # Auto-show special result dialogs
             if sess.result.candidates:
@@ -1494,11 +1499,16 @@ class CurveLabApp(ttk.Frame):
         """Signal the background fit to stop."""
         self._fit_abort.set()
 
-    def _post_fit_update(self, sess, rec):
-        """Update plot, params, and report after a fit completes."""
+    def _post_fit_update(self, sess, rec, sid):
+        """Update plot, params, and report after a fit completes.
+
+        sid is the series id the fit was launched against, captured at
+        launch time -- not necessarily self._active_series_id, since an
+        async fit (emcee, brute, ...) can outlive the user's selection.
+        """
         result = sess.result
-        skey = _make_session_key(self._active_series_id, sess.name)
-        series_label = rec.style.get("label", self._active_series_id)
+        skey = _make_session_key(sid, sess.name)
+        series_label = rec.style.get("label", sid)
         label = f"{series_label} \u2014 {sess.name}"
 
         self.plot_mgr.clear_fit_session(skey)
