@@ -113,6 +113,42 @@ class CurveLabApp(ttk.Frame):
             return None
         return _make_session_key(self._active_series_id, rec.active_session_name)
 
+    # --- Guard helpers: return the resolved object, or None after warning ---
+    # A non-None _active_session implies a non-None _active_record, so callers
+    # of the session/fit-result guards may use self._active_record freely.
+
+    def _require_session(self) -> FitSession | None:
+        sess = self._active_session
+        if sess is None:
+            messagebox.showwarning("No Session", "Create a fit session first.")
+            return None
+        return sess
+
+    def _require_fit_result(self) -> FitSession | None:
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return None
+        return sess
+
+    def _require_last_result(self) -> FitManager | None:
+        """Like _require_fit_result, but also needs the live lmfit result
+        (absent after a workspace load until refit)."""
+        sess = self._require_fit_result()
+        if sess is None:
+            return None
+        fm = sess.fit_manager
+        if fm._last_result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return None
+        return fm
+
+    def _require_model(self, fm: FitManager) -> bool:
+        if not fm.components:
+            messagebox.showwarning("No Model", "Add at least one model component.")
+            return False
+        return True
+
     # --- Layout ---
 
     def _build_layout(self):
@@ -389,9 +425,8 @@ class CurveLabApp(ttk.Frame):
     # --- Export ---
 
     def _export_params(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".csv",
@@ -410,9 +445,8 @@ class CurveLabApp(ttk.Frame):
                 ])
 
     def _export_report(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".txt",
@@ -426,9 +460,8 @@ class CurveLabApp(ttk.Frame):
 
     def _export_curve_data(self):
         """Export fit curve, residuals, and component curves as CSV."""
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".csv",
@@ -559,12 +592,10 @@ class CurveLabApp(ttk.Frame):
 
     def _evaluate_model(self):
         """Evaluate the fitted model at user-specified x values."""
-        sess = self._active_session
-        fm = self._active_fit_mgr
-        if sess is None or sess.result is None or fm is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
-        EvaluateModelDialog(self, fm)
+        EvaluateModelDialog(self, sess.fit_manager)
 
     def _find_peaks(self):
         """Auto-detect peaks in active series and add Gaussian components."""
@@ -624,12 +655,10 @@ class CurveLabApp(ttk.Frame):
 
     def _show_derivative_integral(self):
         """Show derivative and integral of the fitted curve."""
-        sess = self._active_session
-        fm = self._active_fit_mgr
-        if sess is None or sess.result is None or fm is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
-        DerivativeIntegralDialog(self, fm, sess.result)
+        DerivativeIntegralDialog(self, sess.fit_manager, sess.result)
 
     def _on_simulate_data(self):
         fm = self._active_fit_mgr
@@ -1248,10 +1277,10 @@ class CurveLabApp(ttk.Frame):
     # --- Fit callbacks ---
 
     def _on_add_component(self, model_name: str, operator: str = "+", expression: str = ""):
-        fm = self._active_fit_mgr
-        if fm is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
+        fm = sess.fit_manager
         fm.add_component(model_name, operator=operator, expression=expression)
         self._update_component_list()
 
@@ -1303,13 +1332,12 @@ class CurveLabApp(ttk.Frame):
         return x, y, yerr, xerr
 
     def _on_auto_guess(self):
-        rec = self._active_record
-        fm = self._active_fit_mgr
-        if rec is None or fm is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
-        if not fm.components:
-            messagebox.showwarning("No Model", "Add at least one model component.")
+        rec = self._active_record
+        fm = sess.fit_manager
+        if not self._require_model(fm):
             return
 
         try:
@@ -1323,11 +1351,10 @@ class CurveLabApp(ttk.Frame):
                       "dual_annealing", "shgo", "ampgo"}
 
     def _on_fit(self):
-        rec = self._active_record
-        sess = self._active_session
-        if rec is None or sess is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
+        rec = self._active_record
         if not rec.visible:
             messagebox.showwarning(
                 "Hidden Series",
@@ -1335,8 +1362,7 @@ class CurveLabApp(ttk.Frame):
                 "but the underlying data points are not visible on the plot.",
             )
         fm = sess.fit_manager
-        if not fm.components:
-            messagebox.showwarning("No Model", "Add at least one model component.")
+        if not self._require_model(fm):
             return
 
         method = self.fit_panel.method_var.get()
@@ -1538,9 +1564,8 @@ class CurveLabApp(ttk.Frame):
         return base_title
 
     def _show_confidence_intervals(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         fm = sess.fit_manager
         try:
@@ -1551,9 +1576,8 @@ class CurveLabApp(ttk.Frame):
             messagebox.showerror("CI Error", str(e))
 
     def _show_correlations(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         fm = sess.fit_manager
         try:
@@ -1567,9 +1591,8 @@ class CurveLabApp(ttk.Frame):
             messagebox.showerror("Correlation Error", str(e))
 
     def _show_covariance(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         fm = sess.fit_manager
         result = fm.get_covariance_matrix()
@@ -1581,21 +1604,15 @@ class CurveLabApp(ttk.Frame):
         dlg.title(self._analysis_title("Covariance Matrix"))
 
     def _show_diagnostic_plots(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         dlg = DiagnosticPlotsDialog(self, sess.result)
         dlg.title(self._analysis_title("Fit Diagnostic Plots"))
 
     def _show_confidence_contours(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         # Collect varied parameters
         vary_params = [
@@ -1612,13 +1629,8 @@ class CurveLabApp(ttk.Frame):
         dlg.title(self._analysis_title("2D Confidence Contours"))
 
     def _show_profile_likelihood(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         try:
             profiles = fm.compute_ci_profiles()
@@ -1633,11 +1645,10 @@ class CurveLabApp(ttk.Frame):
             messagebox.showerror("Profile Error", str(e))
 
     def _show_bootstrap(self):
-        sess = self._active_session
-        rec = self._active_record
-        if sess is None or sess.result is None or rec is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
+        rec = self._active_record
         fm = sess.fit_manager
 
         def on_run(n_boot, boot_type):
@@ -1676,13 +1687,13 @@ class CurveLabApp(ttk.Frame):
 
     def _on_global_fit(self):
         """Open Global Fit dialog for simultaneous fitting across series."""
-        rec = self._active_record
-        sess = self._active_session
-        if rec is None or sess is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
         fm = sess.fit_manager
-        if not fm.components or fm.params is None:
+        if not self._require_model(fm):
+            return
+        if fm.params is None:
             messagebox.showwarning("No Model", "Add at least one model component.")
             return
         if len(self._series_records) < 2:
@@ -1741,13 +1752,8 @@ class CurveLabApp(ttk.Frame):
 
     def _show_uncertainty_propagation(self):
         """Open Uncertainty Propagation dialog."""
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         try:
             uvars = fm._last_result.uvars
@@ -1768,13 +1774,8 @@ class CurveLabApp(ttk.Frame):
 
     def _export_model_result(self):
         """Export lmfit ModelResult to a .sav file."""
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".sav",
@@ -1817,14 +1818,11 @@ class CurveLabApp(ttk.Frame):
 
     def _on_batch_fit(self):
         """Apply the active session's model to all plotted series."""
-        rec = self._active_record
-        sess = self._active_session
-        if rec is None or sess is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
         source_fm = sess.fit_manager
-        if not source_fm.components:
-            messagebox.showwarning("No Model", "Add at least one model component.")
+        if not self._require_model(source_fm):
             return
         if len(self._series_records) < 1:
             messagebox.showwarning("No Series", "Plot at least one series.")
