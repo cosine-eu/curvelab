@@ -8,6 +8,15 @@ import numpy as np
 import pandas as pd
 
 
+def _is_numeric_token(token: str) -> bool:
+    """Return True if token parses as a number (int, float, or scientific notation)."""
+    try:
+        float(token)
+        return True
+    except ValueError:
+        return False
+
+
 class DataManager:
     """Wraps pandas DataFrames. Loads various tabular formats and exposes columns."""
 
@@ -96,12 +105,7 @@ class DataManager:
             first_data_tokens = data_lines[0].split()
             if len(tokens) == len(first_data_tokens) and len(tokens) >= 2:
                 # Verify tokens aren't all numeric (would be data, not headers)
-                all_numeric = all(
-                    t.replace(".", "", 1).replace("-", "", 1)
-                    .replace("+", "", 1).replace("e", "", 1)
-                    .replace("E", "", 1).isdigit()
-                    for t in tokens
-                )
+                all_numeric = all(_is_numeric_token(t) for t in tokens)
                 if not all_numeric:
                     header_names = tokens
 
@@ -183,8 +187,7 @@ class DataManager:
             StringIO(first_line), sep=best_sep, header=None, engine=engine,
         )
         has_header = any(
-            isinstance(v, str) and not v.replace(".", "", 1).replace("-", "", 1)
-            .replace("+", "", 1).replace("e", "", 1).replace("E", "", 1).isdigit()
+            isinstance(v, str) and not _is_numeric_token(v)
             for v in probe.iloc[0]
         )
 
