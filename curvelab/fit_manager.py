@@ -208,6 +208,12 @@ class FitManager:
     def auto_guess(self, x: np.ndarray, y: np.ndarray) -> Parameters:
         """Auto-guess parameters for each component using lmfit's guess().
 
+        Additively-combined components are guessed sequentially against the
+        residual after subtracting previously-guessed components, so e.g.
+        three summed Gaussians don't all guess the same dominant peak.
+        Components combined with *, -, / are guessed against the original
+        data, since subtracting their contribution isn't meaningful.
+
         Only updates value/min/max from guess; preserves user-edited vary,
         expr, and param_hints.
         """
@@ -217,15 +223,24 @@ class FitManager:
         if self._has_spline:
             self._rebuild_model_with_data(x)
 
-        for comp in self.components:
+        residual = np.asarray(y, dtype=float).copy()
+
+        for i, comp in enumerate(self.components):
             m = self._build_component_model(comp, x_data=x)
+            is_additive = i == 0 or comp.operator == "+"
+            target = residual if is_additive else y
             try:
-                guessed = m.guess(y, x=x)
+                guessed = m.guess(target, x=x)
                 for pname, par in guessed.items():
                     if pname in self._params:
                         self._params[pname].set(
                             value=par.value, min=par.min, max=par.max
                         )
+                if is_additive:
+                    try:
+                        residual = residual - m.eval(guessed, x=x)
+                    except Exception:
+                        pass  # Keep prior residual if this component can't be evaluated yet
             except NotImplementedError:
                 pass  # Model doesn't implement guess()
 
