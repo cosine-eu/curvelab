@@ -17,6 +17,33 @@ def _is_numeric_token(token: str) -> bool:
         return False
 
 
+# Tried in order for any plain-text file (CSV/TSV/TXT/DAT). latin-1 maps
+# every byte 0x00-0xFF to a codepoint, so it can never raise
+# UnicodeDecodeError and is guaranteed to terminate the fallback chain.
+_TEXT_ENCODINGS = ("utf-8", "utf-8-sig", "cp1252", "latin-1")
+
+
+def _read_csv_with_encoding_fallback(path, **kwargs) -> pd.DataFrame:
+    """Try pd.read_csv with common encodings until one decodes successfully."""
+    for encoding in _TEXT_ENCODINGS:
+        try:
+            return pd.read_csv(path, encoding=encoding, **kwargs)
+        except UnicodeDecodeError:
+            continue
+    raise AssertionError("unreachable: latin-1 never raises UnicodeDecodeError")
+
+
+def _open_text_with_encoding_fallback(path):
+    """Open a text file, trying common encodings until one decodes successfully."""
+    for encoding in _TEXT_ENCODINGS:
+        try:
+            with open(path, encoding=encoding) as f:
+                return f.readlines()
+        except UnicodeDecodeError:
+            continue
+    raise AssertionError("unreachable: latin-1 never raises UnicodeDecodeError")
+
+
 class DataManager:
     """Wraps pandas DataFrames. Loads various tabular formats and exposes columns."""
 
@@ -41,8 +68,8 @@ class DataManager:
             return self._load_sqlite(filepath)
 
         loaders = {
-            ".csv": lambda p: pd.read_csv(p),
-            ".tsv": lambda p: pd.read_csv(p, sep="\t"),
+            ".csv": lambda p: _read_csv_with_encoding_fallback(p),
+            ".tsv": lambda p: _read_csv_with_encoding_fallback(p, sep="\t"),
             ".xlsx": lambda p: pd.read_excel(p),
             ".xls": lambda p: pd.read_excel(p),
             ".ods": lambda p: pd.read_excel(p, engine="odf"),
@@ -78,8 +105,7 @@ class DataManager:
         '#' are treated as comments. If the last comment line before data looks
         like column headers, those are used as column names.
         """
-        with open(filepath) as f:
-            lines = f.readlines()
+        lines = _open_text_with_encoding_fallback(filepath)
 
         # Separate comment lines and data lines
         comment_lines = []
