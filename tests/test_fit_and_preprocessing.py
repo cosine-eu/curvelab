@@ -235,24 +235,26 @@ class BootstrapTests(unittest.TestCase):
         self.fm.run_fit(self.x, self.y, weight_mode="No weights")
 
     def test_residual_bootstrap_returns_distributions(self):
-        dists = self.fm.run_bootstrap(
+        dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="residual",
             weight_mode="No weights",
         )
         self.assertIn("slope", dists)
         self.assertIn("intercept", dists)
         self.assertGreater(len(dists["slope"]), 30)  # most should succeed
+        self.assertEqual(len(dists["slope"]), 50 - n_failed)
 
     def test_case_bootstrap_returns_distributions(self):
-        dists = self.fm.run_bootstrap(
+        dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="case",
             weight_mode="No weights",
         )
         self.assertIn("slope", dists)
         self.assertGreater(len(dists["slope"]), 30)
+        self.assertEqual(len(dists["slope"]), 50 - n_failed)
 
     def test_bootstrap_slope_near_true_value(self):
-        dists = self.fm.run_bootstrap(
+        dists, _n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=100, boot_type="residual",
             weight_mode="No weights",
         )

@@ -821,14 +821,18 @@ class FitManager:
         method: str = "least_squares",
         boot_type: str = "residual",
         weight_mode: str = "1/yerr (default)",
-    ) -> dict[str, np.ndarray]:
+    ) -> tuple[dict[str, np.ndarray], int]:
         """Run bootstrap resampling and return parameter distributions.
 
         boot_type:
           - "residual": Resample residuals and add to fitted values
           - "case": Resample (x, y, yerr) rows with replacement
 
-        Returns {param_name: array of n_boot values}.
+        Returns ({param_name: array of successful resample values}, n_failed),
+        where n_failed is the number of resamples whose fit didn't converge
+        or raised (dropped from the distributions -- a high count means the
+        reported confidence intervals are based on fewer samples than
+        n_boot and may be unreliable).
         """
         if self._last_result is None or self._model is None:
             raise ValueError("Run a fit first")
@@ -839,6 +843,7 @@ class FitManager:
 
         param_names = [n for n, p in best_params.items() if p.vary]
         distributions: dict[str, list[float]] = {n: [] for n in param_names}
+        n_failed = 0
 
         for _ in range(n_boot):
             if boot_type == "case":
@@ -860,9 +865,10 @@ class FitManager:
                 for n in param_names:
                     distributions[n].append(result.params[n].value)
             except Exception:
+                n_failed += 1
                 continue
 
-        return {n: np.array(v) for n, v in distributions.items()}
+        return {n: np.array(v) for n, v in distributions.items()}, n_failed
 
     def evaluate(self, x: np.ndarray) -> np.ndarray:
         """Evaluate the current model at given x values using fitted parameters."""

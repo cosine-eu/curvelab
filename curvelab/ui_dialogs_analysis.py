@@ -738,9 +738,15 @@ class BootstrapDialog(tk.Toplevel):
         self._status_var.set("Running...")
         self.update_idletasks()
         try:
-            distributions = self._on_run(n_boot, boot_type)
+            distributions, n_failed = self._on_run(n_boot, boot_type)
             self._show_results(distributions)
-            self._status_var.set(f"Done ({n_boot} resamples).")
+            if n_failed:
+                self._status_var.set(
+                    f"Done ({n_boot - n_failed}/{n_boot} resamples converged, "
+                    f"{n_failed} failed)."
+                )
+            else:
+                self._status_var.set(f"Done ({n_boot} resamples).")
         except Exception as e:
             self._status_var.set(f"Error: {e}")
         finally:
