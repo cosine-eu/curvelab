@@ -52,6 +52,15 @@ class DataManager:
         self.filepaths: dict[str, Path] = {}
         self.table_names: dict[str, str] = {}  # dataset_name -> SQLite table name
 
+    def _dedupe_name(self, base_name: str) -> str:
+        """Return base_name, or 'base_name (2)', 'base_name (3)', ... if taken."""
+        name = base_name
+        counter = 2
+        while name in self.datasets:
+            name = f"{base_name} ({counter})"
+            counter += 1
+        return name
+
     def load(self, filepath: str | Path) -> tuple[str, list[str]]:
         """Load a data file and return (dataset_name, column_names).
 
@@ -85,14 +94,7 @@ class DataManager:
 
         df = loader(filepath)
 
-        # Deduplicate name
-        base_name = filepath.name
-        name = base_name
-        counter = 2
-        while name in self.datasets:
-            name = f"{base_name} ({counter})"
-            counter += 1
-
+        name = self._dedupe_name(filepath.name)
         self.datasets[name] = df
         self.filepaths[name] = filepath
         return name, list(df.columns)
@@ -164,12 +166,7 @@ class DataManager:
             first_columns = None
             for table in tables:
                 df = pd.read_sql_query(f'SELECT * FROM "{table}"', conn)
-                base_name = f"{filepath.name}::{table}"
-                name = base_name
-                counter = 2
-                while name in self.datasets:
-                    name = f"{base_name} ({counter})"
-                    counter += 1
+                name = self._dedupe_name(f"{filepath.name}::{table}")
                 self.datasets[name] = df
                 self.filepaths[name] = filepath
                 self.table_names[name] = table
@@ -226,14 +223,7 @@ class DataManager:
         if not has_header:
             df.columns = [f"col_{i}" for i in range(df.shape[1])]
 
-        # Deduplicate name
-        base_name = "clipboard"
-        name = base_name
-        counter = 2
-        while name in self.datasets:
-            name = f"{base_name} ({counter})"
-            counter += 1
-
+        name = self._dedupe_name("clipboard")
         self.datasets[name] = df
         return name, list(df.columns)
 
@@ -242,12 +232,7 @@ class DataManager:
 
         Uses the same name-deduplication logic as load().
         """
-        base_name = name
-        counter = 2
-        while name in self.datasets:
-            name = f"{base_name} ({counter})"
-            counter += 1
-
+        name = self._dedupe_name(name)
         self.datasets[name] = df
         return name, list(df.columns)
 
