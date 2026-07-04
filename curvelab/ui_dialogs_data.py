@@ -82,14 +82,18 @@ class SimulateDataDialog(tk.Toplevel):
             self._status_var.set("Need x_min < x_max and N >= 2.")
             return
 
-        noise_cfg = {
-            "gaussian": self._gauss_on.get(),
-            "gaussian_sigma": float(self._gauss_sigma.get()) if self._gauss_on.get() else 0,
-            "poisson": self._poisson_on.get(),
-            "poisson_scale": float(self._poisson_scale.get()) if self._poisson_on.get() else 0,
-            "jitter": self._jitter_on.get(),
-            "jitter_sigma": float(self._jitter_sigma.get()) if self._jitter_on.get() else 0,
-        }
+        try:
+            noise_cfg = {
+                "gaussian": self._gauss_on.get(),
+                "gaussian_sigma": float(self._gauss_sigma.get()) if self._gauss_on.get() else 0,
+                "poisson": self._poisson_on.get(),
+                "poisson_scale": float(self._poisson_scale.get()) if self._poisson_on.get() else 0,
+                "jitter": self._jitter_on.get(),
+                "jitter_sigma": float(self._jitter_sigma.get()) if self._jitter_on.get() else 0,
+            }
+        except ValueError:
+            self._status_var.set("Invalid noise parameter.")
+            return
 
         if self._on_generate:
             try:
@@ -267,9 +271,14 @@ class SmoothOutlierDialog(tk.Toplevel):
         from scipy.ndimage import uniform_filter1d, gaussian_filter1d
 
         method = self._method_var.get()
+        if len(y) < 3:
+            return y  # Too few points for any windowed smoothing method
+
         window = self._window_var.get()
         if window % 2 == 0:
             window += 1
+        # len(y) >= 3 here, so this max is always >= 3 and the floor below
+        # never has to push window past the data length.
         window = min(window, len(y) - 1 if len(y) % 2 == 0 else len(y))
         if window < 3:
             window = 3
@@ -300,7 +309,8 @@ class SmoothOutlierDialog(tk.Toplevel):
 
         try:
             self._y_smooth = self._compute_smooth()
-        except Exception:
+        except Exception as e:
+            self._status_var.set(f"Smoothing error: {e}")
             self._canvas.draw_idle()
             return
 
@@ -310,7 +320,12 @@ class SmoothOutlierDialog(tk.Toplevel):
                 label="_smooth_preview", zorder=5)
 
         if self._outlier_var.get():
-            self._outlier_mask = self._compute_outliers(self._y_smooth)
+            try:
+                self._outlier_mask = self._compute_outliers(self._y_smooth)
+            except Exception as e:
+                self._status_var.set(f"Outlier detection error: {e}")
+                self._canvas.draw_idle()
+                return
             outliers = ~self._outlier_mask
             n_out = int(outliers.sum())
             self._status_var.set(
@@ -483,16 +498,22 @@ class FindPeaksDialog(tk.Toplevel):
 
         kwargs = {}
         prom = self._prominence_var.get().strip()
-        if prom:
-            kwargs["prominence"] = float(prom)
-        else:
-            # Auto-prominence: 10% of data range
-            yrange = np.ptp(self._y)
-            if yrange > 0:
-                kwargs["prominence"] = yrange * 0.1
         dist = self._distance_var.get().strip()
-        if dist:
-            kwargs["distance"] = int(dist)
+        try:
+            if prom:
+                kwargs["prominence"] = float(prom)
+            else:
+                # Auto-prominence: 10% of data range
+                yrange = np.ptp(self._y)
+                if yrange > 0:
+                    kwargs["prominence"] = yrange * 0.1
+            if dist:
+                kwargs["distance"] = int(dist)
+        except ValueError:
+            messagebox.showwarning(
+                "Invalid Input", "Prominence and min distance must be numbers."
+            )
+            return
 
         indices, properties = find_peaks(self._y, **kwargs)
         # Estimate widths
