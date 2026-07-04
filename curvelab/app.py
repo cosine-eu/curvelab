@@ -49,6 +49,11 @@ def _make_session_key(series_id: str, session_name: str) -> str:
 class CurveLabApp(ttk.Frame):
     """Central coordinator. Subclasses ttk.Frame for embeddability."""
 
+    # Max click-to-point distance (display pixels) for point exclusion.
+    _CLICK_HIT_RADIUS_PX = 10
+    # Poll interval (ms) for checking on a background fit thread.
+    _FIT_POLL_INTERVAL_MS = 100
+
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
         self.parent = parent
@@ -1474,7 +1479,7 @@ class CurveLabApp(ttk.Frame):
 
         def _poll():
             if self._fit_thread.is_alive():
-                self.after(100, _poll)
+                self.after(self._FIT_POLL_INTERVAL_MS, _poll)
                 return
             self._fit_thread = None
             self._set_fit_running(False)
@@ -1495,7 +1500,7 @@ class CurveLabApp(ttk.Frame):
             if sess.result.flatchain is not None:
                 self._show_emcee_summary_dialog(sess)
 
-        self.after(100, _poll)
+        self.after(self._FIT_POLL_INTERVAL_MS, _poll)
 
     def _abort_fit(self):
         """Signal the background fit to stop."""
@@ -1958,7 +1963,7 @@ class CurveLabApp(ttk.Frame):
                 best_idx = i
 
         # Only toggle if click is within 10 pixels of a point
-        if best_sid is None or best_dist > 10:
+        if best_sid is None or best_dist > self._CLICK_HIT_RADIUS_PX:
             return
 
         rec = self._series_records[best_sid]

@@ -537,6 +537,7 @@ class FindPeaksDialog(tk.Toplevel):
     def _add_to_model(self):
         if not self._peaks:
             return
+        import numpy as np
         model_name = self._model_var.get()
         for cx, cy, w in self._peaks:
             self._fm.add_component(model_name, operator="+")
@@ -544,7 +545,7 @@ class FindPeaksDialog(tk.Toplevel):
             prefix = self._fm.components[-1].prefix
             sigma = w / 2.355 if w > 0 else abs(cx) * 0.01 or 0.1  # FWHM to sigma
             self._fm.set_param(f"{prefix}center", value=cx)
-            self._fm.set_param(f"{prefix}amplitude", value=cy * sigma * (2 * 3.14159) ** 0.5)
+            self._fm.set_param(f"{prefix}amplitude", value=cy * sigma * (2 * np.pi) ** 0.5)
             self._fm.set_param(f"{prefix}sigma", value=sigma)
         if self._on_done:
             self._on_done()
