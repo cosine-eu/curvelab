@@ -1409,6 +1409,14 @@ class CurveLabApp(ttk.Frame):
         except Exception as e:
             messagebox.showerror("ODR Error", str(e))
 
+    def _set_fit_running(self, running: bool):
+        """Toggle the Fit/Abort button and lock out every control that
+        mutates the model or parameters while a background fit thread is
+        reading/writing them (add/remove component, auto guess, batch fit,
+        clear, session changes, and direct parameter-table edits)."""
+        self.fit_panel.set_fitting_state(running)
+        self.fit_results.set_locked(running)
+
     def _run_fit_async(self, rec, sess, method):
         """Run fit in a background thread (slow methods)."""
         if self._fit_thread is not None and self._fit_thread.is_alive():
@@ -1416,14 +1424,14 @@ class CurveLabApp(ttk.Frame):
             return
 
         self._fit_abort.clear()
-        self.fit_panel.set_fitting_state(True)
+        self._set_fit_running(True)
 
         fm = sess.fit_manager
         try:
             x, y, yerr, xerr = self._get_fit_data(rec)
         except Exception as e:
             messagebox.showerror("Fit Error", str(e))
-            self.fit_panel.set_fitting_state(False)
+            self._set_fit_running(False)
             return
 
         # Build iter_cb that checks abort flag
@@ -1462,7 +1470,7 @@ class CurveLabApp(ttk.Frame):
                 self.after(100, _poll)
                 return
             self._fit_thread = None
-            self.fit_panel.set_fitting_state(False)
+            self._set_fit_running(False)
 
             if container["error"] is not None:
                 if not self._fit_abort.is_set():

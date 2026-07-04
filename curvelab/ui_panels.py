@@ -590,6 +590,7 @@ class FitPanel(ttk.LabelFrame):
         self._on_toggle_series_visible = on_toggle_series_visible
         self._on_abort = on_abort
         self._session_names: list[str] = []
+        self._model_locked = False
 
         self._build_ui()
 
@@ -622,15 +623,18 @@ class FitPanel(ttk.LabelFrame):
 
         sess_btn_frame = ttk.Frame(self)
         sess_btn_frame.pack(fill=tk.X, pady=(0, 3))
-        ttk.Button(sess_btn_frame, text="New", command=self._new_session).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        self._new_session_btn = ttk.Button(
+            sess_btn_frame, text="New", command=self._new_session
         )
-        ttk.Button(sess_btn_frame, text="Rename", command=self._rename_session).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        self._new_session_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        self._rename_session_btn = ttk.Button(
+            sess_btn_frame, text="Rename", command=self._rename_session
         )
-        ttk.Button(sess_btn_frame, text="Delete", command=self._delete_session).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        self._rename_session_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        self._delete_session_btn = ttk.Button(
+            sess_btn_frame, text="Delete", command=self._delete_session
         )
+        self._delete_session_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(sess_btn_frame, text="Show/Hide", command=self._toggle_session_visible).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
         )
@@ -666,12 +670,14 @@ class FitPanel(ttk.LabelFrame):
 
         comp_btn_frame = ttk.Frame(self)
         comp_btn_frame.pack(fill=tk.X, pady=3)
-        ttk.Button(
+        self._add_comp_btn = ttk.Button(
             comp_btn_frame, text="Add Component", command=self._add_component
-        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ttk.Button(
+        )
+        self._add_comp_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        self._remove_comp_btn = ttk.Button(
             comp_btn_frame, text="Remove", command=self._remove_component
-        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        )
+        self._remove_comp_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         # --- Component list ---
         self.comp_listbox = tk.Listbox(self, height=3)
@@ -743,17 +749,20 @@ class FitPanel(ttk.LabelFrame):
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
         fit_btn_frame.pack(fill=tk.X, pady=3)
-        ttk.Button(fit_btn_frame, text="Auto Guess", command=self._auto_guess).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        self._auto_guess_btn = ttk.Button(
+            fit_btn_frame, text="Auto Guess", command=self._auto_guess
         )
+        self._auto_guess_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         self._fit_btn = ttk.Button(fit_btn_frame, text="Fit", command=self._fit)
         self._fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
-        ttk.Button(fit_btn_frame, text="Batch Fit", command=self._batch_fit).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        self._batch_fit_btn = ttk.Button(
+            fit_btn_frame, text="Batch Fit", command=self._batch_fit
         )
-        ttk.Button(fit_btn_frame, text="Clear", command=self._clear_fit).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
+        self._batch_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        self._clear_fit_btn = ttk.Button(
+            fit_btn_frame, text="Clear", command=self._clear_fit
         )
+        self._clear_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
     def _series_selected(self, event=None):
         if self._on_series_selected:
@@ -869,6 +878,8 @@ class FitPanel(ttk.LabelFrame):
             self._on_remove_component(sel[0])
 
     def _edit_expression(self, event=None):
+        if self._model_locked:
+            return
         sel = self.comp_listbox.curselection()
         if not sel or not self._on_edit_expression:
             return
@@ -907,11 +918,27 @@ class FitPanel(ttk.LabelFrame):
             self._on_clear_fit()
 
     def set_fitting_state(self, fitting: bool):
-        """Toggle the Fit button between Fit and Abort modes."""
+        """Toggle the Fit button between Fit and Abort modes, and lock out
+        every control that mutates the model or parameters while a
+        background fit thread is reading/writing them."""
         if fitting:
             self._fit_btn.configure(text="Abort", command=self._abort)
         else:
             self._fit_btn.configure(text="Fit", command=self._fit)
+
+        self._model_locked = fitting
+        state = tk.DISABLED if fitting else tk.NORMAL
+        for btn in (
+            self._add_comp_btn,
+            self._remove_comp_btn,
+            self._auto_guess_btn,
+            self._batch_fit_btn,
+            self._clear_fit_btn,
+            self._new_session_btn,
+            self._rename_session_btn,
+            self._delete_session_btn,
+        ):
+            btn.configure(state=state)
 
     def _abort(self):
         if self._on_abort:
@@ -931,7 +958,15 @@ class FitResultsPanel(ttk.LabelFrame):
         super().__init__(parent, text="Fit Results", padding=5)
         self._on_param_edited = on_param_edited
         self._editing_entry = None
+        self._locked = False
         self._build_ui()
+
+    def set_locked(self, locked: bool):
+        """Disable cell editing while a background fit is mutating params."""
+        self._locked = locked
+        if locked and self._editing_entry is not None:
+            self._editing_entry.destroy()
+            self._editing_entry = None
 
     def _build_ui(self):
         # --- Goodness-of-fit summary ---
@@ -1066,6 +1101,8 @@ class FitResultsPanel(ttk.LabelFrame):
 
     def _on_double_click(self, event):
         """Handle double-click to edit a cell in the parameter treeview."""
+        if self._locked:
+            return
         region = self.param_tree.identify_region(event.x, event.y)
         if region != "cell":
             return
