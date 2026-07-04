@@ -56,13 +56,16 @@ class FitManager:
         self._params: Parameters | None = None
         self._last_result: ModelResult | None = None
         self._param_hints: dict[str, dict] = {}
+        self._name_counters: dict[str, int] = {}
 
     def add_component(
         self, model_name: str, operator: str = "+", expression: str = ""
     ) -> FitComponent:
         """Add a model component. operator is '+' or '*'; ignored for first component."""
-        # Count existing components with this base name to generate prefix
-        count = sum(1 for c in self.components if c.name == model_name) + 1
+        # Monotonic per-name counter so a freed suffix (from remove_component)
+        # is never reused and can't collide with a still-present component.
+        count = self._name_counters.get(model_name, 0) + 1
+        self._name_counters[model_name] = count
         if len(self.components) == 0:
             # Single component: no prefix for cleaner parameter names
             prefix = ""
@@ -103,6 +106,7 @@ class FitManager:
         self._params = None
         self._last_result = None
         self._param_hints.clear()
+        self._name_counters.clear()
 
     def _build_component_model(self, comp: FitComponent, x_data: np.ndarray | None = None):
         """Build a single component model. Uses x_data for Spline if available."""
