@@ -36,7 +36,7 @@ class DataManager:
             ".tsv": lambda p: pd.read_csv(p, sep="\t"),
             ".xlsx": lambda p: pd.read_excel(p),
             ".xls": lambda p: pd.read_excel(p),
-            ".ods": lambda p: pd.read_excel(p, engine="odfpy"),
+            ".ods": lambda p: pd.read_excel(p, engine="odf"),
             ".json": lambda p: pd.read_json(p),
             ".parquet": lambda p: pd.read_parquet(p),
             ".h5": lambda p: pd.read_hdf(p),
