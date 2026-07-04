@@ -40,6 +40,7 @@ excel = ["openpyxl"]
 ods = ["odfpy"]
 hdf5 = ["tables"]
 odr = ["odrpack"]
+test = ["pytest", "pytest-cov"]
 
 [project.scripts]
 curvelab = "curvelab.app:CurveLabApp.launch"
@@ -49,3 +50,30 @@ include = ["curvelab*"]
 
 [tool.setuptools.package-data]
 curvelab = ["*.png", "*.svg"]
+
+[tool.pytest.ini_options]
+addopts = "--cov=curvelab --cov-report=term-missing"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["curvelab"]
+# GUI modules need a live Tk/matplotlib event loop the unit tests don't
+# spin up, so they're excluded to keep the reported figure meaningful for
+# the GUI-agnostic core (fit_manager, data_manager, models, preprocessing,
+# session, workspace).
+omit = [
+    "curvelab/app.py",
+    "curvelab/app_analysis_handlers.py",
+    "curvelab/app_data_tools.py",
+    "curvelab/app_fit_handlers.py",
+    "curvelab/app_workspace.py",
+    "curvelab/notebook.py",
+    "curvelab/plot_manager.py",
+    "curvelab/ui_panels.py",
+    "curvelab/ui_dialogs_analysis.py",
+    "curvelab/ui_dialogs_data.py",
+    "curvelab/__main__.py",
+]
+
+[tool.coverage.report]
+show_missing = true

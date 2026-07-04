@@ -14,3 +14,8 @@ token
 /dist/
 /build/
 *.egg-info/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
