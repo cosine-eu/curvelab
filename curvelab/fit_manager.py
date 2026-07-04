@@ -410,7 +410,7 @@ class FitManager:
             return
         x, y = result.x_data, result.y_data
         yerr = result.yerr_data
-        weights = 1.0 / yerr if yerr is not None else None
+        weights = self._compute_weights(y, yerr, "1/yerr (default)")
         if self._has_spline:
             self._rebuild_model_with_data(x)
         self._last_result = self._model.fit(
