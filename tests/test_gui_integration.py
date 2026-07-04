@@ -1,0 +1,258 @@
+"""Headless GUI integration tests for CurveLabApp.
+
+These construct a real Tk app (no pixels asserted — only resulting state) and
+drive the coordinator's handlers to cover cross-component workflows that pure
+unit tests can't reach. They are the regression net for the GUI-layer fixes
+made on this branch (async-fit series attribution, control lockout during a
+fit, removed-series replot, the parameter-cell double-commit guard, and
+workspace-load making analysis tools available).
+
+The whole module skips cleanly when no display / Tk is available, so a headless
+run without Xvfb doesn't fail.
+"""
+
+import unittest
+from unittest import mock
+
+import numpy as np
+import pandas as pd
+
+
+def _display_available() -> bool:
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.destroy()
+        return True
+    except Exception:
+        return False
+
+
+DISPLAY_OK = _display_available()
+
+
+@unittest.skipUnless(DISPLAY_OK, "no display available for Tk")
+class GuiTestBase(unittest.TestCase):
+    def setUp(self):
+        import tkinter as tk
+        from curvelab.app import CurveLabApp
+        self.root = tk.Tk()
+        self.app = CurveLabApp(self.root)
+        self.app.pack()
+
+    def tearDown(self):
+        self.root.destroy()
+
+    def _add_fitted_series(self, sid="ds::x::y", label="s1", dataset="ds", run=True):
+        """Register a dataset + series + session with a Linear model (optionally fit)."""
+        from curvelab.session import SeriesRecord, FitSession
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 40)
+        self.app.data_mgr.add_dataframe(dataset, pd.DataFrame({"x": x, "y": y}))
+        rec = SeriesRecord(
+            x=x, y=y, yerr=None, xerr=None, dataset_name=dataset,
+            style={"dataset": dataset, "x": "x", "y": "y", "yerr": "", "xerr": "",
+                   "label": label, "marker": "o", "linestyle": "None", "color": ""},
+        )
+        self.app._series_records[sid] = rec
+        self.app._active_series_id = sid
+        sess = FitSession(name="Fit 1", color="C0")
+        rec.fit_sessions["Fit 1"] = sess
+        rec.active_session_name = "Fit 1"
+        sess.fit_manager.add_component("Linear")
+        sess.fit_manager.auto_guess(x, y)
+        if run:
+            sess.result = sess.fit_manager.run_fit(x, y, weight_mode="No weights")
+        self.app._sync_series_combo()
+        self.app._sync_session_list()
+        self.app._load_session_into_ui()
+        return rec, sess
+
+
+class AsyncFitAttributionTests(GuiTestBase):
+    """8cdaf32: a fit must be plotted under the series it was launched against,
+    not whichever series happens to be active when it completes."""
+
+    def test_post_fit_update_uses_launch_series(self):
+        rec_a, sess_a = self._add_fitted_series(sid="ds::x::y", label="A", dataset="ds")
+        # A second series that becomes "active" while A's fit is in flight.
+        self._add_fitted_series(sid="ds2::x::y", label="B", dataset="ds2", run=False)
+        self.app._active_series_id = "ds2::x::y"
+
+        # Complete A's fit while B is active, threading A's captured sid through.
+        self.app._post_fit_update(sess_a, rec_a, "ds::x::y")
+        self.root.update()
+
+        self.assertIn("ds::x::y::Fit 1", self.app.plot_mgr._fit_lines)
+        self.assertNotIn("ds2::x::y::Fit 1", self.app.plot_mgr._fit_lines)
+
+
+class ControlLockoutTests(GuiTestBase):
+    """923d021: model/parameter-mutating controls lock while a fit runs."""
+
+    def test_controls_disabled_during_fit_and_restored(self):
+        self._add_fitted_series(run=False)
+        fp = self.app.fit_panel
+        buttons = [fp._add_comp_btn, fp._remove_comp_btn, fp._auto_guess_btn,
+                   fp._batch_fit_btn, fp._clear_fit_btn, fp._new_session_btn,
+                   fp._rename_session_btn, fp._delete_session_btn]
+
+        self.app._set_fit_running(True)
+        for b in buttons:
+            self.assertEqual(str(b["state"]), "disabled")
+        self.assertTrue(self.app.fit_results._locked)
+        self.assertEqual(str(fp._fit_btn["text"]), "Abort")
+
+        self.app._set_fit_running(False)
+        for b in buttons:
+            self.assertEqual(str(b["state"]), "normal")
+        self.assertFalse(self.app.fit_results._locked)
+        self.assertEqual(str(fp._fit_btn["text"]), "Fit")
+
+
+class RemoveSeriesReplotTests(GuiTestBase):
+    """ff1ddb4: removing a series from the panel replots immediately."""
+
+    def test_removing_series_updates_app_state(self):
+        dp = self.app.data_panel
+        df = pd.DataFrame({"x": np.linspace(0, 10, 20),
+                           "y1": np.linspace(0, 10, 20) * 2,
+                           "y2": np.linspace(0, 10, 20) * 3})
+        self.app.data_mgr.add_dataframe("ds", df)
+        dp.dataset_var.set("ds")
+        for ycol, label in (("y1", "s1"), ("y2", "s2")):
+            dp.x_var.set("x"); dp.y_var.set(ycol); dp.label_var.set(label)
+            dp._add_series()
+        dp._plot()
+        self.root.update()
+        self.assertEqual(len(self.app._series_records), 2)
+
+        dp.series_listbox.selection_clear(0, "end")
+        dp.series_listbox.selection_set(0)
+        dp._remove_series()
+        self.root.update()
+        self.assertEqual(len(self.app._series_records), 1)
+
+        # Removing the last one leaves a clean, empty state (no crash).
+        dp.series_listbox.selection_clear(0, "end")
+        dp.series_listbox.selection_set(0)
+        dp._remove_series()
+        self.root.update()
+        self.assertEqual(len(self.app._series_records), 0)
+        self.assertIsNone(self.app._active_series_id)
+
+
+class ParamEditorGuardTests(GuiTestBase):
+    """766c337: the parameter cell editor must not double-commit onto a
+    destroyed widget (Return + deferred FocusOut) or when locked mid-edit."""
+
+    def _open_editor(self):
+        panel = self.app.fit_results
+        panel.set_params({
+            "slope": {"value": 2.0, "init_value": 2.0, "stderr": 0.1,
+                      "min": float("-inf"), "max": float("inf"),
+                      "vary": True, "expr": ""},
+        })
+        self.root.update()
+        item = panel.param_tree.get_children()[0]
+        bbox = panel.param_tree.bbox(item, "#1")  # the "value" cell
+        event = mock.Mock(x=bbox[0] + bbox[2] // 2, y=bbox[1] + bbox[3] // 2)
+        panel._on_double_click(event)
+        self.root.update()
+        return panel
+
+    def test_return_commit_records_once_and_cleans_up(self):
+        edits = []
+        panel = self.app.fit_results
+        panel._on_param_edited = lambda name, field, val: edits.append((name, field, val))
+        self._open_editor()
+        self.assertIsNotNone(panel._editing_entry)
+
+        panel._editing_entry.event_generate("<Return>")
+        self.root.update()
+
+        self.assertIsNone(panel._editing_entry)      # entry torn down
+        self.assertTrue(panel._editing_done)
+        self.assertEqual(len(edits), 1)              # exactly one edit recorded
+
+    def test_set_locked_mid_edit_does_not_raise(self):
+        panel = self._open_editor()
+        self.assertIsNotNone(panel._editing_entry)
+        panel.set_locked(True)   # would hit a destroyed widget without the guard
+        self.root.update()
+        self.assertIsNone(panel._editing_entry)
+        self.assertTrue(panel._editing_done)
+
+
+class WorkspaceLoadAnalysisTests(GuiTestBase):
+    """The experiment doc's canonical bug: load a workspace, then open an
+    analysis dialog — the fit result (and reconstructed lmfit result) must be
+    available so tools don't wrongly report 'run a fit first'."""
+
+    def test_analysis_available_after_workspace_load(self):
+        import os, tempfile
+        from curvelab.session import SeriesRecord, FitSession
+        # The workspace records reloadable file paths, so the series must be
+        # backed by a real file (not add_dataframe, which has no path).
+        d = tempfile.mkdtemp()
+        csvp = os.path.join(d, "data.csv")
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 40)
+        pd.DataFrame({"x": x, "y": y}).to_csv(csvp, index=False)
+        name, _ = self.app.data_mgr.load(csvp)
+        sid = f"{name}::x::y"
+        rec = SeriesRecord(
+            x=x, y=y, yerr=None, xerr=None, dataset_name=name,
+            style={"dataset": name, "x": "x", "y": "y", "yerr": "", "xerr": "",
+                   "label": "s1", "marker": "o", "linestyle": "None", "color": ""},
+        )
+        self.app._series_records[sid] = rec
+        self.app._active_series_id = sid
+        sess = FitSession(name="Fit 1", color="C0")
+        rec.fit_sessions["Fit 1"] = sess
+        rec.active_session_name = "Fit 1"
+        sess.fit_manager.add_component("Linear")
+        sess.fit_manager.auto_guess(x, y)
+        sess.result = sess.fit_manager.run_fit(x, y, weight_mode="No weights")
+        self.app.plot_controls.residuals_var.set(True)
+
+        wsp = os.path.join(d, "ws.clw")
+        try:
+            with mock.patch("curvelab.app_workspace.filedialog.asksaveasfilename",
+                            return_value=wsp):
+                self.app._save_workspace()
+
+            # Fresh app loads it.
+            import tkinter as tk
+            from curvelab.app import CurveLabApp
+            root2 = tk.Tk()
+            app2 = CurveLabApp(root2)
+            app2.pack()
+            try:
+                with mock.patch("curvelab.app_workspace.filedialog.askopenfilename",
+                                return_value=wsp):
+                    app2._load_workspace()
+
+                sess2 = app2._require_fit_result()  # None + warning if broken
+                self.assertIsNotNone(sess2)
+                # refit reconstructed the lmfit result analysis tools depend on.
+                self.assertIsNotNone(sess2.fit_manager._last_result)
+
+                # Opening an analysis handler must not warn "No Fit".
+                with mock.patch(
+                    "curvelab.app_analysis_handlers.messagebox.showwarning"
+                ) as warn:
+                    app2._show_confidence_intervals()
+                    self.assertFalse(
+                        any("No Fit" in str(c) for c in warn.call_args_list))
+            finally:
+                root2.destroy()
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    unittest.main()
