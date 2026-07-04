@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .data_manager import DataManager
-from .fit_manager import FitManager, FitResult, REDUCE_FUNCTIONS
+from .fit_manager import FitManager, FitResult, MIN_ERROR, REDUCE_FUNCTIONS
 from .plot_manager import PlotManager, SeriesStyle
 from .session import FIT_COLORS, FitSession, ParamEdit, SeriesRecord
 from .ui_panels import (
@@ -451,7 +451,7 @@ class CurveLabApp(ttk.Frame):
         residuals = result.y_data - result.y_fit_data
         weighted_residuals = None
         if result.yerr_data is not None:
-            safe_yerr = np.maximum(np.abs(result.yerr_data), 1e-12)
+            safe_yerr = np.maximum(np.abs(result.yerr_data), MIN_ERROR)
             weighted_residuals = residuals / safe_yerr
 
         try:
@@ -1315,17 +1315,7 @@ class CurveLabApp(ttk.Frame):
         try:
             x, y, _, _ = self._get_fit_data(rec)
             params = fm.auto_guess(x, y)
-            params_info = {}
-            for name, par in params.items():
-                params_info[name] = {
-                    "value": par.value,
-                    "stderr": None,
-                    "min": par.min,
-                    "max": par.max,
-                    "vary": par.vary,
-                    "expr": par.expr or "",
-                }
-            self.fit_results.set_params(params_info)
+            self.fit_results.set_params(FitManager.params_to_info(params))
         except Exception as e:
             messagebox.showerror("Guess Error", str(e))
 
@@ -1812,17 +1802,7 @@ class CurveLabApp(ttk.Frame):
             loaded = load_modelresult(filepath)
 
             # Display params and report in the results panel
-            params_info = {}
-            for name, par in loaded.params.items():
-                params_info[name] = {
-                    "value": par.value,
-                    "stderr": par.stderr,
-                    "min": par.min,
-                    "max": par.max,
-                    "vary": par.vary,
-                    "expr": par.expr or "",
-                }
-            self.fit_results.set_params(params_info)
+            self.fit_results.set_params(FitManager.params_to_info(loaded.params))
             gof = {
                 "chi-squared": getattr(loaded, "chisqr", None),
                 "reduced chi-squared": getattr(loaded, "redchi", None),
@@ -2121,17 +2101,7 @@ class CurveLabApp(ttk.Frame):
         fm = self._active_fit_mgr
         if fm is None or fm.params is None:
             return
-        params_info = {}
-        for name, par in fm.params.items():
-            params_info[name] = {
-                "value": par.value,
-                "stderr": par.stderr,
-                "min": par.min,
-                "max": par.max,
-                "vary": par.vary,
-                "expr": par.expr or "",
-            }
-        self.fit_results.set_params(params_info)
+        self.fit_results.set_params(FitManager.params_to_info(fm.params))
 
     def _undo_param_edit(self, event=None):
         sess = self._active_session

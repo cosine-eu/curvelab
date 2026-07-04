@@ -10,10 +10,14 @@ from lmfit.models import SplineModel
 from .models import create_expression_model, create_model, create_spline_model
 from .session import FitResult  # re-export; canonical location is session.py
 
+# Floor for magnitudes used as divisors or log arguments, so zero-valued
+# errors/residuals can't produce inf weights or log-of-zero.
+MIN_ERROR = 1e-12
+
 
 def _reduce_negentropy(r):
     """Neg-entropy reduce function for robust fitting."""
-    return -np.sum(r * np.log(np.maximum(np.abs(r), 1e-12)))
+    return -np.sum(r * np.log(np.maximum(np.abs(r), MIN_ERROR)))
 
 
 def _reduce_cauchylogpdf(r):
@@ -283,20 +287,35 @@ class FitManager:
             self._params[name].set(**kwargs)
 
     @staticmethod
+    def params_to_info(params) -> dict[str, dict]:
+        """Convert lmfit Parameters to {name: {value, stderr, min, max, vary, expr}}."""
+        return {
+            name: {
+                "value": par.value,
+                "stderr": par.stderr,
+                "min": par.min,
+                "max": par.max,
+                "vary": par.vary,
+                "expr": par.expr or "",
+            }
+            for name, par in params.items()
+        }
+
+    @staticmethod
     def _compute_weights(y, yerr, weight_mode):
         """Compute weights array from y, yerr, and the selected weight mode."""
         if weight_mode == "No weights":
             return None
         if weight_mode == "1/yerr\u00b2" and yerr is not None:
-            safe_yerr = np.maximum(np.abs(yerr), 1e-12)
+            safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
             return 1.0 / (safe_yerr * safe_yerr)
         if weight_mode == "1/y":
-            return 1.0 / np.maximum(np.abs(y), 1e-12)
+            return 1.0 / np.maximum(np.abs(y), MIN_ERROR)
         if weight_mode == "yerr as weights" and yerr is not None:
             return yerr
         # Default: "1/yerr (default)"
         if yerr is not None:
-            return 1.0 / np.maximum(np.abs(yerr), 1e-12)
+            return 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
         return None
 
     def run_fit(
@@ -335,10 +354,10 @@ class FitManager:
                 y_plus = self._model.eval(self._params, x=x + h)
                 y_minus = self._model.eval(self._params, x=x - h)
                 dfdx = (y_plus - y_minus) / (2 * h)
-                denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), 1e-12)
+                denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
                 weights = 1.0 / denom
             elif yerr is not None:
-                weights = 1.0 / np.maximum(np.abs(yerr), 1e-12)
+                weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
             else:
                 weights = None
 
@@ -377,17 +396,7 @@ class FitManager:
             for key, vals in comps.items():
                 component_curves[key] = vals
 
-        # Extract parameter info
-        params_info = {}
-        for name, par in self._last_result.params.items():
-            params_info[name] = {
-                "value": par.value,
-                "stderr": par.stderr,
-                "min": par.min,
-                "max": par.max,
-                "vary": par.vary,
-                "expr": par.expr or "",
-            }
+        params_info = self.params_to_info(self._last_result.params)
 
         # Update internal params with fitted values
         self._params = self._last_result.params
@@ -518,7 +527,7 @@ class FitManager:
                     y_plus = self._model.eval(x=x + h, **kw)
                     y_minus = self._model.eval(x=x - h, **kw)
                     dfdx = (y_plus - y_minus) / (2 * h)
-                    denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), 1e-12)
+                    denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
                     weights = 1.0 / denom
                 if weights is not None:
                     resid = resid * weights
@@ -690,12 +699,12 @@ class FitManager:
         # Weights: odrpack uses weight = 1/variance
         weight_y = None
         if yerr is not None:
-            safe_yerr = np.maximum(np.abs(yerr), 1e-12)
+            safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
             weight_y = 1.0 / (safe_yerr ** 2)
 
         weight_x = None
         if xerr is not None:
-            safe_xerr = np.maximum(np.abs(xerr), 1e-12)
+            safe_xerr = np.maximum(np.abs(xerr), MIN_ERROR)
             weight_x = 1.0 / (safe_xerr ** 2)
 
         odr_kwargs = dict(
