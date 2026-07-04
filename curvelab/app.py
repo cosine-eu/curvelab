@@ -1283,7 +1283,11 @@ class CurveLabApp(ttk.Frame):
                 xmax = float(xmax_str) if xmax_str else np.inf
                 x_range = (xmin, xmax)
             except ValueError:
-                pass
+                messagebox.showwarning(
+                    "Invalid Fit Range",
+                    f"Could not parse fit range ('{xmin_str}', '{xmax_str}') "
+                    "as numbers. Fitting the full data range instead.",
+                )
         elif self.plot_controls.fit_visible_var.get():
             x_range = self.plot_mgr.ax.get_xlim()
 
