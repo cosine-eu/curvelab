@@ -5,6 +5,29 @@ from tkinter import ttk, messagebox
 import tkinter.font as tkfont
 
 
+def build_scrollable_text_viewer(dialog, content: str, font=("Courier", 10)) -> tk.Text:
+    """Fill a Toplevel with a read-only monospace Text, scrollbars, and a Close button."""
+    text = tk.Text(dialog, wrap=tk.NONE, font=font)
+    text.insert("1.0", content)
+    text.config(state=tk.DISABLED)
+
+    xscroll = ttk.Scrollbar(dialog, orient=tk.HORIZONTAL, command=text.xview)
+    yscroll = ttk.Scrollbar(dialog, orient=tk.VERTICAL, command=text.yview)
+    text.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
+
+    text.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 0))
+    yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 0))
+    xscroll.grid(row=1, column=0, sticky="ew", padx=(10, 0))
+
+    dialog.columnconfigure(0, weight=1)
+    dialog.rowconfigure(0, weight=1)
+
+    ttk.Button(dialog, text="Close", command=dialog.destroy).grid(
+        row=2, column=0, columnspan=2, pady=10
+    )
+    return text
+
+
 class FontDialog(tk.Toplevel):
     """Dialog for setting UI and plot fonts."""
 
@@ -269,24 +292,7 @@ class CovarianceMatrixDialog(tk.Toplevel):
             row += "".join(f"{cov_matrix[i, j]:>{col_width}.6g}" for j in range(n))
             lines.append(row)
 
-        text = tk.Text(self, wrap=tk.NONE, font=("Courier", 10))
-        text.insert("1.0", "\n".join(lines))
-        text.config(state=tk.DISABLED)
-
-        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=text.xview)
-        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=text.yview)
-        text.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
-
-        text.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 0))
-        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 0))
-        xscroll.grid(row=1, column=0, sticky="ew", padx=(10, 0))
-
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
-
-        ttk.Button(self, text="Close", command=self.destroy).grid(
-            row=2, column=0, columnspan=2, pady=10
-        )
+        build_scrollable_text_viewer(self, "\n".join(lines))
 
 
 class ConfidenceIntervalDialog(tk.Toplevel):
@@ -299,24 +305,7 @@ class ConfidenceIntervalDialog(tk.Toplevel):
         self.transient(parent)
         self.geometry("600x400")
 
-        text = tk.Text(self, wrap=tk.NONE, font=("Courier", 10))
-        text.insert("1.0", ci_text)
-        text.config(state=tk.DISABLED)
-
-        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=text.xview)
-        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=text.yview)
-        text.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
-
-        text.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 0))
-        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 0))
-        xscroll.grid(row=1, column=0, sticky="ew", padx=(10, 0))
-
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
-
-        ttk.Button(self, text="Close", command=self.destroy).grid(
-            row=2, column=0, columnspan=2, pady=10
-        )
+        build_scrollable_text_viewer(self, ci_text)
 
 
 class CorrelationMatrixDialog(tk.Toplevel):
@@ -443,8 +432,6 @@ class EmceeSummaryDialog(tk.Toplevel):
         self.transient(parent)
         self.geometry("600x400")
 
-        text = tk.Text(self, wrap=tk.NONE, font=("Courier", 10))
-
         try:
             import pandas as pd
             if isinstance(flatchain, pd.DataFrame):
@@ -458,28 +445,13 @@ class EmceeSummaryDialog(tk.Toplevel):
                         f"{data.std():>12.6g} {data.quantile(0.025):>12.6g} "
                         f"{data.quantile(0.975):>12.6g}"
                     )
-                text.insert("1.0", "\n".join(lines))
+                content = "\n".join(lines)
             else:
-                text.insert("1.0", "Flatchain data not available as DataFrame.")
+                content = "Flatchain data not available as DataFrame."
         except Exception as e:
-            text.insert("1.0", f"Error processing emcee results: {e}")
+            content = f"Error processing emcee results: {e}"
 
-        text.config(state=tk.DISABLED)
-
-        xscroll = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=text.xview)
-        yscroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=text.yview)
-        text.configure(xscrollcommand=xscroll.set, yscrollcommand=yscroll.set)
-
-        text.grid(row=0, column=0, sticky="nsew", padx=(10, 0), pady=(10, 0))
-        yscroll.grid(row=0, column=1, sticky="ns", padx=(0, 10), pady=(10, 0))
-        xscroll.grid(row=1, column=0, sticky="ew", padx=(10, 0))
-
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(0, weight=1)
-
-        ttk.Button(self, text="Close", command=self.destroy).grid(
-            row=2, column=0, columnspan=2, pady=10
-        )
+        build_scrollable_text_viewer(self, content)
 
 
 class DiagnosticPlotsDialog(tk.Toplevel):
