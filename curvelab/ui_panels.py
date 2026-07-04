@@ -405,7 +405,8 @@ class PlotControlPanel(ttk.Frame):
             width=6,
         )
         xscale.pack(side=tk.LEFT, padx=(0, 10))
-        xscale.bind("<<ComboboxSelected>>", lambda e: self._fire_xscale())
+        xscale.bind("<<ComboboxSelected>>",
+                    lambda e: self._fire(self._on_xscale, self.xscale_var))
 
         ttk.Label(row1, text="Y:").pack(side=tk.LEFT)
         self.yscale_var = tk.StringVar(value="linear")
@@ -417,32 +418,37 @@ class PlotControlPanel(ttk.Frame):
             width=6,
         )
         yscale.pack(side=tk.LEFT, padx=(0, 10))
-        yscale.bind("<<ComboboxSelected>>", lambda e: self._fire_yscale())
+        yscale.bind("<<ComboboxSelected>>",
+                    lambda e: self._fire(self._on_yscale, self.yscale_var))
 
         self.data_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            row1, text="Data", variable=self.data_var, command=self._fire_data
+            row1, text="Data", variable=self.data_var,
+            command=lambda: self._fire(self._on_data_toggled, self.data_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.grid_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            row1, text="Grid", variable=self.grid_var, command=self._fire_grid
+            row1, text="Grid", variable=self.grid_var,
+            command=lambda: self._fire(self._on_grid, self.grid_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.equal_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            row1, text="Equal Axes", variable=self.equal_var, command=self._fire_equal
+            row1, text="Equal Axes", variable=self.equal_var,
+            command=lambda: self._fire(self._on_equal, self.equal_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.legend_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            row1, text="Legend", variable=self.legend_var, command=self._fire_legend
+            row1, text="Legend", variable=self.legend_var,
+            command=lambda: self._fire(self._on_legend, self.legend_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.show_params_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Params", variable=self.show_params_var,
-            command=self._fire_show_params,
+            command=lambda: self._fire(self._on_show_params_toggled, self.show_params_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.fit_visible_var = tk.BooleanVar(value=False)
@@ -460,13 +466,14 @@ class PlotControlPanel(ttk.Frame):
         self.residuals_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Residuals", variable=self.residuals_var,
-            command=self._fire_residuals,
+            command=lambda: self._fire(self._on_residuals_toggled, self.residuals_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.confidence_band_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Conf. band", variable=self.confidence_band_var,
-            command=self._fire_confidence_band,
+            command=lambda: self._fire(self._on_confidence_band_toggled,
+                                       self.confidence_band_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.band_sigma_var = tk.StringVar(value="1")
@@ -479,7 +486,8 @@ class PlotControlPanel(ttk.Frame):
         self.weighted_resid_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             row1, text="Wt. resid", variable=self.weighted_resid_var,
-            command=self._fire_weighted_resid,
+            command=lambda: self._fire(self._on_weighted_resid_toggled,
+                                       self.weighted_resid_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.exclude_var = tk.BooleanVar(value=False)
@@ -494,61 +502,25 @@ class PlotControlPanel(ttk.Frame):
         self.xlabel_var = tk.StringVar()
         self.ylabel_var = tk.StringVar()
 
+        fire_labels = lambda e: self._fire(
+            self._on_axis_labels, self.xlabel_var, self.ylabel_var)
+
         ttk.Label(row2, text="X Label:").pack(side=tk.LEFT)
         xlabel_entry = ttk.Entry(row2, textvariable=self.xlabel_var, width=15)
         xlabel_entry.pack(side=tk.LEFT, padx=(0, 10))
-        xlabel_entry.bind("<Return>", lambda e: self._fire_axis_labels())
-        xlabel_entry.bind("<FocusOut>", lambda e: self._fire_axis_labels())
+        xlabel_entry.bind("<Return>", fire_labels)
+        xlabel_entry.bind("<FocusOut>", fire_labels)
 
         ttk.Label(row2, text="Y Label:").pack(side=tk.LEFT)
         ylabel_entry = ttk.Entry(row2, textvariable=self.ylabel_var, width=15)
         ylabel_entry.pack(side=tk.LEFT, padx=(0, 10))
-        ylabel_entry.bind("<Return>", lambda e: self._fire_axis_labels())
-        ylabel_entry.bind("<FocusOut>", lambda e: self._fire_axis_labels())
+        ylabel_entry.bind("<Return>", fire_labels)
+        ylabel_entry.bind("<FocusOut>", fire_labels)
 
-    def _fire_xscale(self):
-        if self._on_xscale:
-            self._on_xscale(self.xscale_var.get())
-
-    def _fire_yscale(self):
-        if self._on_yscale:
-            self._on_yscale(self.yscale_var.get())
-
-    def _fire_data(self):
-        if self._on_data_toggled:
-            self._on_data_toggled(self.data_var.get())
-
-    def _fire_grid(self):
-        if self._on_grid:
-            self._on_grid(self.grid_var.get())
-
-    def _fire_equal(self):
-        if self._on_equal:
-            self._on_equal(self.equal_var.get())
-
-    def _fire_legend(self):
-        if self._on_legend:
-            self._on_legend(self.legend_var.get())
-
-    def _fire_show_params(self):
-        if self._on_show_params_toggled:
-            self._on_show_params_toggled(self.show_params_var.get())
-
-    def _fire_residuals(self):
-        if self._on_residuals_toggled:
-            self._on_residuals_toggled(self.residuals_var.get())
-
-    def _fire_weighted_resid(self):
-        if self._on_weighted_resid_toggled:
-            self._on_weighted_resid_toggled(self.weighted_resid_var.get())
-
-    def _fire_confidence_band(self):
-        if self._on_confidence_band_toggled:
-            self._on_confidence_band_toggled(self.confidence_band_var.get())
-
-    def _fire_axis_labels(self):
-        if self._on_axis_labels:
-            self._on_axis_labels(self.xlabel_var.get(), self.ylabel_var.get())
+    def _fire(self, callback, *tk_vars):
+        """Invoke callback (if set) with the current values of the given tk variables."""
+        if callback:
+            callback(*(v.get() for v in tk_vars))
 
 
 class FitPanel(ttk.LabelFrame):
