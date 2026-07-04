@@ -286,6 +286,32 @@ class FitManager:
         if self._params is not None and name in self._params:
             self._params[name].set(**kwargs)
 
+    def model_description(self) -> str:
+        """Compact one-line description, e.g. 'Gaussian + Linear'."""
+        return " ".join(
+            c.name if i == 0 else f"{c.operator} {c.name}"
+            for i, c in enumerate(self.components)
+        )
+
+    def component_labels(self) -> list[str]:
+        """Verbose per-component labels for UI list display."""
+        labels = []
+        for i, c in enumerate(self.components):
+            if c.name == "Expression" and c.expression:
+                display = f"Expression: {c.expression}"
+                if c.prefix:
+                    display = f"{display} ({c.prefix})"
+            elif c.name == "Spline" and c.expression:
+                display = f"Spline [{c.expression}]"
+                if c.prefix:
+                    display = f"{display} ({c.prefix})"
+            else:
+                display = f"{c.name} ({c.prefix})" if c.prefix else c.name
+            if i > 0:
+                display = f"{c.operator} {display}"
+            labels.append(display)
+        return labels
+
     @staticmethod
     def params_to_info(params) -> dict[str, dict]:
         """Convert lmfit Parameters to {name: {value, stderr, min, max, vary, expr}}."""

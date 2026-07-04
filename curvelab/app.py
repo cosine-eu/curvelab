@@ -544,10 +544,7 @@ class CurveLabApp(ttk.Frame):
         for sess_name, sess in rec.fit_sessions.items():
             if sess.result is None:
                 continue
-            model_desc = " + ".join(
-                (f"{c.operator} " if i > 0 else "") + c.name
-                for i, c in enumerate(sess.fit_manager.components)
-            )
+            model_desc = sess.fit_manager.model_description()
             gof = sess.result.gof
             rows.append({
                 "session": sess_name,
@@ -816,22 +813,7 @@ class CurveLabApp(ttk.Frame):
             self.fit_results.clear()
 
     def _update_component_list_from(self, fit_mgr: FitManager):
-        labels = []
-        for i, c in enumerate(fit_mgr.components):
-            if c.name == "Expression" and c.expression:
-                display = f"Expression: {c.expression}"
-                if c.prefix:
-                    display = f"{display} ({c.prefix})"
-            elif c.name == "Spline" and c.expression:
-                display = f"Spline [{c.expression}]"
-                if c.prefix:
-                    display = f"{display} ({c.prefix})"
-            else:
-                display = f"{c.name} ({c.prefix})" if c.prefix else c.name
-            if i > 0:
-                display = f"{c.operator} {display}"
-            labels.append(display)
-        self.fit_panel.set_components(labels)
+        self.fit_panel.set_components(fit_mgr.component_labels())
 
     def _update_component_list(self):
         fm = self._active_fit_mgr
@@ -1870,10 +1852,7 @@ class CurveLabApp(ttk.Frame):
                 if show_resid:
                     self._plot_residuals_for_session(skey, target_sess, target_rec)
 
-                model_desc = " + ".join(
-                    (f"{c.operator} " if i > 0 else "") + c.name
-                    for i, c in enumerate(target_fm.components)
-                )
+                model_desc = target_fm.model_description()
                 gof = result.gof
                 summary_rows.append({
                     "session": f"{series_label} / {session_name}",
