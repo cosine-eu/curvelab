@@ -247,10 +247,27 @@ class FitManager:
         return self._params
 
     def clone_components_to(self, target: "FitManager"):
-        """Copy this manager's component list into target, rebuilding its model."""
+        """Copy this manager's component list and parameter hints (fixed
+        values, bounds) into target, rebuilding its model."""
         target.clear_components()
         for comp in self.components:
             target.add_component(comp.name, operator=comp.operator, expression=comp.expression)
+
+        # add_component can assign a target component a different prefix
+        # than the source's (e.g. if a middle component was removed from
+        # the source's history), so hints are remapped by position rather
+        # than copied verbatim. Longest prefix first so a component with
+        # an empty prefix doesn't swallow every hint name.
+        prefix_pairs = sorted(
+            zip((c.prefix for c in self.components), (c.prefix for c in target.components)),
+            key=lambda pair: len(pair[0]),
+            reverse=True,
+        )
+        for name, hints in self._param_hints.items():
+            for old_prefix, new_prefix in prefix_pairs:
+                if name.startswith(old_prefix):
+                    target.set_param_hint(new_prefix + name[len(old_prefix):], **hints)
+                    break
 
     def set_param_hint(self, name: str, **kwargs):
         """Store a parameter hint that survives model rebuilds."""
