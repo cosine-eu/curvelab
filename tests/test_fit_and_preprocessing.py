@@ -235,24 +235,26 @@ class BootstrapTests(unittest.TestCase):
         self.fm.run_fit(self.x, self.y, weight_mode="No weights")
 
     def test_residual_bootstrap_returns_distributions(self):
-        dists = self.fm.run_bootstrap(
+        dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="residual",
             weight_mode="No weights",
         )
         self.assertIn("slope", dists)
         self.assertIn("intercept", dists)
         self.assertGreater(len(dists["slope"]), 30)  # most should succeed
+        self.assertEqual(len(dists["slope"]), 50 - n_failed)
 
     def test_case_bootstrap_returns_distributions(self):
-        dists = self.fm.run_bootstrap(
+        dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="case",
             weight_mode="No weights",
         )
         self.assertIn("slope", dists)
         self.assertGreater(len(dists["slope"]), 30)
+        self.assertEqual(len(dists["slope"]), 50 - n_failed)
 
     def test_bootstrap_slope_near_true_value(self):
-        dists = self.fm.run_bootstrap(
+        dists, _n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=100, boot_type="residual",
             weight_mode="No weights",
         )
@@ -419,6 +421,29 @@ class SmoothOutlierLogicTests(unittest.TestCase):
 
         for r in (r1, r2, r3, r4):
             self.assertEqual(len(r), 100)
+
+
+class DiagnosticStatsTests(unittest.TestCase):
+    """compute_diagnostic_stats is a pure function extracted from the diagnostics dialog."""
+
+    def test_random_residuals(self):
+        from curvelab.ui_dialogs_analysis import compute_diagnostic_stats
+        rng = np.random.default_rng(1)
+        lines = compute_diagnostic_stats(rng.normal(0, 1, 200))
+        self.assertTrue(any("no significant autocorrelation" in l for l in lines))
+        self.assertTrue(any("consistent with random residuals" in l for l in lines))
+
+    def test_systematic_misfit(self):
+        from curvelab.ui_dialogs_analysis import compute_diagnostic_stats
+        rng = np.random.default_rng(1)
+        r = np.sin(np.linspace(0, 6 * np.pi, 200)) + rng.normal(0, 0.05, 200)
+        lines = compute_diagnostic_stats(r)
+        self.assertTrue(any("positive autocorrelation" in l for l in lines))
+        self.assertTrue(any("non-random pattern" in l for l in lines))
+
+    def test_degenerate_zero_residuals(self):
+        from curvelab.ui_dialogs_analysis import compute_diagnostic_stats
+        self.assertEqual(compute_diagnostic_stats(np.zeros(50)), [])
 
 
 if __name__ == "__main__":

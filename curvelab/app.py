@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from .data_manager import DataManager
-from .fit_manager import FitManager, FitResult, REDUCE_FUNCTIONS
+from .fit_manager import FitManager, FitResult, MIN_ERROR, REDUCE_FUNCTIONS
 from .plot_manager import PlotManager, SeriesStyle
 from .session import FIT_COLORS, FitSession, ParamEdit, SeriesRecord
 from .ui_panels import (
@@ -48,6 +48,11 @@ def _make_session_key(series_id: str, session_name: str) -> str:
 
 class CurveLabApp(ttk.Frame):
     """Central coordinator. Subclasses ttk.Frame for embeddability."""
+
+    # Max click-to-point distance (display pixels) for point exclusion.
+    _CLICK_HIT_RADIUS_PX = 10
+    # Poll interval (ms) for checking on a background fit thread.
+    _FIT_POLL_INTERVAL_MS = 100
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
@@ -112,6 +117,42 @@ class CurveLabApp(ttk.Frame):
         if rec is None or rec.active_session_name is None:
             return None
         return _make_session_key(self._active_series_id, rec.active_session_name)
+
+    # --- Guard helpers: return the resolved object, or None after warning ---
+    # A non-None _active_session implies a non-None _active_record, so callers
+    # of the session/fit-result guards may use self._active_record freely.
+
+    def _require_session(self) -> FitSession | None:
+        sess = self._active_session
+        if sess is None:
+            messagebox.showwarning("No Session", "Create a fit session first.")
+            return None
+        return sess
+
+    def _require_fit_result(self) -> FitSession | None:
+        sess = self._active_session
+        if sess is None or sess.result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return None
+        return sess
+
+    def _require_last_result(self) -> FitManager | None:
+        """Like _require_fit_result, but also needs the live lmfit result
+        (absent after a workspace load until refit)."""
+        sess = self._require_fit_result()
+        if sess is None:
+            return None
+        fm = sess.fit_manager
+        if fm._last_result is None:
+            messagebox.showwarning("No Fit", "Run a fit first.")
+            return None
+        return fm
+
+    def _require_model(self, fm: FitManager) -> bool:
+        if not fm.components:
+            messagebox.showwarning("No Model", "Add at least one model component.")
+            return False
+        return True
 
     # --- Layout ---
 
@@ -389,9 +430,8 @@ class CurveLabApp(ttk.Frame):
     # --- Export ---
 
     def _export_params(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".csv",
@@ -410,9 +450,8 @@ class CurveLabApp(ttk.Frame):
                 ])
 
     def _export_report(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".txt",
@@ -426,9 +465,8 @@ class CurveLabApp(ttk.Frame):
 
     def _export_curve_data(self):
         """Export fit curve, residuals, and component curves as CSV."""
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".csv",
@@ -451,7 +489,7 @@ class CurveLabApp(ttk.Frame):
         residuals = result.y_data - result.y_fit_data
         weighted_residuals = None
         if result.yerr_data is not None:
-            safe_yerr = np.maximum(np.abs(result.yerr_data), 1e-12)
+            safe_yerr = np.maximum(np.abs(result.yerr_data), MIN_ERROR)
             weighted_residuals = residuals / safe_yerr
 
         try:
@@ -511,10 +549,7 @@ class CurveLabApp(ttk.Frame):
         for sess_name, sess in rec.fit_sessions.items():
             if sess.result is None:
                 continue
-            model_desc = " + ".join(
-                (f"{c.operator} " if i > 0 else "") + c.name
-                for i, c in enumerate(sess.fit_manager.components)
-            )
+            model_desc = sess.fit_manager.model_description()
             gof = sess.result.gof
             rows.append({
                 "session": sess_name,
@@ -559,12 +594,10 @@ class CurveLabApp(ttk.Frame):
 
     def _evaluate_model(self):
         """Evaluate the fitted model at user-specified x values."""
-        sess = self._active_session
-        fm = self._active_fit_mgr
-        if sess is None or sess.result is None or fm is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
-        EvaluateModelDialog(self, fm)
+        EvaluateModelDialog(self, sess.fit_manager)
 
     def _find_peaks(self):
         """Auto-detect peaks in active series and add Gaussian components."""
@@ -624,12 +657,10 @@ class CurveLabApp(ttk.Frame):
 
     def _show_derivative_integral(self):
         """Show derivative and integral of the fitted curve."""
-        sess = self._active_session
-        fm = self._active_fit_mgr
-        if sess is None or sess.result is None or fm is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
-        DerivativeIntegralDialog(self, fm, sess.result)
+        DerivativeIntegralDialog(self, sess.fit_manager, sess.result)
 
     def _on_simulate_data(self):
         fm = self._active_fit_mgr
@@ -787,22 +818,7 @@ class CurveLabApp(ttk.Frame):
             self.fit_results.clear()
 
     def _update_component_list_from(self, fit_mgr: FitManager):
-        labels = []
-        for i, c in enumerate(fit_mgr.components):
-            if c.name == "Expression" and c.expression:
-                display = f"Expression: {c.expression}"
-                if c.prefix:
-                    display = f"{display} ({c.prefix})"
-            elif c.name == "Spline" and c.expression:
-                display = f"Spline [{c.expression}]"
-                if c.prefix:
-                    display = f"{display} ({c.prefix})"
-            else:
-                display = f"{c.name} ({c.prefix})" if c.prefix else c.name
-            if i > 0:
-                display = f"{c.operator} {display}"
-            labels.append(display)
-        self.fit_panel.set_components(labels)
+        self.fit_panel.set_components(fit_mgr.component_labels())
 
     def _update_component_list(self):
         fm = self._active_fit_mgr
@@ -969,11 +985,11 @@ class CurveLabApp(ttk.Frame):
         if not self.data_mgr.is_loaded:
             messagebox.showwarning("No Data", "Load a data file first.")
             return
-        if not series_list:
-            messagebox.showwarning("No Series", "Add at least one series.")
-            return
 
         self.plot_mgr.clear_all()
+
+        if not series_list:
+            messagebox.showwarning("No Series", "Add at least one series.")
 
         new_records: dict[str, SeriesRecord] = {}
         latest_new_sid: str | None = None
@@ -1248,10 +1264,10 @@ class CurveLabApp(ttk.Frame):
     # --- Fit callbacks ---
 
     def _on_add_component(self, model_name: str, operator: str = "+", expression: str = ""):
-        fm = self._active_fit_mgr
-        if fm is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
+        fm = sess.fit_manager
         fm.add_component(model_name, operator=operator, expression=expression)
         self._update_component_list()
 
@@ -1283,7 +1299,11 @@ class CurveLabApp(ttk.Frame):
                 xmax = float(xmax_str) if xmax_str else np.inf
                 x_range = (xmin, xmax)
             except ValueError:
-                pass
+                messagebox.showwarning(
+                    "Invalid Fit Range",
+                    f"Could not parse fit range ('{xmin_str}', '{xmax_str}') "
+                    "as numbers. Fitting the full data range instead.",
+                )
         elif self.plot_controls.fit_visible_var.get():
             x_range = self.plot_mgr.ax.get_xlim()
 
@@ -1299,29 +1319,18 @@ class CurveLabApp(ttk.Frame):
         return x, y, yerr, xerr
 
     def _on_auto_guess(self):
-        rec = self._active_record
-        fm = self._active_fit_mgr
-        if rec is None or fm is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
-        if not fm.components:
-            messagebox.showwarning("No Model", "Add at least one model component.")
+        rec = self._active_record
+        fm = sess.fit_manager
+        if not self._require_model(fm):
             return
 
         try:
             x, y, _, _ = self._get_fit_data(rec)
             params = fm.auto_guess(x, y)
-            params_info = {}
-            for name, par in params.items():
-                params_info[name] = {
-                    "value": par.value,
-                    "stderr": None,
-                    "min": par.min,
-                    "max": par.max,
-                    "vary": par.vary,
-                    "expr": par.expr or "",
-                }
-            self.fit_results.set_params(params_info)
+            self.fit_results.set_params(FitManager.params_to_info(params))
         except Exception as e:
             messagebox.showerror("Guess Error", str(e))
 
@@ -1329,11 +1338,10 @@ class CurveLabApp(ttk.Frame):
                       "dual_annealing", "shgo", "ampgo"}
 
     def _on_fit(self):
-        rec = self._active_record
-        sess = self._active_session
-        if rec is None or sess is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
+        rec = self._active_record
         if not rec.visible:
             messagebox.showwarning(
                 "Hidden Series",
@@ -1341,8 +1349,7 @@ class CurveLabApp(ttk.Frame):
                 "but the underlying data points are not visible on the plot.",
             )
         fm = sess.fit_manager
-        if not fm.components:
-            messagebox.showwarning("No Model", "Add at least one model component.")
+        if not self._require_model(fm):
             return
 
         method = self.fit_panel.method_var.get()
@@ -1359,12 +1366,17 @@ class CurveLabApp(ttk.Frame):
                         )
                         return
 
+        # Capture the series id now, since an async fit can outlive the
+        # user's current selection (e.g. they switch to another series
+        # while a slow method like emcee is still running).
+        sid = self._active_series_id
+
         if method == "odr":
-            self._run_fit_odr(rec, sess)
+            self._run_fit_odr(rec, sess, sid)
         elif method in self._SLOW_METHODS:
-            self._run_fit_async(rec, sess, method)
+            self._run_fit_async(rec, sess, method, sid)
         else:
-            self._run_fit_sync(rec, sess, method)
+            self._run_fit_sync(rec, sess, method, sid)
 
     def _get_fit_options(self):
         """Read reduce function, weight mode, max_nfev, band_sigma, scale_covar from UI."""
@@ -1376,7 +1388,7 @@ class CurveLabApp(ttk.Frame):
         scale_covar = self.fit_panel.scale_covar_var.get()
         return reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar
 
-    def _run_fit_sync(self, rec, sess, method):
+    def _run_fit_sync(self, rec, sess, method, sid):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
@@ -1389,11 +1401,11 @@ class CurveLabApp(ttk.Frame):
                 scale_covar=scale_covar,
             )
             sess.result = result
-            self._post_fit_update(sess, rec)
+            self._post_fit_update(sess, rec, sid)
         except Exception as e:
             messagebox.showerror("Fit Error", str(e))
 
-    def _run_fit_odr(self, rec, sess):
+    def _run_fit_odr(self, rec, sess, sid):
         """Run ODR fit using odrpack."""
         fm = sess.fit_manager
         try:
@@ -1403,27 +1415,35 @@ class CurveLabApp(ttk.Frame):
                 x, y, yerr=yerr, xerr=xerr, band_sigma=band_sigma,
             )
             sess.result = result
-            self._post_fit_update(sess, rec)
+            self._post_fit_update(sess, rec, sid)
         except ImportError as e:
             messagebox.showerror("Missing Package", str(e))
         except Exception as e:
             messagebox.showerror("ODR Error", str(e))
 
-    def _run_fit_async(self, rec, sess, method):
+    def _set_fit_running(self, running: bool):
+        """Toggle the Fit/Abort button and lock out every control that
+        mutates the model or parameters while a background fit thread is
+        reading/writing them (add/remove component, auto guess, batch fit,
+        clear, session changes, and direct parameter-table edits)."""
+        self.fit_panel.set_fitting_state(running)
+        self.fit_results.set_locked(running)
+
+    def _run_fit_async(self, rec, sess, method, sid):
         """Run fit in a background thread (slow methods)."""
         if self._fit_thread is not None and self._fit_thread.is_alive():
             messagebox.showwarning("Busy", "A fit is already running.")
             return
 
         self._fit_abort.clear()
-        self.fit_panel.set_fitting_state(True)
+        self._set_fit_running(True)
 
         fm = sess.fit_manager
         try:
             x, y, yerr, xerr = self._get_fit_data(rec)
         except Exception as e:
             messagebox.showerror("Fit Error", str(e))
-            self.fit_panel.set_fitting_state(False)
+            self._set_fit_running(False)
             return
 
         # Build iter_cb that checks abort flag
@@ -1459,10 +1479,10 @@ class CurveLabApp(ttk.Frame):
 
         def _poll():
             if self._fit_thread.is_alive():
-                self.after(100, _poll)
+                self.after(self._FIT_POLL_INTERVAL_MS, _poll)
                 return
             self._fit_thread = None
-            self.fit_panel.set_fitting_state(False)
+            self._set_fit_running(False)
 
             if container["error"] is not None:
                 if not self._fit_abort.is_set():
@@ -1472,7 +1492,7 @@ class CurveLabApp(ttk.Frame):
                 return
 
             sess.result = container["result"]
-            self._post_fit_update(sess, rec)
+            self._post_fit_update(sess, rec, sid)
 
             # Auto-show special result dialogs
             if sess.result.candidates:
@@ -1480,17 +1500,22 @@ class CurveLabApp(ttk.Frame):
             if sess.result.flatchain is not None:
                 self._show_emcee_summary_dialog(sess)
 
-        self.after(100, _poll)
+        self.after(self._FIT_POLL_INTERVAL_MS, _poll)
 
     def _abort_fit(self):
         """Signal the background fit to stop."""
         self._fit_abort.set()
 
-    def _post_fit_update(self, sess, rec):
-        """Update plot, params, and report after a fit completes."""
+    def _post_fit_update(self, sess, rec, sid):
+        """Update plot, params, and report after a fit completes.
+
+        sid is the series id the fit was launched against, captured at
+        launch time -- not necessarily self._active_series_id, since an
+        async fit (emcee, brute, ...) can outlive the user's selection.
+        """
         result = sess.result
-        skey = _make_session_key(self._active_series_id, sess.name)
-        series_label = rec.style.get("label", self._active_series_id)
+        skey = _make_session_key(sid, sess.name)
+        series_label = rec.style.get("label", sid)
         label = f"{series_label} \u2014 {sess.name}"
 
         self.plot_mgr.clear_fit_session(skey)
@@ -1526,9 +1551,8 @@ class CurveLabApp(ttk.Frame):
         return base_title
 
     def _show_confidence_intervals(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         fm = sess.fit_manager
         try:
@@ -1539,9 +1563,8 @@ class CurveLabApp(ttk.Frame):
             messagebox.showerror("CI Error", str(e))
 
     def _show_correlations(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         fm = sess.fit_manager
         try:
@@ -1555,9 +1578,8 @@ class CurveLabApp(ttk.Frame):
             messagebox.showerror("Correlation Error", str(e))
 
     def _show_covariance(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         fm = sess.fit_manager
         result = fm.get_covariance_matrix()
@@ -1569,21 +1591,15 @@ class CurveLabApp(ttk.Frame):
         dlg.title(self._analysis_title("Covariance Matrix"))
 
     def _show_diagnostic_plots(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
         dlg = DiagnosticPlotsDialog(self, sess.result)
         dlg.title(self._analysis_title("Fit Diagnostic Plots"))
 
     def _show_confidence_contours(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         # Collect varied parameters
         vary_params = [
@@ -1600,13 +1616,8 @@ class CurveLabApp(ttk.Frame):
         dlg.title(self._analysis_title("2D Confidence Contours"))
 
     def _show_profile_likelihood(self):
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         try:
             profiles = fm.compute_ci_profiles()
@@ -1621,11 +1632,10 @@ class CurveLabApp(ttk.Frame):
             messagebox.showerror("Profile Error", str(e))
 
     def _show_bootstrap(self):
-        sess = self._active_session
-        rec = self._active_record
-        if sess is None or sess.result is None or rec is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        sess = self._require_fit_result()
+        if sess is None:
             return
+        rec = self._active_record
         fm = sess.fit_manager
 
         def on_run(n_boot, boot_type):
@@ -1664,13 +1674,13 @@ class CurveLabApp(ttk.Frame):
 
     def _on_global_fit(self):
         """Open Global Fit dialog for simultaneous fitting across series."""
-        rec = self._active_record
-        sess = self._active_session
-        if rec is None or sess is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
         fm = sess.fit_manager
-        if not fm.components or fm.params is None:
+        if not self._require_model(fm):
+            return
+        if fm.params is None:
             messagebox.showwarning("No Model", "Add at least one model component.")
             return
         if len(self._series_records) < 2:
@@ -1729,13 +1739,8 @@ class CurveLabApp(ttk.Frame):
 
     def _show_uncertainty_propagation(self):
         """Open Uncertainty Propagation dialog."""
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         try:
             uvars = fm._last_result.uvars
@@ -1756,13 +1761,8 @@ class CurveLabApp(ttk.Frame):
 
     def _export_model_result(self):
         """Export lmfit ModelResult to a .sav file."""
-        sess = self._active_session
-        if sess is None or sess.result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
-            return
-        fm = sess.fit_manager
-        if fm._last_result is None:
-            messagebox.showwarning("No Fit", "Run a fit first.")
+        fm = self._require_last_result()
+        if fm is None:
             return
         filepath = filedialog.asksaveasfilename(
             defaultextension=".sav",
@@ -1790,17 +1790,7 @@ class CurveLabApp(ttk.Frame):
             loaded = load_modelresult(filepath)
 
             # Display params and report in the results panel
-            params_info = {}
-            for name, par in loaded.params.items():
-                params_info[name] = {
-                    "value": par.value,
-                    "stderr": par.stderr,
-                    "min": par.min,
-                    "max": par.max,
-                    "vary": par.vary,
-                    "expr": par.expr or "",
-                }
-            self.fit_results.set_params(params_info)
+            self.fit_results.set_params(FitManager.params_to_info(loaded.params))
             gof = {
                 "chi-squared": getattr(loaded, "chisqr", None),
                 "reduced chi-squared": getattr(loaded, "redchi", None),
@@ -1815,14 +1805,11 @@ class CurveLabApp(ttk.Frame):
 
     def _on_batch_fit(self):
         """Apply the active session's model to all plotted series."""
-        rec = self._active_record
-        sess = self._active_session
-        if rec is None or sess is None:
-            messagebox.showwarning("No Session", "Create a fit session first.")
+        sess = self._require_session()
+        if sess is None:
             return
         source_fm = sess.fit_manager
-        if not source_fm.components:
-            messagebox.showwarning("No Model", "Add at least one model component.")
+        if not self._require_model(source_fm):
             return
         if len(self._series_records) < 1:
             messagebox.showwarning("No Series", "Plot at least one series.")
@@ -1870,10 +1857,7 @@ class CurveLabApp(ttk.Frame):
                 if show_resid:
                     self._plot_residuals_for_session(skey, target_sess, target_rec)
 
-                model_desc = " + ".join(
-                    (f"{c.operator} " if i > 0 else "") + c.name
-                    for i, c in enumerate(target_fm.components)
-                )
+                model_desc = target_fm.model_description()
                 gof = result.gof
                 summary_rows.append({
                     "session": f"{series_label} / {session_name}",
@@ -1959,22 +1943,27 @@ class CurveLabApp(ttk.Frame):
 
         # Get axis display transform for distance calculation
         ax = self.plot_mgr.ax
+        click_display = ax.transData.transform((event.xdata, event.ydata))
         for sid, rec in self._series_records.items():
-            if not rec.visible:
+            if not rec.visible or len(rec.x) == 0:
                 continue
-            for i in range(len(rec.x)):
-                # Transform data coords to display coords for fair distance
-                dx_display = ax.transData.transform((rec.x[i], rec.y[i]))
-                click_display = ax.transData.transform((event.xdata, event.ydata))
-                dist = ((dx_display[0] - click_display[0]) ** 2 +
-                        (dx_display[1] - click_display[1]) ** 2) ** 0.5
-                if dist < best_dist:
-                    best_dist = dist
-                    best_sid = sid
-                    best_idx = i
+            # Transform all of this series' points to display coords in one
+            # call instead of once per point -- click_display is constant
+            # per click, so it's computed outside both loops.
+            pts_display = ax.transData.transform(np.column_stack((rec.x, rec.y)))
+            dists = np.hypot(
+                pts_display[:, 0] - click_display[0],
+                pts_display[:, 1] - click_display[1],
+            )
+            i = int(np.argmin(dists))
+            dist = dists[i]
+            if dist < best_dist:
+                best_dist = dist
+                best_sid = sid
+                best_idx = i
 
         # Only toggle if click is within 10 pixels of a point
-        if best_sid is None or best_dist > 10:
+        if best_sid is None or best_dist > self._CLICK_HIT_RADIUS_PX:
             return
 
         rec = self._series_records[best_sid]
@@ -2014,8 +2003,7 @@ class CurveLabApp(ttk.Frame):
                 for sess_name, sess in rec.fit_sessions.items():
                     if sess.result is not None and sess.visible:
                         skey = _make_session_key(sid, sess_name)
-                        if skey not in self.plot_mgr._residual_lines:
-                            self._plot_residuals_for_session(skey, sess, rec)
+                        self._plot_residuals_for_session(skey, sess, rec)
         else:
             self.plot_mgr.clear_all_residuals()
 
@@ -2077,8 +2065,10 @@ class CurveLabApp(ttk.Frame):
                 new_value = value.strip()
                 if new_value:
                     fm.set_param(param_name, expr=new_value)
+                    fm.set_param_hint(param_name, expr=new_value)
                 else:
                     fm.set_param(param_name, expr="", vary=True)
+                    fm.set_param_hint(param_name, expr="", vary=True)
             else:
                 return
             edit = ParamEdit(param_name=param_name, field=field,
@@ -2093,17 +2083,7 @@ class CurveLabApp(ttk.Frame):
         fm = self._active_fit_mgr
         if fm is None or fm.params is None:
             return
-        params_info = {}
-        for name, par in fm.params.items():
-            params_info[name] = {
-                "value": par.value,
-                "stderr": par.stderr,
-                "min": par.min,
-                "max": par.max,
-                "vary": par.vary,
-                "expr": par.expr or "",
-            }
-        self.fit_results.set_params(params_info)
+        self.fit_results.set_params(FitManager.params_to_info(fm.params))
 
     def _undo_param_edit(self, event=None):
         sess = self._active_session
@@ -2111,7 +2091,7 @@ class CurveLabApp(ttk.Frame):
         if sess is None or fm is None or not sess.undo_stack:
             return
         edit = sess.undo_stack.pop()
-        fm.set_param(edit.param_name, **{edit.field: edit.old_value})
+        fm.set_param_hint(edit.param_name, **{edit.field: edit.old_value})
         sess.redo_stack.append(edit)
         self._refresh_param_display()
 
@@ -2121,7 +2101,7 @@ class CurveLabApp(ttk.Frame):
         if sess is None or fm is None or not sess.redo_stack:
             return
         edit = sess.redo_stack.pop()
-        fm.set_param(edit.param_name, **{edit.field: edit.new_value})
+        fm.set_param_hint(edit.param_name, **{edit.field: edit.new_value})
         sess.undo_stack.append(edit)
         self._refresh_param_display()
 

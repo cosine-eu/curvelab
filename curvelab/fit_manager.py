@@ -10,10 +10,14 @@ from lmfit.models import SplineModel
 from .models import create_expression_model, create_model, create_spline_model
 from .session import FitResult  # re-export; canonical location is session.py
 
+# Floor for magnitudes used as divisors or log arguments, so zero-valued
+# errors/residuals can't produce inf weights or log-of-zero.
+MIN_ERROR = 1e-12
+
 
 def _reduce_negentropy(r):
     """Neg-entropy reduce function for robust fitting."""
-    return -np.sum(r * np.log(np.maximum(np.abs(r), 1e-12)))
+    return -np.sum(r * np.log(np.maximum(np.abs(r), MIN_ERROR)))
 
 
 def _reduce_cauchylogpdf(r):
@@ -56,13 +60,16 @@ class FitManager:
         self._params: Parameters | None = None
         self._last_result: ModelResult | None = None
         self._param_hints: dict[str, dict] = {}
+        self._name_counters: dict[str, int] = {}
 
     def add_component(
         self, model_name: str, operator: str = "+", expression: str = ""
     ) -> FitComponent:
         """Add a model component. operator is '+' or '*'; ignored for first component."""
-        # Count existing components with this base name to generate prefix
-        count = sum(1 for c in self.components if c.name == model_name) + 1
+        # Monotonic per-name counter so a freed suffix (from remove_component)
+        # is never reused and can't collide with a still-present component.
+        count = self._name_counters.get(model_name, 0) + 1
+        self._name_counters[model_name] = count
         if len(self.components) == 0:
             # Single component: no prefix for cleaner parameter names
             prefix = ""
@@ -103,6 +110,7 @@ class FitManager:
         self._params = None
         self._last_result = None
         self._param_hints.clear()
+        self._name_counters.clear()
 
     def _build_component_model(self, comp: FitComponent, x_data: np.ndarray | None = None):
         """Build a single component model. Uses x_data for Spline if available."""
@@ -204,6 +212,12 @@ class FitManager:
     def auto_guess(self, x: np.ndarray, y: np.ndarray) -> Parameters:
         """Auto-guess parameters for each component using lmfit's guess().
 
+        Additively-combined components are guessed sequentially against the
+        residual after subtracting previously-guessed components, so e.g.
+        three summed Gaussians don't all guess the same dominant peak.
+        Components combined with *, -, / are guessed against the original
+        data, since subtracting their contribution isn't meaningful.
+
         Only updates value/min/max from guess; preserves user-edited vary,
         expr, and param_hints.
         """
@@ -213,25 +227,51 @@ class FitManager:
         if self._has_spline:
             self._rebuild_model_with_data(x)
 
-        for comp in self.components:
+        residual = np.asarray(y, dtype=float).copy()
+
+        for i, comp in enumerate(self.components):
             m = self._build_component_model(comp, x_data=x)
+            is_additive = i == 0 or comp.operator == "+"
+            target = residual if is_additive else y
             try:
-                guessed = m.guess(y, x=x)
+                guessed = m.guess(target, x=x)
                 for pname, par in guessed.items():
                     if pname in self._params:
                         self._params[pname].set(
                             value=par.value, min=par.min, max=par.max
                         )
+                if is_additive:
+                    try:
+                        residual = residual - m.eval(guessed, x=x)
+                    except Exception:
+                        pass  # Keep prior residual if this component can't be evaluated yet
             except NotImplementedError:
                 pass  # Model doesn't implement guess()
 
         return self._params
 
     def clone_components_to(self, target: "FitManager"):
-        """Copy this manager's component list into target, rebuilding its model."""
+        """Copy this manager's component list and parameter hints (fixed
+        values, bounds) into target, rebuilding its model."""
         target.clear_components()
         for comp in self.components:
             target.add_component(comp.name, operator=comp.operator, expression=comp.expression)
+
+        # add_component can assign a target component a different prefix
+        # than the source's (e.g. if a middle component was removed from
+        # the source's history), so hints are remapped by position rather
+        # than copied verbatim. Longest prefix first so a component with
+        # an empty prefix doesn't swallow every hint name.
+        prefix_pairs = sorted(
+            zip((c.prefix for c in self.components), (c.prefix for c in target.components)),
+            key=lambda pair: len(pair[0]),
+            reverse=True,
+        )
+        for name, hints in self._param_hints.items():
+            for old_prefix, new_prefix in prefix_pairs:
+                if name.startswith(old_prefix):
+                    target.set_param_hint(new_prefix + name[len(old_prefix):], **hints)
+                    break
 
     def set_param_hint(self, name: str, **kwargs):
         """Store a parameter hint that survives model rebuilds."""
@@ -246,21 +286,62 @@ class FitManager:
         if self._params is not None and name in self._params:
             self._params[name].set(**kwargs)
 
+    def model_description(self) -> str:
+        """Compact one-line description, e.g. 'Gaussian + Linear'."""
+        return " ".join(
+            c.name if i == 0 else f"{c.operator} {c.name}"
+            for i, c in enumerate(self.components)
+        )
+
+    def component_labels(self) -> list[str]:
+        """Verbose per-component labels for UI list display."""
+        labels = []
+        for i, c in enumerate(self.components):
+            if c.name == "Expression" and c.expression:
+                display = f"Expression: {c.expression}"
+                if c.prefix:
+                    display = f"{display} ({c.prefix})"
+            elif c.name == "Spline" and c.expression:
+                display = f"Spline [{c.expression}]"
+                if c.prefix:
+                    display = f"{display} ({c.prefix})"
+            else:
+                display = f"{c.name} ({c.prefix})" if c.prefix else c.name
+            if i > 0:
+                display = f"{c.operator} {display}"
+            labels.append(display)
+        return labels
+
+    @staticmethod
+    def params_to_info(params) -> dict[str, dict]:
+        """Convert lmfit Parameters to {name: {value, stderr, min, max, vary, expr}}."""
+        return {
+            name: {
+                "value": par.value,
+                "stderr": par.stderr,
+                "min": par.min,
+                "max": par.max,
+                "vary": par.vary,
+                "expr": par.expr or "",
+            }
+            for name, par in params.items()
+        }
+
     @staticmethod
     def _compute_weights(y, yerr, weight_mode):
         """Compute weights array from y, yerr, and the selected weight mode."""
         if weight_mode == "No weights":
             return None
         if weight_mode == "1/yerr\u00b2" and yerr is not None:
-            safe_yerr = np.maximum(np.abs(yerr), 1e-12)
+            safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
             return 1.0 / (safe_yerr * safe_yerr)
         if weight_mode == "1/y":
-            return 1.0 / np.maximum(np.abs(y), 1e-12)
+            return 1.0 / np.maximum(np.abs(y), MIN_ERROR)
         if weight_mode == "yerr as weights" and yerr is not None:
             return yerr
         # Default: "1/yerr (default)"
         if yerr is not None:
-            return 1.0 / np.maximum(np.abs(yerr), 1e-12)
+            return 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
         return None
 
     def run_fit(
@@ -299,9 +380,10 @@ class FitManager:
                 y_plus = self._model.eval(self._params, x=x + h)
                 y_minus = self._model.eval(self._params, x=x - h)
                 dfdx = (y_plus - y_minus) / (2 * h)
-                weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
+                denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
+                weights = 1.0 / denom
             elif yerr is not None:
-                weights = 1.0 / yerr
+                weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
             else:
                 weights = None
 
@@ -340,17 +422,7 @@ class FitManager:
             for key, vals in comps.items():
                 component_curves[key] = vals
 
-        # Extract parameter info
-        params_info = {}
-        for name, par in self._last_result.params.items():
-            params_info[name] = {
-                "value": par.value,
-                "stderr": par.stderr,
-                "min": par.min,
-                "max": par.max,
-                "vary": par.vary,
-                "expr": par.expr or "",
-            }
+        params_info = self.params_to_info(self._last_result.params)
 
         # Update internal params with fitted values
         self._params = self._last_result.params
@@ -406,7 +478,7 @@ class FitManager:
             return
         x, y = result.x_data, result.y_data
         yerr = result.yerr_data
-        weights = 1.0 / yerr if yerr is not None else None
+        weights = self._compute_weights(y, yerr, "1/yerr (default)")
         if self._has_spline:
             self._rebuild_model_with_data(x)
         self._last_result = self._model.fit(
@@ -481,7 +553,8 @@ class FitManager:
                     y_plus = self._model.eval(x=x + h, **kw)
                     y_minus = self._model.eval(x=x - h, **kw)
                     dfdx = (y_plus - y_minus) / (2 * h)
-                    weights = 1.0 / np.sqrt(yerr**2 + (dfdx * xerr) ** 2)
+                    denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
+                    weights = 1.0 / denom
                 if weights is not None:
                     resid = resid * weights
                 all_resid.append(resid)
@@ -652,12 +725,12 @@ class FitManager:
         # Weights: odrpack uses weight = 1/variance
         weight_y = None
         if yerr is not None:
-            safe_yerr = np.maximum(np.abs(yerr), 1e-12)
+            safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
             weight_y = 1.0 / (safe_yerr ** 2)
 
         weight_x = None
         if xerr is not None:
-            safe_xerr = np.maximum(np.abs(xerr), 1e-12)
+            safe_xerr = np.maximum(np.abs(xerr), MIN_ERROR)
             weight_x = 1.0 / (safe_xerr ** 2)
 
         odr_kwargs = dict(
@@ -783,14 +856,18 @@ class FitManager:
         method: str = "least_squares",
         boot_type: str = "residual",
         weight_mode: str = "1/yerr (default)",
-    ) -> dict[str, np.ndarray]:
+    ) -> tuple[dict[str, np.ndarray], int]:
         """Run bootstrap resampling and return parameter distributions.
 
         boot_type:
           - "residual": Resample residuals and add to fitted values
           - "case": Resample (x, y, yerr) rows with replacement
 
-        Returns {param_name: array of n_boot values}.
+        Returns ({param_name: array of successful resample values}, n_failed),
+        where n_failed is the number of resamples whose fit didn't converge
+        or raised (dropped from the distributions -- a high count means the
+        reported confidence intervals are based on fewer samples than
+        n_boot and may be unreliable).
         """
         if self._last_result is None or self._model is None:
             raise ValueError("Run a fit first")
@@ -801,6 +878,7 @@ class FitManager:
 
         param_names = [n for n, p in best_params.items() if p.vary]
         distributions: dict[str, list[float]] = {n: [] for n in param_names}
+        n_failed = 0
 
         for _ in range(n_boot):
             if boot_type == "case":
@@ -822,9 +900,10 @@ class FitManager:
                 for n in param_names:
                     distributions[n].append(result.params[n].value)
             except Exception:
+                n_failed += 1
                 continue
 
-        return {n: np.array(v) for n, v in distributions.items()}
+        return {n: np.array(v) for n, v in distributions.items()}, n_failed
 
     def evaluate(self, x: np.ndarray) -> np.ndarray:
         """Evaluate the current model at given x values using fitted parameters."""

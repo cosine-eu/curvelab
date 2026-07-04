@@ -58,12 +58,14 @@ def decode_workspace(obj):
     """JSON object_hook that restores ndarray and special floats."""
     if "__ndarray__" in obj:
         return np.array(obj["__ndarray__"])
-    # Restore string-encoded infinities in param dicts
-    for key in ("min", "max"):
-        if key in obj and isinstance(obj[key], str):
-            if obj[key] == "Infinity":
+    # Restore string-encoded infinities wherever they appear: encode_value
+    # turns any inf float into these markers, not just param min/max bounds
+    # (e.g. gof["reduced chi-squared"] can be inf when dof <= 0).
+    for key, val in obj.items():
+        if isinstance(val, str):
+            if val == "Infinity":
                 obj[key] = float("inf")
-            elif obj[key] == "-Infinity":
+            elif val == "-Infinity":
                 obj[key] = float("-inf")
     return obj
 

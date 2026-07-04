@@ -315,6 +315,8 @@ class DataPanel(ttk.LabelFrame):
             idx = sel[0]
             self.series_listbox.delete(idx)
             self._series_items.pop(idx)
+            if self._on_plot:
+                self._on_plot(self._series_items)
 
     def _plot(self):
         if self._on_plot:
@@ -403,7 +405,8 @@ class PlotControlPanel(ttk.Frame):
             width=6,
         )
         xscale.pack(side=tk.LEFT, padx=(0, 10))
-        xscale.bind("<<ComboboxSelected>>", lambda e: self._fire_xscale())
+        xscale.bind("<<ComboboxSelected>>",
+                    lambda e: self._fire(self._on_xscale, self.xscale_var))
 
         ttk.Label(row1, text="Y:").pack(side=tk.LEFT)
         self.yscale_var = tk.StringVar(value="linear")
@@ -415,32 +418,37 @@ class PlotControlPanel(ttk.Frame):
             width=6,
         )
         yscale.pack(side=tk.LEFT, padx=(0, 10))
-        yscale.bind("<<ComboboxSelected>>", lambda e: self._fire_yscale())
+        yscale.bind("<<ComboboxSelected>>",
+                    lambda e: self._fire(self._on_yscale, self.yscale_var))
 
         self.data_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            row1, text="Data", variable=self.data_var, command=self._fire_data
+            row1, text="Data", variable=self.data_var,
+            command=lambda: self._fire(self._on_data_toggled, self.data_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.grid_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            row1, text="Grid", variable=self.grid_var, command=self._fire_grid
+            row1, text="Grid", variable=self.grid_var,
+            command=lambda: self._fire(self._on_grid, self.grid_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.equal_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            row1, text="Equal Axes", variable=self.equal_var, command=self._fire_equal
+            row1, text="Equal Axes", variable=self.equal_var,
+            command=lambda: self._fire(self._on_equal, self.equal_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.legend_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
-            row1, text="Legend", variable=self.legend_var, command=self._fire_legend
+            row1, text="Legend", variable=self.legend_var,
+            command=lambda: self._fire(self._on_legend, self.legend_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.show_params_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Params", variable=self.show_params_var,
-            command=self._fire_show_params,
+            command=lambda: self._fire(self._on_show_params_toggled, self.show_params_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.fit_visible_var = tk.BooleanVar(value=False)
@@ -458,13 +466,14 @@ class PlotControlPanel(ttk.Frame):
         self.residuals_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Residuals", variable=self.residuals_var,
-            command=self._fire_residuals,
+            command=lambda: self._fire(self._on_residuals_toggled, self.residuals_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.confidence_band_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             row1, text="Conf. band", variable=self.confidence_band_var,
-            command=self._fire_confidence_band,
+            command=lambda: self._fire(self._on_confidence_band_toggled,
+                                       self.confidence_band_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.band_sigma_var = tk.StringVar(value="1")
@@ -477,7 +486,8 @@ class PlotControlPanel(ttk.Frame):
         self.weighted_resid_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             row1, text="Wt. resid", variable=self.weighted_resid_var,
-            command=self._fire_weighted_resid,
+            command=lambda: self._fire(self._on_weighted_resid_toggled,
+                                       self.weighted_resid_var),
         ).pack(side=tk.LEFT, padx=5)
 
         self.exclude_var = tk.BooleanVar(value=False)
@@ -492,61 +502,25 @@ class PlotControlPanel(ttk.Frame):
         self.xlabel_var = tk.StringVar()
         self.ylabel_var = tk.StringVar()
 
+        fire_labels = lambda e: self._fire(
+            self._on_axis_labels, self.xlabel_var, self.ylabel_var)
+
         ttk.Label(row2, text="X Label:").pack(side=tk.LEFT)
         xlabel_entry = ttk.Entry(row2, textvariable=self.xlabel_var, width=15)
         xlabel_entry.pack(side=tk.LEFT, padx=(0, 10))
-        xlabel_entry.bind("<Return>", lambda e: self._fire_axis_labels())
-        xlabel_entry.bind("<FocusOut>", lambda e: self._fire_axis_labels())
+        xlabel_entry.bind("<Return>", fire_labels)
+        xlabel_entry.bind("<FocusOut>", fire_labels)
 
         ttk.Label(row2, text="Y Label:").pack(side=tk.LEFT)
         ylabel_entry = ttk.Entry(row2, textvariable=self.ylabel_var, width=15)
         ylabel_entry.pack(side=tk.LEFT, padx=(0, 10))
-        ylabel_entry.bind("<Return>", lambda e: self._fire_axis_labels())
-        ylabel_entry.bind("<FocusOut>", lambda e: self._fire_axis_labels())
+        ylabel_entry.bind("<Return>", fire_labels)
+        ylabel_entry.bind("<FocusOut>", fire_labels)
 
-    def _fire_xscale(self):
-        if self._on_xscale:
-            self._on_xscale(self.xscale_var.get())
-
-    def _fire_yscale(self):
-        if self._on_yscale:
-            self._on_yscale(self.yscale_var.get())
-
-    def _fire_data(self):
-        if self._on_data_toggled:
-            self._on_data_toggled(self.data_var.get())
-
-    def _fire_grid(self):
-        if self._on_grid:
-            self._on_grid(self.grid_var.get())
-
-    def _fire_equal(self):
-        if self._on_equal:
-            self._on_equal(self.equal_var.get())
-
-    def _fire_legend(self):
-        if self._on_legend:
-            self._on_legend(self.legend_var.get())
-
-    def _fire_show_params(self):
-        if self._on_show_params_toggled:
-            self._on_show_params_toggled(self.show_params_var.get())
-
-    def _fire_residuals(self):
-        if self._on_residuals_toggled:
-            self._on_residuals_toggled(self.residuals_var.get())
-
-    def _fire_weighted_resid(self):
-        if self._on_weighted_resid_toggled:
-            self._on_weighted_resid_toggled(self.weighted_resid_var.get())
-
-    def _fire_confidence_band(self):
-        if self._on_confidence_band_toggled:
-            self._on_confidence_band_toggled(self.confidence_band_var.get())
-
-    def _fire_axis_labels(self):
-        if self._on_axis_labels:
-            self._on_axis_labels(self.xlabel_var.get(), self.ylabel_var.get())
+    def _fire(self, callback, *tk_vars):
+        """Invoke callback (if set) with the current values of the given tk variables."""
+        if callback:
+            callback(*(v.get() for v in tk_vars))
 
 
 class FitPanel(ttk.LabelFrame):
@@ -590,6 +564,7 @@ class FitPanel(ttk.LabelFrame):
         self._on_toggle_series_visible = on_toggle_series_visible
         self._on_abort = on_abort
         self._session_names: list[str] = []
+        self._model_locked = False
 
         self._build_ui()
 
@@ -622,15 +597,18 @@ class FitPanel(ttk.LabelFrame):
 
         sess_btn_frame = ttk.Frame(self)
         sess_btn_frame.pack(fill=tk.X, pady=(0, 3))
-        ttk.Button(sess_btn_frame, text="New", command=self._new_session).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        self._new_session_btn = ttk.Button(
+            sess_btn_frame, text="New", command=self._new_session
         )
-        ttk.Button(sess_btn_frame, text="Rename", command=self._rename_session).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        self._new_session_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        self._rename_session_btn = ttk.Button(
+            sess_btn_frame, text="Rename", command=self._rename_session
         )
-        ttk.Button(sess_btn_frame, text="Delete", command=self._delete_session).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        self._rename_session_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        self._delete_session_btn = ttk.Button(
+            sess_btn_frame, text="Delete", command=self._delete_session
         )
+        self._delete_session_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(sess_btn_frame, text="Show/Hide", command=self._toggle_session_visible).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
         )
@@ -666,12 +644,14 @@ class FitPanel(ttk.LabelFrame):
 
         comp_btn_frame = ttk.Frame(self)
         comp_btn_frame.pack(fill=tk.X, pady=3)
-        ttk.Button(
+        self._add_comp_btn = ttk.Button(
             comp_btn_frame, text="Add Component", command=self._add_component
-        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
-        ttk.Button(
+        )
+        self._add_comp_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
+        self._remove_comp_btn = ttk.Button(
             comp_btn_frame, text="Remove", command=self._remove_component
-        ).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+        )
+        self._remove_comp_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
         # --- Component list ---
         self.comp_listbox = tk.Listbox(self, height=3)
@@ -743,17 +723,20 @@ class FitPanel(ttk.LabelFrame):
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
         fit_btn_frame.pack(fill=tk.X, pady=3)
-        ttk.Button(fit_btn_frame, text="Auto Guess", command=self._auto_guess).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2)
+        self._auto_guess_btn = ttk.Button(
+            fit_btn_frame, text="Auto Guess", command=self._auto_guess
         )
+        self._auto_guess_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(0, 2))
         self._fit_btn = ttk.Button(fit_btn_frame, text="Fit", command=self._fit)
         self._fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
-        ttk.Button(fit_btn_frame, text="Batch Fit", command=self._batch_fit).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2
+        self._batch_fit_btn = ttk.Button(
+            fit_btn_frame, text="Batch Fit", command=self._batch_fit
         )
-        ttk.Button(fit_btn_frame, text="Clear", command=self._clear_fit).pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
+        self._batch_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        self._clear_fit_btn = ttk.Button(
+            fit_btn_frame, text="Clear", command=self._clear_fit
         )
+        self._clear_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
     def _series_selected(self, event=None):
         if self._on_series_selected:
@@ -869,6 +852,8 @@ class FitPanel(ttk.LabelFrame):
             self._on_remove_component(sel[0])
 
     def _edit_expression(self, event=None):
+        if self._model_locked:
+            return
         sel = self.comp_listbox.curselection()
         if not sel or not self._on_edit_expression:
             return
@@ -907,11 +892,27 @@ class FitPanel(ttk.LabelFrame):
             self._on_clear_fit()
 
     def set_fitting_state(self, fitting: bool):
-        """Toggle the Fit button between Fit and Abort modes."""
+        """Toggle the Fit button between Fit and Abort modes, and lock out
+        every control that mutates the model or parameters while a
+        background fit thread is reading/writing them."""
         if fitting:
             self._fit_btn.configure(text="Abort", command=self._abort)
         else:
             self._fit_btn.configure(text="Fit", command=self._fit)
+
+        self._model_locked = fitting
+        state = tk.DISABLED if fitting else tk.NORMAL
+        for btn in (
+            self._add_comp_btn,
+            self._remove_comp_btn,
+            self._auto_guess_btn,
+            self._batch_fit_btn,
+            self._clear_fit_btn,
+            self._new_session_btn,
+            self._rename_session_btn,
+            self._delete_session_btn,
+        ):
+            btn.configure(state=state)
 
     def _abort(self):
         if self._on_abort:
@@ -931,7 +932,19 @@ class FitResultsPanel(ttk.LabelFrame):
         super().__init__(parent, text="Fit Results", padding=5)
         self._on_param_edited = on_param_edited
         self._editing_entry = None
+        self._editing_done = True  # no edit in progress
+        self._locked = False
         self._build_ui()
+
+    def set_locked(self, locked: bool):
+        """Disable cell editing while a background fit is mutating params."""
+        self._locked = locked
+        if locked and self._editing_entry is not None:
+            # Mark done first so the <FocusOut> that destroy() triggers
+            # doesn't re-enter commit()/cancel() on a destroyed widget.
+            self._editing_done = True
+            self._editing_entry.destroy()
+            self._editing_entry = None
 
     def _build_ui(self):
         # --- Goodness-of-fit summary ---
@@ -1066,6 +1079,8 @@ class FitResultsPanel(ttk.LabelFrame):
 
     def _on_double_click(self, event):
         """Handle double-click to edit a cell in the parameter treeview."""
+        if self._locked:
+            return
         region = self.param_tree.identify_region(event.x, event.y)
         if region != "cell":
             return
@@ -1104,12 +1119,18 @@ class FitResultsPanel(ttk.LabelFrame):
         entry.select_range(0, tk.END)
         entry.focus_set()
         self._editing_entry = entry
-
-        cancelled = False
+        self._editing_done = False
 
         def commit(e=None):
-            if cancelled:
+            # Destroying the Entry below triggers a deferred <FocusOut> on
+            # it, which would otherwise re-enter commit()/cancel() on an
+            # already-destroyed widget and raise TclError. Guard with
+            # self._editing_done (shared with set_locked()) instead of a
+            # closure-local flag, since set_locked() can also destroy this
+            # entry from outside these closures.
+            if self._editing_done:
                 return
+            self._editing_done = True
             new_val = entry.get()
             entry.destroy()
             self._editing_entry = None
@@ -1118,8 +1139,9 @@ class FitResultsPanel(ttk.LabelFrame):
                 self._on_param_edited(param_name, col_name, new_val)
 
         def cancel(e=None):
-            nonlocal cancelled
-            cancelled = True
+            if self._editing_done:
+                return
+            self._editing_done = True
             entry.destroy()
             self._editing_entry = None
 

@@ -1,5 +1,7 @@
 """lmfit 1D model registry."""
 
+from functools import partial
+
 import numpy as np
 from lmfit.models import (
     BreitWignerModel,
@@ -61,12 +63,6 @@ MODEL_REGISTRY: dict[str, type] = {
     "Lognormal": LognormalModel,
     "Linear": LinearModel,
     "Quadratic": QuadraticModel,
-    "Polynomial2": lambda prefix="": PolynomialModel(degree=2, prefix=prefix),
-    "Polynomial3": lambda prefix="": PolynomialModel(degree=3, prefix=prefix),
-    "Polynomial4": lambda prefix="": PolynomialModel(degree=4, prefix=prefix),
-    "Polynomial5": lambda prefix="": PolynomialModel(degree=5, prefix=prefix),
-    "Polynomial6": lambda prefix="": PolynomialModel(degree=6, prefix=prefix),
-    "Polynomial7": lambda prefix="": PolynomialModel(degree=7, prefix=prefix),
     "Step": StepModel,
     "Rectangle": RectangleModel,
     "SplitLorentzian": SplitLorentzianModel,
@@ -80,6 +76,9 @@ MODEL_REGISTRY: dict[str, type] = {
     "Expression": None,  # Sentinel: requires expression string at creation time
     "Spline": None,  # Sentinel: requires knot count at creation time
 }
+
+for _degree in range(2, 8):
+    MODEL_REGISTRY[f"Polynomial{_degree}"] = partial(PolynomialModel, degree=_degree)
 
 # Add lmfit >= 1.3 models when available
 if BoseModel is not None:

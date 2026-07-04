@@ -171,6 +171,7 @@ class PlotManager:
     def plot_residuals(self, session_key: str, x: np.ndarray, residuals: np.ndarray,
                        color: str = "red", markersize: float = 3.0):
         """Plot residual points on the residuals axes."""
+        self.clear_residuals(session_key)
         artists = []
         (line,) = self.ax_resid.plot(
             x, residuals, marker="o", linestyle="None",
