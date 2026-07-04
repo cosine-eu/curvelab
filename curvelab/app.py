@@ -2032,8 +2032,7 @@ class CurveLabApp(ttk.Frame):
                 for sess_name, sess in rec.fit_sessions.items():
                     if sess.result is not None and sess.visible:
                         skey = _make_session_key(sid, sess_name)
-                        if skey not in self.plot_mgr._residual_lines:
-                            self._plot_residuals_for_session(skey, sess, rec)
+                        self._plot_residuals_for_session(skey, sess, rec)
         else:
             self.plot_mgr.clear_all_residuals()
 
