@@ -42,8 +42,8 @@ class FitManagerDeserializeTests(unittest.TestCase):
 
 class WorkspaceContractTests(unittest.TestCase):
     def test_app_workspace_includes_reduce_and_weight_in_save_and_load(self):
-        app_path = Path(__file__).resolve().parents[1] / "curvelab" / "app.py"
-        source = app_path.read_text(encoding="utf-8")
+        ws_path = Path(__file__).resolve().parents[1] / "curvelab" / "app_workspace.py"
+        source = ws_path.read_text(encoding="utf-8")
 
         # Save path
         self.assertRegex(source, r'"reduce_fcn"')
