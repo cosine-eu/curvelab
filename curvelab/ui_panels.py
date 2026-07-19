@@ -5,6 +5,7 @@ from tkinter import ttk, filedialog, messagebox, simpledialog
 
 from .fit_manager import REDUCE_FUNCTIONS, WEIGHT_MODES
 from .models import MODEL_NAMES
+from .ui_common import set_readonly_text
 
 # Marker choices for the style dropdown
 MARKERS = ["o", "s", "^", "v", "D", "x", "+", ".", "*", "h"]
@@ -1045,10 +1046,7 @@ class FitResultsPanel(ttk.LabelFrame):
         self.gof_var.set("  ".join(parts))
 
     def set_report(self, report: str):
-        self.report_text.config(state=tk.NORMAL)
-        self.report_text.delete("1.0", tk.END)
-        self.report_text.insert("1.0", report)
-        self.report_text.config(state=tk.DISABLED)
+        set_readonly_text(self.report_text, report)
 
     def _copy_table(self):
         """Copy parameter table to clipboard as tab-separated text."""
@@ -1073,9 +1071,7 @@ class FitResultsPanel(ttk.LabelFrame):
     def clear(self):
         self.gof_var.set("")
         self.param_tree.delete(*self.param_tree.get_children())
-        self.report_text.config(state=tk.NORMAL)
-        self.report_text.delete("1.0", tk.END)
-        self.report_text.config(state=tk.DISABLED)
+        set_readonly_text(self.report_text, "")
 
     def _on_double_click(self, event):
         """Handle double-click to edit a cell in the parameter treeview."""

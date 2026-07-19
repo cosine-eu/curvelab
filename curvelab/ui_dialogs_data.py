@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from .ui_common import BaseDialog
+from .ui_common import BaseDialog, set_readonly_text
 
 
 class SimulateDataDialog(BaseDialog):
@@ -594,10 +594,7 @@ class EvaluateModelDialog(BaseDialog):
             for xi, yi in zip(x, y):
                 lines.append(f"{xi:16.8g}  {yi:16.8g}")
             self._last_text = "\n".join(lines)
-            self._result_text.config(state=tk.NORMAL)
-            self._result_text.delete("1.0", tk.END)
-            self._result_text.insert("1.0", self._last_text)
-            self._result_text.config(state=tk.DISABLED)
+            set_readonly_text(self._result_text, self._last_text)
         except Exception as e:
             from tkinter import messagebox
             messagebox.showerror("Evaluate Error", str(e), parent=self)
@@ -689,10 +686,7 @@ class ColumnCalculatorDialog(BaseDialog):
                 preview = ", ".join(f"{v:.6g}" for v in result[:10])
                 if len(result) > 10:
                     preview += f", ... ({len(result)} values)"
-                self._preview_text.config(state=tk.NORMAL)
-                self._preview_text.delete("1.0", tk.END)
-                self._preview_text.insert("1.0", preview)
-                self._preview_text.config(state=tk.DISABLED)
+                set_readonly_text(self._preview_text, preview)
                 self._status_var.set("")
             elif not preview_only:
                 self._status_var.set("")

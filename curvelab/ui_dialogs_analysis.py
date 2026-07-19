@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import tkinter.font as tkfont
 
-from .ui_common import BaseDialog
+from .ui_common import BaseDialog, set_readonly_text
 
 
 def build_scrollable_text_viewer(dialog, content: str, font=("Courier", 10)) -> tk.Text:
@@ -249,10 +249,7 @@ class FTestDialog(BaseDialog):
         self._show_result("\n".join(lines))
 
     def _show_result(self, text: str):
-        self._result_text.config(state=tk.NORMAL)
-        self._result_text.delete("1.0", tk.END)
-        self._result_text.insert("1.0", text)
-        self._result_text.config(state=tk.DISABLED)
+        set_readonly_text(self._result_text, text)
 
 
 class CovarianceMatrixDialog(BaseDialog):
