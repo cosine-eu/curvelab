@@ -9,11 +9,9 @@ state (_fit_thread, _fit_abort, _FIT_POLL_INTERVAL_MS) held on CurveLabApp.
 import threading
 from tkinter import messagebox
 
-import numpy as np
-
 from .fit_manager import FitManager, REDUCE_FUNCTIONS
 from .session import (
-    FIT_COLORS, FitSession, SeriesRecord,
+    FIT_COLORS, FitSession,
     make_session_key as _make_session_key,
 )
 from .ui_dialogs_analysis import ModelComparisonDialog, GlobalFitDialog
@@ -24,39 +22,6 @@ class FitHandlersMixin:
 
     _SLOW_METHODS = {"emcee", "brute", "differential_evolution", "basinhopping",
                       "dual_annealing", "shgo", "ampgo"}
-
-    def _get_fit_data(self, rec: SeriesRecord):
-        """Return (x, y, yerr, xerr) cleaned and optionally masked to fit range."""
-        from .preprocessing import prepare_fit_data
-
-        # Determine x range from UI
-        x_range = None
-        xmin_str = self.plot_controls.fit_xmin_var.get().strip()
-        xmax_str = self.plot_controls.fit_xmax_var.get().strip()
-        if xmin_str or xmax_str:
-            try:
-                xmin = float(xmin_str) if xmin_str else -np.inf
-                xmax = float(xmax_str) if xmax_str else np.inf
-                x_range = (xmin, xmax)
-            except ValueError:
-                messagebox.showwarning(
-                    "Invalid Fit Range",
-                    f"Could not parse fit range ('{xmin_str}', '{xmax_str}') "
-                    "as numbers. Fitting the full data range instead.",
-                )
-        elif self.plot_controls.fit_visible_var.get():
-            x_range = self.plot_mgr.ax.get_xlim()
-
-        x, y, yerr, xerr, warnings = prepare_fit_data(rec, x_range=x_range)
-
-        # Show warnings via UI
-        for w in warnings:
-            if "NaN" in w:
-                messagebox.showinfo("Data Cleaned", w)
-            else:
-                messagebox.showwarning("Duplicate X Values", w)
-
-        return x, y, yerr, xerr
 
     def _on_auto_guess(self):
         sess = self._require_session()
