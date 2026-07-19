@@ -1413,6 +1413,7 @@ result, undo/redo history, and plot color.
 | **Rename** | Changes the session name |
 | **Delete** | Removes a session, its model, fit result, and fit curve |
 | **Show/Hide** | Toggles the session's fit curve visibility |
+| **Clear Model** | Empties the active session: removes its model components, fit result, fit curve, and undo history. The session itself (name and color) remains, ready for a new model. Use **Delete** to remove the session entirely. |
 
 Sessions are listed in the Fit panel's session listbox. The header above
 the list reads "Sessions for: *series-label*" to indicate which series the

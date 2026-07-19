@@ -735,7 +735,7 @@ class FitPanel(ttk.LabelFrame):
         )
         self._batch_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         self._clear_fit_btn = ttk.Button(
-            fit_btn_frame, text="Clear", command=self._clear_fit
+            fit_btn_frame, text="Clear Model", command=self._clear_fit
         )
         self._clear_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
 
