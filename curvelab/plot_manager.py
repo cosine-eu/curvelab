@@ -224,12 +224,9 @@ class PlotManager:
 
     def clear_fit_session(self, session_key: str):
         """Remove only the fit lines + annotation + residuals for one session."""
-        lines = self._fit_lines.pop(session_key, [])
-        for line in lines:
+        for line in self._fit_lines.pop(session_key, []):
             line.remove()
-        ann = self._annotations.pop(session_key, None)
-        if ann is not None:
-            ann.remove()
+        self.remove_annotation(session_key)
         self.clear_residuals(session_key)
         self._update_legend()
         self.canvas.draw_idle()
@@ -242,20 +239,9 @@ class PlotManager:
 
     def clear_all_fits(self):
         """Remove all fit lines, annotations, and residuals."""
-        for lines in self._fit_lines.values():
-            for line in lines:
-                line.remove()
-        self._fit_lines.clear()
-        for ann in self._annotations.values():
-            ann.remove()
-        self._annotations.clear()
-        self.clear_all_residuals()
-        self._update_legend()
-        self.canvas.draw_idle()
-
-    def clear_fit(self):
-        """Remove all fit curves and annotations (backward compat)."""
-        self.clear_all_fits()
+        keys = set(self._fit_lines) | set(self._annotations) | set(self._residual_lines)
+        for key in keys:
+            self.clear_fit_session(key)
 
     def annotate_params(
         self,
