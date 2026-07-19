@@ -74,3 +74,24 @@ models.
 
 Deciding question: what does the 2D data look like — detector images on a
 regular grid, scattered (x, y, z) points, or families of 1D curves?
+
+## Workspace (.clw) format hardening
+
+Current state: single JSON file; data saved by reference (file paths only),
+fit results embedded in full (arrays/params/gof/report); live lmfit result
+reconstructed by refit-on-load; numpy/inf/nan handled by custom
+encoder/decoder. A `"version": 1` field is written but never read —
+compatibility today comes only from defensive `.get(key, default)` reads.
+
+Improvements, in suggested order:
+
+1. **Warn at save time** when a dataset has no reloadable file path
+   (pasted or simulated data) — today it is silently dropped on the next
+   load. Sharpest edge in the current format.
+2. **Check `version` on load**: warn on files written by a newer CurveLab;
+   define a bump policy (bump on any semantic change to the structure).
+   Optionally also record the app version string for diagnostics.
+3. **Optional "embed data in workspace"**: store datasets inline (the
+   ndarray machinery already exists) for self-contained, shareable files
+   at the cost of size. Could auto-embed datasets that lack a file path,
+   which would also fix item 1 properly.
