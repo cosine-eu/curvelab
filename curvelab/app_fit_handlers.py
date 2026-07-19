@@ -300,8 +300,7 @@ class FitHandlersMixin:
                 if show_resid:
                     self._plot_residuals_for_session(skey, target_sess, r)
 
-            self._sync_session_list()
-            self._load_session_into_ui()
+            self._refresh_session_ui()
 
         GlobalFitDialog(self, series_info, base_param_names, on_fit=on_fit)
 
@@ -387,8 +386,7 @@ class FitHandlersMixin:
                 )
 
         # Sync UI to the currently active session
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._refresh_session_ui()
 
         if summary_rows:
             ModelComparisonDialog(self, summary_rows)

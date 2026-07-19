@@ -221,10 +221,7 @@ class WorkspaceMixin:
         self._load_workspace_refit()
 
         # Replot everything and sync UI
-        self._replot_all_series()
-        self._sync_series_combo()
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._refresh_all_ui()
 
     def _load_workspace_datasets(self, ws) -> dict:
         """Reload datasets from saved filepaths; return {old name -> new name}."""

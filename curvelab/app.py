@@ -504,6 +504,23 @@ class CurveLabApp(
             return
         self._update_component_list_from(fm)
 
+    # --- Composite refreshers: resync UI after state changes ---
+
+    def _refresh_session_ui(self):
+        """Resync the session list and load the active session into the panels."""
+        self._sync_session_list()
+        self._load_session_into_ui()
+
+    def _refresh_series_ui(self):
+        """Resync the series combo, session list, and active-session panels."""
+        self._sync_series_combo()
+        self._refresh_session_ui()
+
+    def _refresh_all_ui(self):
+        """Replot everything and resync all series/session panels."""
+        self._replot_all_series()
+        self._refresh_series_ui()
+
     # --- Residuals / confidence band helpers ---
 
     def _plot_residuals_for_session(self, skey: str, sess: FitSession, rec: SeriesRecord):
@@ -600,10 +617,7 @@ class CurveLabApp(
         else:
             self.data_panel.set_columns([])
 
-        self._replot_all_series()
-        self._sync_series_combo()
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._refresh_all_ui()
 
     # --- Plot callback ---
 
@@ -674,9 +688,7 @@ class CurveLabApp(
         elif self._active_series_id not in self._series_records:
             self._active_series_id = next(iter(self._series_records), None)
 
-        self._sync_series_combo()
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._refresh_series_ui()
 
     def _replot_all_series(self):
         """Re-plot all current series and their fit curves."""
@@ -746,8 +758,7 @@ class CurveLabApp(
         if series_id not in self._series_records:
             return
         self._active_series_id = series_id
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._refresh_session_ui()
 
     def _on_session_selected(self, session_name: str):
         rec = self._active_record
@@ -802,8 +813,7 @@ class CurveLabApp(
         sess = FitSession(name=name, color=color)
         rec.fit_sessions[name] = sess
         rec.active_session_name = name
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._refresh_session_ui()
 
     def _on_rename_session(self, old_name: str, new_name: str):
         rec = self._active_record
@@ -839,8 +849,7 @@ class CurveLabApp(
         if rec.active_session_name == name:
             rec.active_session_name = next(iter(rec.fit_sessions), None)
 
-        self._sync_session_list()
-        self._load_session_into_ui()
+        self._refresh_session_ui()
 
     def _on_toggle_series_visible(self, idx: int):
         series_items = self.data_panel.series_list
