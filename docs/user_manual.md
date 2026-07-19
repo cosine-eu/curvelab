@@ -1491,10 +1491,19 @@ fit sessions.
 | **Wt. resid** | Show weighted residuals (divided by yerr) instead of raw residuals |
 | **Exclude pts** | Enable click-to-exclude mode for data points |
 
-### Axis labels
+### Title and axis labels
 
-Custom X and Y axis labels can be entered in the plot controls. Labels
-update when you press Enter or the field loses focus.
+A plot title and custom X and Y axis labels can be entered in the plot
+controls. They update when you press Enter or the field loses focus.
+
+### Axis limits
+
+The **X Range** and **Y Range** entry pairs pin the plot limits. An empty
+field means that side is scaled automatically, so you can pin just one
+side (e.g. only a maximum). Clearing all four fields restores full
+autoscaling. Pinned limits persist across replots and are saved in the
+workspace. Note that the fit x-range control (row above) is independent:
+it restricts which points are *fitted*, not what is displayed.
 
 ### Coordinate display
 

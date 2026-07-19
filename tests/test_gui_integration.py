@@ -216,6 +216,51 @@ class ScaleRoundTripTests(GuiTestBase):
             self.assertEqual(self._render(), baseline)
 
 
+class TitleAndAxisLimitTests(GuiTestBase):
+    """The Title and X/Y Range entries pin the plot title and axis limits;
+    empty fields mean automatic, and pinned limits survive a replot."""
+
+    def test_title_is_applied_and_survives_replot(self):
+        self._add_fitted_series()
+        self.app._on_title("My Measurement")
+        self.assertEqual(self.app.plot_mgr.ax.get_title(), "My Measurement")
+        self.app._replot_all_series()  # clear_all + redraw must keep the title
+        self.assertEqual(self.app.plot_mgr.ax.get_title(), "My Measurement")
+
+    def test_limits_pin_and_clear(self):
+        self._add_fitted_series()
+        self.app._replot_all_series()
+        ax = self.app.plot_mgr.ax
+
+        self.app._on_axis_limits("1", "5", "-2", "8")
+        self.assertEqual(ax.get_xlim(), (1.0, 5.0))
+        self.assertEqual(ax.get_ylim(), (-2.0, 8.0))
+
+        # Pinned limits survive a replot.
+        self.app._replot_all_series()
+        self.assertEqual(ax.get_xlim(), (1.0, 5.0))
+        self.assertEqual(ax.get_ylim(), (-2.0, 8.0))
+
+        # Partial spec: only one side pinned, the other stays automatic.
+        self.app._on_axis_limits("", "5", "", "")
+        self.assertEqual(ax.get_xlim()[1], 5.0)
+        self.assertLess(ax.get_xlim()[0], 1.0)  # auto again (data starts at 0)
+
+        # All empty restores full autoscale (data spans 0..10).
+        self.app._on_axis_limits("", "", "", "")
+        self.assertLess(ax.get_xlim()[0], 1.0)
+        self.assertGreater(ax.get_xlim()[1], 9.0)
+
+    def test_bad_limit_warns_and_keeps_previous(self):
+        self._add_fitted_series()
+        self.app._replot_all_series()
+        self.app._on_axis_limits("1", "5", "", "")
+        with mock.patch("curvelab.app_plotting.messagebox.showwarning") as warn:
+            self.app._on_axis_limits("banana", "5", "", "")
+            warn.assert_called_once()
+        self.assertEqual(self.app.plot_mgr.ax.get_xlim(), (1.0, 5.0))
+
+
 class WorkspaceLoadAnalysisTests(GuiTestBase):
     """The experiment doc's canonical bug: load a workspace, then open an
     analysis dialog — the fit result (and reconstructed lmfit result) must be

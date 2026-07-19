@@ -375,6 +375,8 @@ class PlotControlPanel(ttk.Frame):
         on_axis_labels=None,
         on_data_toggled=None,
         on_weighted_resid_toggled=None,
+        on_title=None,
+        on_axis_limits=None,
     ):
         super().__init__(parent, padding=5)
         self._on_xscale = on_xscale
@@ -388,6 +390,8 @@ class PlotControlPanel(ttk.Frame):
         self._on_axis_labels = on_axis_labels
         self._on_data_toggled = on_data_toggled
         self._on_weighted_resid_toggled = on_weighted_resid_toggled
+        self._on_title = on_title
+        self._on_axis_limits = on_axis_limits
 
         self._build_ui()
 
@@ -496,27 +500,43 @@ class PlotControlPanel(ttk.Frame):
             row1, text="Exclude pts", variable=self.exclude_var,
         ).pack(side=tk.LEFT, padx=5)
 
-        # --- Row 2: Axis labels ---
+        # --- Row 2: Title, axis labels, axis limits ---
         row2 = ttk.Frame(self)
         row2.pack(fill=tk.X, pady=(2, 0))
 
+        self.title_var = tk.StringVar()
         self.xlabel_var = tk.StringVar()
         self.ylabel_var = tk.StringVar()
+        self.xmin_var = tk.StringVar()
+        self.xmax_var = tk.StringVar()
+        self.ymin_var = tk.StringVar()
+        self.ymax_var = tk.StringVar()
 
+        fire_title = lambda e: self._fire(self._on_title, self.title_var)
         fire_labels = lambda e: self._fire(
             self._on_axis_labels, self.xlabel_var, self.ylabel_var)
+        fire_limits = lambda e: self._fire(
+            self._on_axis_limits,
+            self.xmin_var, self.xmax_var, self.ymin_var, self.ymax_var)
 
-        ttk.Label(row2, text="X Label:").pack(side=tk.LEFT)
-        xlabel_entry = ttk.Entry(row2, textvariable=self.xlabel_var, width=15)
-        xlabel_entry.pack(side=tk.LEFT, padx=(0, 10))
-        xlabel_entry.bind("<Return>", fire_labels)
-        xlabel_entry.bind("<FocusOut>", fire_labels)
+        def entry(label, var, width, fire, sep="-"):
+            ttk.Label(row2, text=label).pack(side=tk.LEFT)
+            e = ttk.Entry(row2, textvariable=var, width=width)
+            e.pack(side=tk.LEFT, padx=(0, 10 if sep is None else 0))
+            e.bind("<Return>", fire)
+            e.bind("<FocusOut>", fire)
+            return e
 
-        ttk.Label(row2, text="Y Label:").pack(side=tk.LEFT)
-        ylabel_entry = ttk.Entry(row2, textvariable=self.ylabel_var, width=15)
-        ylabel_entry.pack(side=tk.LEFT, padx=(0, 10))
-        ylabel_entry.bind("<Return>", fire_labels)
-        ylabel_entry.bind("<FocusOut>", fire_labels)
+        entry("Title:", self.title_var, 18, fire_title, sep=None)
+        entry("X Label:", self.xlabel_var, 12, fire_labels, sep=None)
+        entry("Y Label:", self.ylabel_var, 12, fire_labels, sep=None)
+
+        entry("X Range:", self.xmin_var, 7, fire_limits)
+        ttk.Label(row2, text="–").pack(side=tk.LEFT)
+        entry("", self.xmax_var, 7, fire_limits, sep=None)
+        entry("Y Range:", self.ymin_var, 7, fire_limits)
+        ttk.Label(row2, text="–").pack(side=tk.LEFT)
+        entry("", self.ymax_var, 7, fire_limits, sep=None)
 
     def _fire(self, callback, *tk_vars):
         """Invoke callback (if set) with the current values of the given tk variables."""

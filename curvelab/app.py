@@ -264,6 +264,8 @@ class CurveLabApp(
             on_axis_labels=self._on_axis_labels,
             on_data_toggled=self._on_data_toggled,
             on_weighted_resid_toggled=self._on_weighted_resid_toggled,
+            on_title=self._on_title,
+            on_axis_limits=self._on_axis_limits,
         )
         self.plot_controls.grid(row=1, column=0, sticky="ew", pady=2)
 

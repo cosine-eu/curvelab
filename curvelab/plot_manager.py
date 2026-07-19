@@ -46,6 +46,10 @@ class PlotManager:
         self._residuals_visible = False
         self._xlabel = ""
         self._ylabel = ""
+        self._title = ""
+        # User-pinned axis limits; None on a side means automatic.
+        self._user_xlim: tuple[float | None, float | None] = (None, None)
+        self._user_ylim: tuple[float | None, float | None] = (None, None)
 
         self.ax.grid(self._show_grid)
         self.ax_resid.grid(self._show_grid)
@@ -77,6 +81,8 @@ class PlotManager:
             self.ax.set_xlabel(xlabel)
         if ylabel:
             self.ax.set_ylabel(ylabel)
+        if self._title:
+            self.ax.set_title(self._title)
         self.ax.grid(self._show_grid)
         self.ax_resid.grid(self._show_grid)
         self._apply_tick_visibility()
@@ -109,6 +115,7 @@ class PlotManager:
             (line,) = self.ax.plot(x, y, **kwargs)
             self._series_lines.append(line)
 
+        self._apply_axis_limits()
         self._update_legend()
         self.canvas.draw_idle()
 
@@ -165,6 +172,7 @@ class PlotManager:
         else:
             self._fit_lines[""] = lines
 
+        self._apply_axis_limits()
         self._update_legend()
         self.canvas.draw_idle()
 
@@ -312,6 +320,33 @@ class PlotManager:
         self.ax.set_xlabel(xlabel)
         self.ax.set_ylabel(ylabel)
         self.canvas.draw_idle()
+
+    def set_title(self, title: str):
+        self._title = title
+        self.ax.set_title(title)
+        self.canvas.draw_idle()
+
+    def set_axis_limits(self, xmin: float | None = None, xmax: float | None = None,
+                        ymin: float | None = None, ymax: float | None = None):
+        """Pin axis limits on the main axes; None on a side means automatic.
+        All-None restores full autoscaling."""
+        self._user_xlim = (xmin, xmax)
+        self._user_ylim = (ymin, ymax)
+        # Recompute automatic limits first so cleared sides fall back to them.
+        self.ax.autoscale(enable=True)
+        self.ax.relim()
+        self.ax.autoscale_view()
+        self._apply_axis_limits()
+        self.canvas.draw_idle()
+
+    def _apply_axis_limits(self):
+        """Re-pin any user-set axis limits (autoscale stays on unset axes)."""
+        xmin, xmax = self._user_xlim
+        ymin, ymax = self._user_ylim
+        if xmin is not None or xmax is not None:
+            self.ax.set_xlim(left=xmin, right=xmax)
+        if ymin is not None or ymax is not None:
+            self.ax.set_ylim(bottom=ymin, top=ymax)
 
     def set_grid(self, enabled: bool):
         self._show_grid = enabled

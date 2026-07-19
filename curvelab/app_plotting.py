@@ -315,3 +315,26 @@ class PlottingMixin:
 
     def _on_axis_labels(self, xlabel: str, ylabel: str):
         self.plot_mgr.set_axis_labels(xlabel, ylabel)
+
+    def _on_title(self, title: str):
+        self.plot_mgr.set_title(title)
+
+    def _on_axis_limits(self, xmin: str, xmax: str, ymin: str, ymax: str):
+        """Parse the axis-limit entries and pin the plot limits.
+        Empty fields mean automatic; unparseable input warns and is ignored."""
+        values = []
+        for name, text in (("X min", xmin), ("X max", xmax),
+                           ("Y min", ymin), ("Y max", ymax)):
+            text = text.strip()
+            if not text:
+                values.append(None)
+                continue
+            try:
+                values.append(float(text))
+            except ValueError:
+                messagebox.showwarning(
+                    "Invalid Axis Limit",
+                    f"Could not parse {name} ('{text}') as a number.",
+                )
+                return
+        self.plot_mgr.set_axis_limits(*values)

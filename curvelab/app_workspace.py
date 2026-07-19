@@ -165,6 +165,11 @@ class WorkspaceMixin:
                 "max_nfev": self.fit_panel.max_nfev_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
                 "ylabel": self.plot_controls.ylabel_var.get(),
+                "title": self.plot_controls.title_var.get(),
+                "xmin": self.plot_controls.xmin_var.get(),
+                "xmax": self.plot_controls.xmax_var.get(),
+                "ymin": self.plot_controls.ymin_var.get(),
+                "ymax": self.plot_controls.ymax_var.get(),
             },
             "fonts": {
                 "ui_family": self._ui_family,
@@ -312,12 +317,21 @@ class WorkspaceMixin:
         self.plot_controls.ylabel_var.set(pc.get("ylabel", ""))
 
         # Apply plot control states
+        self.plot_controls.title_var.set(pc.get("title", ""))
+        self.plot_controls.xmin_var.set(pc.get("xmin", ""))
+        self.plot_controls.xmax_var.set(pc.get("xmax", ""))
+        self.plot_controls.ymin_var.set(pc.get("ymin", ""))
+        self.plot_controls.ymax_var.set(pc.get("ymax", ""))
+
         self.plot_mgr.set_xscale(pc.get("xscale", "linear"))
         self.plot_mgr.set_yscale(pc.get("yscale", "linear"))
         self.plot_mgr.set_grid(pc.get("grid", True))
         self.plot_mgr.set_equal_aspect(pc.get("equal", False))
         self.plot_mgr.set_legend(pc.get("legend", True))
         self.plot_mgr.set_axis_labels(pc.get("xlabel", ""), pc.get("ylabel", ""))
+        self.plot_mgr.set_title(pc.get("title", ""))
+        self._on_axis_limits(pc.get("xmin", ""), pc.get("xmax", ""),
+                             pc.get("ymin", ""), pc.get("ymax", ""))
 
     def _load_workspace_fonts(self, ws):
         """Restore saved UI/plot fonts."""
