@@ -28,11 +28,11 @@ class DataToolsMixin:
 
     def _find_peaks(self):
         """Auto-detect peaks in active series and add Gaussian components."""
-        rec = self._active_record
-        fm = self._active_fit_mgr
-        if rec is None or fm is None:
-            messagebox.showwarning("No Data", "Load data and create a session first.")
+        sess = self._require_session()
+        if sess is None:
             return
+        rec = self._active_record
+        fm = sess.fit_manager
         x, y, yerr, xerr = self._get_fit_data(rec)
         if len(x) < 3:
             messagebox.showwarning("Insufficient Data", "Need at least 3 data points.")
@@ -40,9 +40,8 @@ class DataToolsMixin:
         FindPeaksDialog(self, x, y, fm, on_done=self._update_component_list)
 
     def _smooth_outlier_dialog(self):
-        rec = self._active_record
+        rec = self._require_series()
         if rec is None:
-            messagebox.showwarning("No Data", "Plot a series first.")
             return
         SmoothOutlierDialog(
             self,
@@ -89,11 +88,11 @@ class DataToolsMixin:
         DerivativeIntegralDialog(self, sess.fit_manager, sess.result)
 
     def _on_simulate_data(self):
-        fm = self._active_fit_mgr
-        if fm is None or not fm.components or fm.params is None:
-            messagebox.showwarning(
-                "No Model", "Set up a model with parameters first."
-            )
+        sess = self._require_session()
+        if sess is None:
+            return
+        fm = sess.fit_manager
+        if not self._require_model(fm):
             return
 
         # Default x-range from active series or plot limits

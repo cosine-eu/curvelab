@@ -28,9 +28,8 @@ class AnalysisHandlersMixin:
         return base_title
 
     def _show_model_comparison(self):
-        rec = self._active_record
+        rec = self._require_series()
         if rec is None:
-            messagebox.showwarning("No Series", "Select a series first.")
             return
         rows = []
         for sess_name, sess in rec.fit_sessions.items():
@@ -55,9 +54,8 @@ class AnalysisHandlersMixin:
         dlg.title(f"Model Comparison — {series_label}")
 
     def _show_f_test(self):
-        rec = self._active_record
+        rec = self._require_series()
         if rec is None:
-            messagebox.showwarning("No Series", "Select a series first.")
             return
         sessions = {}
         for sess_name, sess in rec.fit_sessions.items():

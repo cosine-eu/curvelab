@@ -251,9 +251,6 @@ class FitHandlersMixin:
         fm = sess.fit_manager
         if not self._require_model(fm):
             return
-        if fm.params is None:
-            messagebox.showwarning("No Model", "Add at least one model component.")
-            return
         if len(self._series_records) < 2:
             messagebox.showwarning("Need Series", "Plot at least 2 series for global fitting.")
             return

@@ -106,6 +106,13 @@ class CurveLabApp(
     # A non-None _active_session implies a non-None _active_record, so callers
     # of the session/fit-result guards may use self._active_record freely.
 
+    def _require_series(self) -> SeriesRecord | None:
+        rec = self._active_record
+        if rec is None:
+            messagebox.showwarning("No Series", "Plot a series first.")
+            return None
+        return rec
+
     def _require_session(self) -> FitSession | None:
         sess = self._active_session
         if sess is None:
