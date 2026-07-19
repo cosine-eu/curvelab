@@ -3,15 +3,14 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from .ui_common import BaseDialog
 
-class SimulateDataDialog(tk.Toplevel):
+
+class SimulateDataDialog(BaseDialog):
     """Dialog for generating synthetic data from the current model."""
 
     def __init__(self, parent, x_min=0.0, x_max=10.0, n_points=200, on_generate=None):
-        super().__init__(parent)
-        self.title("Simulate Data")
-        self.resizable(False, False)
-        self.transient(parent)
+        super().__init__(parent, "Simulate Data", resizable=(False, False))
         self._on_generate = on_generate
 
         # --- X Range ---
@@ -103,16 +102,14 @@ class SimulateDataDialog(tk.Toplevel):
                 self._status_var.set(f"Error: {e}")
 
 
-class SmoothOutlierDialog(tk.Toplevel):
+class SmoothOutlierDialog(BaseDialog):
     """Smooth data, detect outliers, export smoothed/baseline-subtracted series."""
 
     _METHODS = ["Savitzky-Golay", "Moving Average", "Median Filter", "Gaussian Filter"]
 
     def __init__(self, parent, x, y, yerr, mask, ax, canvas,
                  on_apply_mask=None, on_export_series=None):
-        super().__init__(parent)
-        self.title("Smooth / Outlier Detection")
-        self.geometry("420x380")
+        super().__init__(parent, "Smooth / Outlier Detection", size="420x380")
         self._x = x
         self._y = y
         self._yerr = yerr
@@ -388,13 +385,11 @@ class SmoothOutlierDialog(tk.Toplevel):
         super().destroy()
 
 
-class DerivativeIntegralDialog(tk.Toplevel):
+class DerivativeIntegralDialog(BaseDialog):
     """Plot derivative and integral of the fitted curve."""
 
     def __init__(self, parent, fit_manager, result):
-        super().__init__(parent)
-        self.title("Derivative / Integral")
-        self.geometry("700x500")
+        super().__init__(parent, "Derivative / Integral", size="700x500")
 
         import numpy as np
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -443,13 +438,11 @@ class DerivativeIntegralDialog(tk.Toplevel):
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
 
-class FindPeaksDialog(tk.Toplevel):
+class FindPeaksDialog(BaseDialog):
     """Auto-detect peaks and add Gaussian components."""
 
     def __init__(self, parent, x, y, fit_manager, on_done=None):
-        super().__init__(parent)
-        self.title("Find Peaks")
-        self.geometry("500x420")
+        super().__init__(parent, "Find Peaks", size="500x420")
         self._x = x
         self._y = y
         self._fm = fit_manager
@@ -552,13 +545,11 @@ class FindPeaksDialog(tk.Toplevel):
         self.destroy()
 
 
-class EvaluateModelDialog(tk.Toplevel):
+class EvaluateModelDialog(BaseDialog):
     """Evaluate fitted model at user-specified x values."""
 
     def __init__(self, parent, fit_manager):
-        super().__init__(parent)
-        self.title("Evaluate Model")
-        self.geometry("500x400")
+        super().__init__(parent, "Evaluate Model", size="500x400")
         self._fm = fit_manager
 
         ttk.Label(self, text="Enter x values (comma or space separated, or start:stop:npoints):").pack(
@@ -617,14 +608,11 @@ class EvaluateModelDialog(tk.Toplevel):
             self.clipboard_append(self._last_text)
 
 
-class ColumnCalculatorDialog(tk.Toplevel):
+class ColumnCalculatorDialog(BaseDialog):
     """Dialog for creating new columns from expressions on existing columns."""
 
     def __init__(self, parent, columns: list[str], on_apply=None):
-        super().__init__(parent)
-        self.title("Column Calculator")
-        self.resizable(True, False)
-        self.transient(parent)
+        super().__init__(parent, "Column Calculator", resizable=(True, False))
         self._columns = list(columns)
         self._on_apply = on_apply
 
