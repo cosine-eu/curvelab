@@ -185,6 +185,37 @@ class ParamEditorGuardTests(GuiTestBase):
         self.assertTrue(panel._editing_done)
 
 
+class ScaleRoundTripTests(GuiTestBase):
+    """matplotlib 3.6 keeps a line's log-transformed path cache across a
+    scale change once a draw happened in log scale, rendering lines at log
+    positions on the restored linear axis. PlotManager.set_xscale/yscale
+    recache all lines to defeat this; the round trip must render exactly
+    like the original."""
+
+    def _render(self):
+        import io
+        buf = io.BytesIO()
+        self.app.plot_mgr.fig.savefig(buf, format="png")
+        return buf.getvalue()
+
+    def test_log_linear_round_trip_renders_identically(self):
+        self._add_fitted_series()
+        self.app._replot_all_series()
+        pm = self.app.plot_mgr
+        pm.canvas.draw()
+        self.root.update()
+        baseline = self._render()
+
+        for scale_setter in (pm.set_xscale, pm.set_yscale):
+            scale_setter("log")
+            pm.canvas.draw()          # the bug needs a real draw in log scale
+            self.root.update()
+            scale_setter("linear")
+            pm.canvas.draw()
+            self.root.update()
+            self.assertEqual(self._render(), baseline)
+
+
 class WorkspaceLoadAnalysisTests(GuiTestBase):
     """The experiment doc's canonical bug: load a workspace, then open an
     analysis dialog — the fit result (and reconstructed lmfit result) must be

@@ -287,12 +287,23 @@ class PlotManager:
             ann.remove()
             self.canvas.draw_idle()
 
+    def _recache_lines(self):
+        """Rebuild every line's cached path. Works around a matplotlib bug
+        (seen in 3.6): after a draw in log scale, Line2D keeps its
+        log-transformed path cache across a scale change, so lines render
+        at log positions on the restored linear axis."""
+        for axes in (self.ax, self.ax_resid):
+            for line in axes.get_lines():
+                line.recache_always()
+
     def set_xscale(self, scale: str):
         self.ax.set_xscale(scale)
+        self._recache_lines()
         self.canvas.draw_idle()
 
     def set_yscale(self, scale: str):
         self.ax.set_yscale(scale)
+        self._recache_lines()
         self.canvas.draw_idle()
 
     def set_axis_labels(self, xlabel: str, ylabel: str):
