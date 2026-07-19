@@ -55,27 +55,27 @@ class WorkspaceContractTests(unittest.TestCase):
 
     def test_diagnostic_plots_dialog_is_wired(self):
         curvelab_dir = Path(__file__).resolve().parents[1] / "curvelab"
-        app_source = (curvelab_dir / "app.py").read_text(encoding="utf-8")
+        menu_source = (curvelab_dir / "app_menu.py").read_text(encoding="utf-8")
         handlers_source = (curvelab_dir / "app_analysis_handlers.py").read_text(encoding="utf-8")
         dlg_source = (curvelab_dir / "ui_dialogs_analysis.py").read_text(encoding="utf-8")
 
         self.assertRegex(handlers_source, r"def _show_diagnostic_plots\(self\)")
         self.assertIn("DiagnosticPlotsDialog", dlg_source)
         self.assertRegex(
-            app_source,
+            menu_source,
             r'label="Diagnostic Plots\.\.\.", command=self\._show_diagnostic_plots',
         )
 
     def test_confidence_contour_dialog_is_wired(self):
         curvelab_dir = Path(__file__).resolve().parents[1] / "curvelab"
-        app_source = (curvelab_dir / "app.py").read_text(encoding="utf-8")
+        menu_source = (curvelab_dir / "app_menu.py").read_text(encoding="utf-8")
         handlers_source = (curvelab_dir / "app_analysis_handlers.py").read_text(encoding="utf-8")
         dlg_source = (curvelab_dir / "ui_dialogs_analysis.py").read_text(encoding="utf-8")
 
         self.assertRegex(handlers_source, r"def _show_confidence_contours\(self\)")
         self.assertIn("ConfidenceContourDialog", dlg_source)
         self.assertRegex(
-            app_source,
+            menu_source,
             r'label="2D Confidence Contours\.\.\.", command=self\._show_confidence_contours',
         )
 

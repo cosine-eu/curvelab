@@ -66,6 +66,7 @@ omit = [
     "curvelab/app_analysis_handlers.py",
     "curvelab/app_data_tools.py",
     "curvelab/app_fit_handlers.py",
+    "curvelab/app_menu.py",
     "curvelab/app_workspace.py",
     "curvelab/notebook.py",
     "curvelab/plot_manager.py",
