@@ -3,3 +3,19 @@ __pycache__/
 *.pyo
 *.clw
 *~
+
+# Credentials / secrets
+api.token
+key
+token
+*.token
+
+# Build artifacts
+/dist/
+/build/
+*.egg-info/
+
+# Coverage
+.coverage
+.coverage.*
+htmlcov/

@@ -4,6 +4,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import tkinter.font as tkfont
 
+from .analysis_tools import compute_diagnostic_stats
+from .ui_common import BaseDialog, set_readonly_text
+
 
 def build_scrollable_text_viewer(dialog, content: str, font=("Courier", 10)) -> tk.Text:
     """Fill a Toplevel with a read-only monospace Text, scrollbars, and a Close button."""
@@ -28,17 +31,13 @@ def build_scrollable_text_viewer(dialog, content: str, font=("Courier", 10)) -> 
     return text
 
 
-class FontDialog(tk.Toplevel):
+class FontDialog(BaseDialog):
     """Dialog for setting UI and plot fonts."""
 
     SIZES = [7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 20, 24]
 
     def __init__(self, parent, ui_family="", ui_size=10, plot_family="", plot_size=10, on_apply=None):
-        super().__init__(parent)
-        self.title("Font Settings")
-        self.resizable(False, False)
-        self.transient(parent)
-        self.grab_set()
+        super().__init__(parent, "Font Settings", resizable=(False, False), modal=True)
 
         self._on_apply = on_apply
         families = sorted(tkfont.families())
@@ -90,16 +89,12 @@ class FontDialog(tk.Toplevel):
         self.destroy()
 
 
-class ModelComparisonDialog(tk.Toplevel):
+class ModelComparisonDialog(BaseDialog):
     """Side-by-side comparison of fit sessions: AIC, BIC, reduced chi-squared."""
 
     def __init__(self, parent, rows: list[dict]):
         """rows: list of dicts with keys session, model, n_params, chisqr, redchi, aic, bic."""
-        super().__init__(parent)
-        self.title("Model Comparison")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("700x300")
+        super().__init__(parent, "Model Comparison", size="700x300")
 
         columns = ("model", "n_params", "chisqr", "redchi", "aic", "bic")
         tree = ttk.Treeview(self, columns=columns, show=("tree", "headings"), height=10)
@@ -153,15 +148,12 @@ class ModelComparisonDialog(tk.Toplevel):
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
 
 
-class FTestDialog(tk.Toplevel):
+class FTestDialog(BaseDialog):
     """F-test for nested model comparison between two fit sessions."""
 
     def __init__(self, parent, sessions: dict[str, dict]):
         """sessions: {name: {n_params, chisqr, n_data}}."""
-        super().__init__(parent)
-        self.title("F-Test for Nested Models")
-        self.resizable(False, False)
-        self.transient(parent)
+        super().__init__(parent, "F-Test for Nested Models", resizable=(False, False))
         self._sessions = sessions
         names = list(sessions.keys())
 
@@ -188,7 +180,7 @@ class FTestDialog(tk.Toplevel):
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
 
     def _compute(self):
-        import scipy.stats as stats
+        from .analysis_tools import f_test
 
         r_name = self._reduced_var.get()
         f_name = self._full_var.get()
@@ -223,15 +215,11 @@ class FTestDialog(tk.Toplevel):
             )
             return
 
-        df1 = p2 - p1  # extra parameters
-        df2 = n - p2    # residual DOF of full model
-
-        if df2 <= 0:
-            self._show_result("Not enough data points for this comparison.")
+        try:
+            f_stat, p_value, df1, df2 = f_test(chi1, p1, chi2, p2, n)
+        except ValueError as e:
+            self._show_result(str(e))
             return
-
-        f_stat = ((chi1 - chi2) / df1) / (chi2 / df2)
-        p_value = stats.f.sf(f_stat, df1, df2)
 
         lines = [
             f"Reduced model: {r_name}",
@@ -258,21 +246,14 @@ class FTestDialog(tk.Toplevel):
         self._show_result("\n".join(lines))
 
     def _show_result(self, text: str):
-        self._result_text.config(state=tk.NORMAL)
-        self._result_text.delete("1.0", tk.END)
-        self._result_text.insert("1.0", text)
-        self._result_text.config(state=tk.DISABLED)
+        set_readonly_text(self._result_text, text)
 
 
-class CovarianceMatrixDialog(tk.Toplevel):
+class CovarianceMatrixDialog(BaseDialog):
     """Display the full parameter covariance matrix."""
 
     def __init__(self, parent, param_names: list[str], cov_matrix):
-        super().__init__(parent)
-        self.title("Covariance Matrix")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("700x400")
+        super().__init__(parent, "Covariance Matrix", size="700x400")
 
         import numpy as np
 
@@ -295,28 +276,20 @@ class CovarianceMatrixDialog(tk.Toplevel):
         build_scrollable_text_viewer(self, "\n".join(lines))
 
 
-class ConfidenceIntervalDialog(tk.Toplevel):
+class ConfidenceIntervalDialog(BaseDialog):
     """Display confidence interval report in monospace text."""
 
     def __init__(self, parent, ci_text: str):
-        super().__init__(parent)
-        self.title("Confidence Intervals")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("600x400")
+        super().__init__(parent, "Confidence Intervals", size="600x400")
 
         build_scrollable_text_viewer(self, ci_text)
 
 
-class CorrelationMatrixDialog(tk.Toplevel):
+class CorrelationMatrixDialog(BaseDialog):
     """Display parameter correlation matrix in a Treeview."""
 
     def __init__(self, parent, correlations: dict[str, dict[str, float]]):
-        super().__init__(parent)
-        self.title("Correlation Matrix")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("700x400")
+        super().__init__(parent, "Correlation Matrix", size="700x400")
 
         # Collect all parameter names
         all_params = list(correlations.keys())
@@ -356,15 +329,11 @@ class CorrelationMatrixDialog(tk.Toplevel):
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
 
 
-class BruteCandidatesDialog(tk.Toplevel):
+class BruteCandidatesDialog(BaseDialog):
     """Display brute-force candidates with option to load one."""
 
     def __init__(self, parent, candidates: list[dict], on_select=None):
-        super().__init__(parent)
-        self.title("Brute-Force Candidates")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("700x400")
+        super().__init__(parent, "Brute-Force Candidates", size="700x400")
         self._on_select = on_select
         self._candidates = candidates
 
@@ -422,15 +391,11 @@ class BruteCandidatesDialog(tk.Toplevel):
             self.destroy()
 
 
-class EmceeSummaryDialog(tk.Toplevel):
+class EmceeSummaryDialog(BaseDialog):
     """Display emcee MCMC summary statistics."""
 
     def __init__(self, parent, flatchain, params_info: dict):
-        super().__init__(parent)
-        self.title("MCMC (emcee) Summary")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("600x400")
+        super().__init__(parent, "MCMC (emcee) Summary", size="600x400")
 
         try:
             import pandas as pd
@@ -454,66 +419,11 @@ class EmceeSummaryDialog(tk.Toplevel):
         build_scrollable_text_viewer(self, content)
 
 
-def compute_diagnostic_stats(residuals) -> list[str]:
-    """Residual-randomness statistics (Durbin-Watson, runs test) as display lines.
-
-    Pure function, no Tk dependency, so it can be unit-tested directly.
-    """
-    import numpy as np
-    import scipy.stats as stats
-
-    lines = []
-
-    # Durbin-Watson statistic
-    diff_resid = np.diff(residuals)
-    ss_resid = np.sum(residuals ** 2)
-    if ss_resid > 0:
-        dw = np.sum(diff_resid ** 2) / ss_resid
-        if dw < 1.5:
-            dw_interp = "positive autocorrelation (model may be systematically wrong)"
-        elif dw > 2.5:
-            dw_interp = "negative autocorrelation"
-        else:
-            dw_interp = "no significant autocorrelation"
-        lines.append(f"Durbin-Watson: {dw:.4f} — {dw_interp}")
-
-    # Runs test (sign changes in residuals)
-    signs = np.sign(residuals)
-    signs = signs[signs != 0]  # drop zeros
-    if len(signs) >= 10:
-        n_pos = int(np.sum(signs > 0))
-        n_neg = int(np.sum(signs < 0))
-        n_total = n_pos + n_neg
-        runs = 1 + int(np.sum(signs[1:] != signs[:-1]))
-        # Expected runs and variance under H0 (random sequence)
-        expected = 1 + 2 * n_pos * n_neg / n_total
-        var_runs = (2 * n_pos * n_neg * (2 * n_pos * n_neg - n_total)) / (
-            n_total ** 2 * (n_total - 1)
-        )
-        if var_runs > 0:
-            z_runs = (runs - expected) / np.sqrt(var_runs)
-            p_runs = 2 * (1 - stats.norm.cdf(abs(z_runs)))
-            if p_runs < 0.05:
-                runs_interp = "non-random pattern (systematic misfit)"
-            else:
-                runs_interp = "consistent with random residuals"
-            lines.append(
-                f"Runs test: {runs} runs (expected {expected:.1f}), "
-                f"z = {z_runs:.3f}, p = {p_runs:.4f} — {runs_interp}"
-            )
-
-    return lines
-
-
-class DiagnosticPlotsDialog(tk.Toplevel):
+class DiagnosticPlotsDialog(BaseDialog):
     """2x2 diagnostic plot grid: residuals vs fitted, Q-Q, scale-location, ACF."""
 
     def __init__(self, parent, fit_result):
-        super().__init__(parent)
-        self.title("Fit Diagnostic Plots")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("800x600")
+        super().__init__(parent, "Fit Diagnostic Plots", size="800x600")
 
         import numpy as np
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -591,15 +501,11 @@ class DiagnosticPlotsDialog(tk.Toplevel):
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
 
 
-class ConfidenceContourDialog(tk.Toplevel):
+class ConfidenceContourDialog(BaseDialog):
     """Interactive 2D confidence contour plot using lmfit.conf_interval2d."""
 
     def __init__(self, parent, last_result, vary_params: list[str]):
-        super().__init__(parent)
-        self.title("2D Confidence Contours")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("700x600")
+        super().__init__(parent, "2D Confidence Contours", size="700x600")
 
         self._last_result = last_result
         self._vary_params = vary_params
@@ -673,15 +579,11 @@ class ConfidenceContourDialog(tk.Toplevel):
             self._status_var.set(f"Error: {e}")
 
 
-class BootstrapDialog(tk.Toplevel):
+class BootstrapDialog(BaseDialog):
     """Bootstrap confidence intervals with parameter histograms."""
 
     def __init__(self, parent, on_run=None):
-        super().__init__(parent)
-        self.title("Bootstrap Confidence Intervals")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("900x650")
+        super().__init__(parent, "Bootstrap Confidence Intervals", size="900x650")
         self._on_run = on_run
 
         # Controls
@@ -791,16 +693,12 @@ class BootstrapDialog(tk.Toplevel):
             text.pack(fill=tk.X)
 
 
-class ProfileLikelihoodDialog(tk.Toplevel):
+class ProfileLikelihoodDialog(BaseDialog):
     """Plot chi-squared profiles for each parameter."""
 
     def __init__(self, parent, profiles: dict[str, list[tuple[float, float]]],
                  best_chi2: float):
-        super().__init__(parent)
-        self.title("Profile Likelihood")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("900x600")
+        super().__init__(parent, "Profile Likelihood", size="900x600")
 
         import numpy as np
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -840,7 +738,7 @@ class ProfileLikelihoodDialog(tk.Toplevel):
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=5)
 
 
-class GlobalFitDialog(tk.Toplevel):
+class GlobalFitDialog(BaseDialog):
     """Dialog for global fitting across multiple series with shared parameters."""
 
     def __init__(self, parent, series_info: list[dict], base_param_names: list[str],
@@ -850,11 +748,7 @@ class GlobalFitDialog(tk.Toplevel):
         base_param_names: list of parameter names from the model.
         on_fit: callback(selected_series_ids, shared_param_names).
         """
-        super().__init__(parent)
-        self.title("Global Fit")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("500x500")
+        super().__init__(parent, "Global Fit", size="500x500")
         self._on_fit = on_fit
 
         # --- Series selection ---
@@ -919,16 +813,12 @@ class GlobalFitDialog(tk.Toplevel):
                 self._status_var.set(f"Error: {e}")
 
 
-class UncertaintyPropagationDialog(tk.Toplevel):
+class UncertaintyPropagationDialog(BaseDialog):
     """Evaluate expressions with propagated uncertainties using ufloats."""
 
     def __init__(self, parent, uvars: dict):
         """uvars: dict mapping param name to ufloat (from lmfit result.uvars)."""
-        super().__init__(parent)
-        self.title("Uncertainty Propagation")
-        self.resizable(True, True)
-        self.transient(parent)
-        self.geometry("550x400")
+        super().__init__(parent, "Uncertainty Propagation", size="550x400")
         self._uvars = uvars
 
         # --- Available variables ---

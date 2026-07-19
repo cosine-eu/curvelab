@@ -1,6 +1,6 @@
 # CurveLab User Manual
 
-*Version 0.10.0 -- A comprehensive guide to interactive curve fitting and statistical analysis*
+*Version 0.11.0 -- A comprehensive guide to interactive curve fitting and statistical analysis*
 
 ---
 
@@ -1413,6 +1413,7 @@ result, undo/redo history, and plot color.
 | **Rename** | Changes the session name |
 | **Delete** | Removes a session, its model, fit result, and fit curve |
 | **Show/Hide** | Toggles the session's fit curve visibility |
+| **Clear Model** | Empties the active session: removes its model components, fit result, fit curve, and undo history. The session itself (name and color) remains, ready for a new model. Use **Delete** to remove the session entirely. |
 
 Sessions are listed in the Fit panel's session listbox. The header above
 the list reads "Sessions for: *series-label*" to indicate which series the
@@ -1490,10 +1491,19 @@ fit sessions.
 | **Wt. resid** | Show weighted residuals (divided by yerr) instead of raw residuals |
 | **Exclude pts** | Enable click-to-exclude mode for data points |
 
-### Axis labels
+### Title and axis labels
 
-Custom X and Y axis labels can be entered in the plot controls. Labels
-update when you press Enter or the field loses focus.
+A plot title and custom X and Y axis labels can be entered in the plot
+controls. They update when you press Enter or the field loses focus.
+
+### Axis limits
+
+The **X Range** and **Y Range** entry pairs pin the plot limits. An empty
+field means that side is scaled automatically, so you can pin just one
+side (e.g. only a maximum). Clearing all four fields restores full
+autoscaling. Pinned limits persist across replots and are saved in the
+workspace. Note that the fit x-range control (row above) is independent:
+it restricts which points are *fitted*, not what is displayed.
 
 ### Coordinate display
 

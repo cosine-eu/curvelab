@@ -42,8 +42,8 @@ class FitManagerDeserializeTests(unittest.TestCase):
 
 class WorkspaceContractTests(unittest.TestCase):
     def test_app_workspace_includes_reduce_and_weight_in_save_and_load(self):
-        app_path = Path(__file__).resolve().parents[1] / "curvelab" / "app.py"
-        source = app_path.read_text(encoding="utf-8")
+        ws_path = Path(__file__).resolve().parents[1] / "curvelab" / "app_workspace.py"
+        source = ws_path.read_text(encoding="utf-8")
 
         # Save path
         self.assertRegex(source, r'"reduce_fcn"')
@@ -54,28 +54,28 @@ class WorkspaceContractTests(unittest.TestCase):
         self.assertRegex(source, r'self\.fit_panel\.weight_var\.set\(')
 
     def test_diagnostic_plots_dialog_is_wired(self):
-        app_path = Path(__file__).resolve().parents[1] / "curvelab" / "app.py"
-        dlg_path = Path(__file__).resolve().parents[1] / "curvelab" / "ui_dialogs_analysis.py"
-        app_source = app_path.read_text(encoding="utf-8")
-        dlg_source = dlg_path.read_text(encoding="utf-8")
+        curvelab_dir = Path(__file__).resolve().parents[1] / "curvelab"
+        menu_source = (curvelab_dir / "app_menu.py").read_text(encoding="utf-8")
+        handlers_source = (curvelab_dir / "app_analysis_handlers.py").read_text(encoding="utf-8")
+        dlg_source = (curvelab_dir / "ui_dialogs_analysis.py").read_text(encoding="utf-8")
 
-        self.assertRegex(app_source, r"def _show_diagnostic_plots\(self\)")
+        self.assertRegex(handlers_source, r"def _show_diagnostic_plots\(self\)")
         self.assertIn("DiagnosticPlotsDialog", dlg_source)
         self.assertRegex(
-            app_source,
+            menu_source,
             r'label="Diagnostic Plots\.\.\.", command=self\._show_diagnostic_plots',
         )
 
     def test_confidence_contour_dialog_is_wired(self):
-        app_path = Path(__file__).resolve().parents[1] / "curvelab" / "app.py"
-        dlg_path = Path(__file__).resolve().parents[1] / "curvelab" / "ui_dialogs_analysis.py"
-        app_source = app_path.read_text(encoding="utf-8")
-        dlg_source = dlg_path.read_text(encoding="utf-8")
+        curvelab_dir = Path(__file__).resolve().parents[1] / "curvelab"
+        menu_source = (curvelab_dir / "app_menu.py").read_text(encoding="utf-8")
+        handlers_source = (curvelab_dir / "app_analysis_handlers.py").read_text(encoding="utf-8")
+        dlg_source = (curvelab_dir / "ui_dialogs_analysis.py").read_text(encoding="utf-8")
 
-        self.assertRegex(app_source, r"def _show_confidence_contours\(self\)")
+        self.assertRegex(handlers_source, r"def _show_confidence_contours\(self\)")
         self.assertIn("ConfidenceContourDialog", dlg_source)
         self.assertRegex(
-            app_source,
+            menu_source,
             r'label="2D Confidence Contours\.\.\.", command=self\._show_confidence_contours',
         )
 

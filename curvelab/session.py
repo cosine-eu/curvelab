@@ -7,6 +7,20 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
+# Floor for magnitudes used as divisors or log arguments, so zero-valued
+# errors/residuals can't produce inf weights or log-of-zero.
+MIN_ERROR = 1e-12
+
+
+def make_series_id(dataset: str, x_col: str, y_col: str) -> str:
+    """Canonical id for a plotted series: 'dataset::x_col::y_col'."""
+    return f"{dataset}::{x_col}::{y_col}"
+
+
+def make_session_key(series_id: str, session_name: str) -> str:
+    """Canonical key for a fit session: 'series_id::session_name'."""
+    return f"{series_id}::{session_name}"
+
 
 @dataclass
 class FitResult:
@@ -26,6 +40,17 @@ class FitResult:
     candidates: list[dict] | None = None  # brute-force candidates
     flatchain: object | None = None  # emcee DataFrame
     init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
+
+    def residuals(self) -> np.ndarray:
+        """Raw residuals (data minus fit) at the data points."""
+        return self.y_data - self.y_fit_data
+
+    def weighted_residuals(self) -> np.ndarray:
+        """Residuals divided by y errors, floored at MIN_ERROR so zero
+        errors can't divide by zero. Raw residuals when there are no y errors."""
+        if self.yerr_data is None:
+            return self.residuals()
+        return self.residuals() / np.maximum(np.abs(self.yerr_data), MIN_ERROR)
 
 
 @runtime_checkable
@@ -98,3 +123,14 @@ class SeriesRecord:
         if self.active_session_name is None:
             return None
         return self.fit_sessions.get(self.active_session_name)
+
+    def ensure_session(self, name: str) -> FitSession:
+        """Return the named session, creating it (with the next fit color)
+        if absent. A newly created session becomes active only when no
+        session was active before."""
+        if name not in self.fit_sessions:
+            color = FIT_COLORS[len(self.fit_sessions) % len(FIT_COLORS)]
+            self.fit_sessions[name] = FitSession(name=name, color=color)
+            if self.active_session_name is None:
+                self.active_session_name = name
+        return self.fit_sessions[name]
