@@ -8,12 +8,10 @@ import csv
 import json
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 from tkinter import messagebox, filedialog
 
 from .data_manager import DataManager
-from .fit_manager import MIN_ERROR
 from .workspace import (
     WorkspaceEncoder, decode_workspace,
     serialize_series_records, deserialize_series_record,
@@ -82,11 +80,10 @@ class WorkspaceMixin:
             dense_data[f"component_{comp_name.rstrip('_')}"] = comp_curve
 
         # Build data-point residuals
-        residuals = result.y_data - result.y_fit_data
+        residuals = result.residuals()
         weighted_residuals = None
         if result.yerr_data is not None:
-            safe_yerr = np.maximum(np.abs(result.yerr_data), MIN_ERROR)
-            weighted_residuals = residuals / safe_yerr
+            weighted_residuals = result.weighted_residuals()
 
         try:
             # Sheet 1: dense fit curve

@@ -7,6 +7,10 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
+# Floor for magnitudes used as divisors or log arguments, so zero-valued
+# errors/residuals can't produce inf weights or log-of-zero.
+MIN_ERROR = 1e-12
+
 
 def make_series_id(dataset: str, x_col: str, y_col: str) -> str:
     """Canonical id for a plotted series: 'dataset::x_col::y_col'."""
@@ -36,6 +40,17 @@ class FitResult:
     candidates: list[dict] | None = None  # brute-force candidates
     flatchain: object | None = None  # emcee DataFrame
     init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
+
+    def residuals(self) -> np.ndarray:
+        """Raw residuals (data minus fit) at the data points."""
+        return self.y_data - self.y_fit_data
+
+    def weighted_residuals(self) -> np.ndarray:
+        """Residuals divided by y errors, floored at MIN_ERROR so zero
+        errors can't divide by zero. Raw residuals when there are no y errors."""
+        if self.yerr_data is None:
+            return self.residuals()
+        return self.residuals() / np.maximum(np.abs(self.yerr_data), MIN_ERROR)
 
 
 @runtime_checkable

@@ -532,9 +532,10 @@ class CurveLabApp(
         result = sess.result
         if result is None:
             return
-        residuals = result.y_data - result.y_fit_data
-        if result.yerr_data is not None and self.plot_controls.weighted_resid_var.get():
-            residuals = residuals / result.yerr_data
+        if self.plot_controls.weighted_resid_var.get():
+            residuals = result.weighted_residuals()
+        else:
+            residuals = result.residuals()
         self.plot_mgr.plot_residuals(skey, result.x_data, residuals, color=sess.color)
 
     def _plot_fit_for_session(self, skey: str, sess: FitSession, label: str):

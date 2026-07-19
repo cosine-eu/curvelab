@@ -8,11 +8,8 @@ from lmfit.model import ModelResult
 from lmfit.models import SplineModel
 
 from .models import create_expression_model, create_model, create_spline_model
-from .session import FitResult  # re-export; canonical location is session.py
-
-# Floor for magnitudes used as divisors or log arguments, so zero-valued
-# errors/residuals can't produce inf weights or log-of-zero.
-MIN_ERROR = 1e-12
+# Re-exports; canonical location is session.py
+from .session import FitResult, MIN_ERROR
 
 
 def _reduce_negentropy(r):
