@@ -481,18 +481,22 @@ class CurveLabApp(
         self._update_component_list_from(sess.fit_manager)
 
         if sess.result is not None:
-            # Enrich params with init_value for display
-            params_display = {}
-            for name, info in sess.result.params.items():
-                entry = dict(info)
-                if sess.result.init_params and name in sess.result.init_params:
-                    entry["init_value"] = sess.result.init_params[name]
-                params_display[name] = entry
-            self.fit_results.set_params(params_display)
-            self.fit_results.set_gof(sess.result.gof)
-            self.fit_results.set_report(sess.result.report)
+            self._display_result(sess.result)
         else:
             self.fit_results.clear()
+
+    def _display_result(self, result):
+        """Push a fit result to the results panel, enriching the parameter
+        table with each parameter's initial value when available."""
+        params_display = {}
+        for name, info in result.params.items():
+            entry = dict(info)
+            if result.init_params and name in result.init_params:
+                entry["init_value"] = result.init_params[name]
+            params_display[name] = entry
+        self.fit_results.set_params(params_display)
+        self.fit_results.set_gof(result.gof)
+        self.fit_results.set_report(result.report)
 
     def _update_component_list_from(self, fit_mgr: FitManager):
         self.fit_panel.set_components(fit_mgr.component_labels())

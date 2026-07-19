@@ -226,17 +226,7 @@ class FitHandlersMixin:
         if self.plot_controls.residuals_var.get():
             self._plot_residuals_for_session(skey, sess, rec)
 
-        # Enrich params with init_value for the results panel
-        params_display = {}
-        for name, info in result.params.items():
-            entry = dict(info)
-            if result.init_params and name in result.init_params:
-                entry["init_value"] = result.init_params[name]
-            params_display[name] = entry
-
-        self.fit_results.set_params(params_display)
-        self.fit_results.set_gof(result.gof)
-        self.fit_results.set_report(result.report)
+        self._display_result(result)
 
         if self.plot_controls.show_params_var.get():
             self.plot_mgr.annotate_params(
