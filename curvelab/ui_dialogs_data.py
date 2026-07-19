@@ -3,6 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
+from .analysis_tools import SMOOTH_METHODS
 from .ui_common import BaseDialog, set_readonly_text
 
 
@@ -105,7 +106,7 @@ class SimulateDataDialog(BaseDialog):
 class SmoothOutlierDialog(BaseDialog):
     """Smooth data, detect outliers, export smoothed/baseline-subtracted series."""
 
-    _METHODS = ["Savitzky-Golay", "Moving Average", "Median Filter", "Gaussian Filter"]
+    _METHODS = SMOOTH_METHODS
 
     def __init__(self, parent, x, y, yerr, mask, ax, canvas,
                  on_apply_mask=None, on_export_series=None):
@@ -240,57 +241,21 @@ class SmoothOutlierDialog(BaseDialog):
         return self._compute_smooth_on(self._y.copy())
 
     def _compute_outliers(self, y_smooth):
-        import numpy as np
-        n = len(self._y)
-        inlier = np.ones(n, dtype=bool)
-        threshold = self._sigma_var.get()
-        n_iter = self._iter_var.get()
-
-        for _ in range(n_iter):
-            residuals = self._y - y_smooth
-            med = np.median(residuals[inlier]) if inlier.any() else 0.0
-            mad = np.median(np.abs(residuals[inlier] - med)) if inlier.any() else 1.0
-            sigma_est = 1.4826 * mad if mad > 0 else 1.0
-            inlier = np.abs(residuals - med) < threshold * sigma_est
-            # Re-smooth on inliers for next iteration
-            if not inlier.all() and inlier.sum() >= 3:
-                from scipy.interpolate import interp1d
-                f = interp1d(self._x[inlier], self._y[inlier], kind="linear",
-                             fill_value="extrapolate")
-                y_interp = f(self._x)
-                y_smooth = self._compute_smooth_on(y_interp)
-        return inlier
+        from .analysis_tools import detect_outliers
+        return detect_outliers(
+            self._x, self._y, y_smooth, self._compute_smooth_on,
+            threshold=self._sigma_var.get(), n_iter=self._iter_var.get(),
+        )
 
     def _compute_smooth_on(self, y):
         """Smooth a given y array with current settings (for iterative outlier rejection)."""
-        import numpy as np
-        from scipy.signal import savgol_filter, medfilt
-        from scipy.ndimage import uniform_filter1d, gaussian_filter1d
-
-        method = self._method_var.get()
-        if len(y) < 3:
-            return y  # Too few points for any windowed smoothing method
-
-        window = self._window_var.get()
-        if window % 2 == 0:
-            window += 1
-        # len(y) >= 3 here, so this max is always >= 3 and the floor below
-        # never has to push window past the data length.
-        window = min(window, len(y) - 1 if len(y) % 2 == 0 else len(y))
-        if window < 3:
-            window = 3
-
-        if method == "Savitzky-Golay":
-            order = min(self._param2_var.get(), window - 1)
-            return savgol_filter(y, window, order)
-        elif method == "Moving Average":
-            return uniform_filter1d(y, size=window)
-        elif method == "Median Filter":
-            return medfilt(y, kernel_size=window)
-        elif method == "Gaussian Filter":
-            sigma = max(1, self._param2_var.get())
-            return gaussian_filter1d(y, sigma=sigma)
-        return y
+        from .analysis_tools import smooth_data
+        return smooth_data(
+            y, self._method_var.get(),
+            window=self._window_var.get(),
+            order=self._param2_var.get(),
+            sigma=self._param2_var.get(),
+        )
 
     def _update_preview(self):
         import numpy as np
@@ -486,44 +451,24 @@ class FindPeaksDialog(BaseDialog):
         self.after(100, self._detect)
 
     def _detect(self):
-        from scipy.signal import find_peaks, peak_widths
-        import numpy as np
+        from .analysis_tools import find_peaks_with_widths
 
-        kwargs = {}
         prom = self._prominence_var.get().strip()
         dist = self._distance_var.get().strip()
         try:
-            if prom:
-                kwargs["prominence"] = float(prom)
-            else:
-                # Auto-prominence: 10% of data range
-                yrange = np.ptp(self._y)
-                if yrange > 0:
-                    kwargs["prominence"] = yrange * 0.1
-            if dist:
-                kwargs["distance"] = int(dist)
+            prominence = float(prom) if prom else None
+            distance = int(dist) if dist else None
         except ValueError:
             messagebox.showwarning(
                 "Invalid Input", "Prominence and min distance must be numbers."
             )
             return
 
-        indices, properties = find_peaks(self._y, **kwargs)
-        # Estimate widths
-        if len(indices) > 0:
-            widths_result = peak_widths(self._y, indices, rel_height=0.5)
-            widths_pts = widths_result[0]
-            dx = np.median(np.diff(self._x)) if len(self._x) > 1 else 1.0
-            widths_x = widths_pts * abs(dx)
-        else:
-            widths_x = []
-
-        self._peaks = []
+        self._peaks = find_peaks_with_widths(
+            self._x, self._y, prominence=prominence, distance=distance
+        )
         self._tree.delete(*self._tree.get_children())
-        for i, idx in enumerate(indices):
-            cx, cy = self._x[idx], self._y[idx]
-            w = widths_x[i] if i < len(widths_x) else 0.0
-            self._peaks.append((cx, cy, w))
+        for cx, cy, w in self._peaks:
             self._tree.insert("", tk.END, values=(
                 f"{cx:.6g}", f"{cy:.6g}", f"{w:.6g}"))
 
@@ -570,17 +515,8 @@ class EvaluateModelDialog(BaseDialog):
         scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=(0, 10))
 
     def _parse_x(self):
-        import numpy as np
-        text = self._x_entry.get().strip()
-        if not text:
-            return None
-        # Range syntax: start:stop:npoints
-        if text.count(":") == 2:
-            parts = text.split(":")
-            return np.linspace(float(parts[0]), float(parts[1]), int(parts[2]))
-        # Comma or space separated
-        text = text.replace(",", " ")
-        return np.array([float(v) for v in text.split()])
+        from .analysis_tools import parse_x_spec
+        return parse_x_spec(self._x_entry.get())
 
     def _evaluate(self):
         import numpy as np

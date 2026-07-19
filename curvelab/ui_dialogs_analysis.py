@@ -4,6 +4,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import tkinter.font as tkfont
 
+from .analysis_tools import compute_diagnostic_stats
 from .ui_common import BaseDialog, set_readonly_text
 
 
@@ -179,7 +180,7 @@ class FTestDialog(BaseDialog):
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
 
     def _compute(self):
-        import scipy.stats as stats
+        from .analysis_tools import f_test
 
         r_name = self._reduced_var.get()
         f_name = self._full_var.get()
@@ -214,15 +215,11 @@ class FTestDialog(BaseDialog):
             )
             return
 
-        df1 = p2 - p1  # extra parameters
-        df2 = n - p2    # residual DOF of full model
-
-        if df2 <= 0:
-            self._show_result("Not enough data points for this comparison.")
+        try:
+            f_stat, p_value, df1, df2 = f_test(chi1, p1, chi2, p2, n)
+        except ValueError as e:
+            self._show_result(str(e))
             return
-
-        f_stat = ((chi1 - chi2) / df1) / (chi2 / df2)
-        p_value = stats.f.sf(f_stat, df1, df2)
 
         lines = [
             f"Reduced model: {r_name}",
@@ -420,57 +417,6 @@ class EmceeSummaryDialog(BaseDialog):
             content = f"Error processing emcee results: {e}"
 
         build_scrollable_text_viewer(self, content)
-
-
-def compute_diagnostic_stats(residuals) -> list[str]:
-    """Residual-randomness statistics (Durbin-Watson, runs test) as display lines.
-
-    Pure function, no Tk dependency, so it can be unit-tested directly.
-    """
-    import numpy as np
-    import scipy.stats as stats
-
-    lines = []
-
-    # Durbin-Watson statistic
-    diff_resid = np.diff(residuals)
-    ss_resid = np.sum(residuals ** 2)
-    if ss_resid > 0:
-        dw = np.sum(diff_resid ** 2) / ss_resid
-        if dw < 1.5:
-            dw_interp = "positive autocorrelation (model may be systematically wrong)"
-        elif dw > 2.5:
-            dw_interp = "negative autocorrelation"
-        else:
-            dw_interp = "no significant autocorrelation"
-        lines.append(f"Durbin-Watson: {dw:.4f} — {dw_interp}")
-
-    # Runs test (sign changes in residuals)
-    signs = np.sign(residuals)
-    signs = signs[signs != 0]  # drop zeros
-    if len(signs) >= 10:
-        n_pos = int(np.sum(signs > 0))
-        n_neg = int(np.sum(signs < 0))
-        n_total = n_pos + n_neg
-        runs = 1 + int(np.sum(signs[1:] != signs[:-1]))
-        # Expected runs and variance under H0 (random sequence)
-        expected = 1 + 2 * n_pos * n_neg / n_total
-        var_runs = (2 * n_pos * n_neg * (2 * n_pos * n_neg - n_total)) / (
-            n_total ** 2 * (n_total - 1)
-        )
-        if var_runs > 0:
-            z_runs = (runs - expected) / np.sqrt(var_runs)
-            p_runs = 2 * (1 - stats.norm.cdf(abs(z_runs)))
-            if p_runs < 0.05:
-                runs_interp = "non-random pattern (systematic misfit)"
-            else:
-                runs_interp = "consistent with random residuals"
-            lines.append(
-                f"Runs test: {runs} runs (expected {expected:.1f}), "
-                f"z = {z_runs:.3f}, p = {p_runs:.4f} — {runs_interp}"
-            )
-
-    return lines
 
 
 class DiagnosticPlotsDialog(BaseDialog):

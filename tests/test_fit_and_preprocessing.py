@@ -427,14 +427,14 @@ class DiagnosticStatsTests(unittest.TestCase):
     """compute_diagnostic_stats is a pure function extracted from the diagnostics dialog."""
 
     def test_random_residuals(self):
-        from curvelab.ui_dialogs_analysis import compute_diagnostic_stats
+        from curvelab.analysis_tools import compute_diagnostic_stats
         rng = np.random.default_rng(1)
         lines = compute_diagnostic_stats(rng.normal(0, 1, 200))
         self.assertTrue(any("no significant autocorrelation" in l for l in lines))
         self.assertTrue(any("consistent with random residuals" in l for l in lines))
 
     def test_systematic_misfit(self):
-        from curvelab.ui_dialogs_analysis import compute_diagnostic_stats
+        from curvelab.analysis_tools import compute_diagnostic_stats
         rng = np.random.default_rng(1)
         r = np.sin(np.linspace(0, 6 * np.pi, 200)) + rng.normal(0, 0.05, 200)
         lines = compute_diagnostic_stats(r)
@@ -442,7 +442,7 @@ class DiagnosticStatsTests(unittest.TestCase):
         self.assertTrue(any("non-random pattern" in l for l in lines))
 
     def test_degenerate_zero_residuals(self):
-        from curvelab.ui_dialogs_analysis import compute_diagnostic_stats
+        from curvelab.analysis_tools import compute_diagnostic_stats
         self.assertEqual(compute_diagnostic_stats(np.zeros(50)), [])
 
 
