@@ -10,10 +10,6 @@ import threading
 from tkinter import messagebox
 
 from .fit_manager import FitManager, REDUCE_FUNCTIONS
-from .session import (
-    FIT_COLORS, FitSession,
-    make_session_key as _make_session_key,
-)
 from .ui_dialogs_analysis import ModelComparisonDialog, GlobalFitDialog
 
 
@@ -216,15 +212,7 @@ class FitHandlersMixin:
         async fit (emcee, brute, ...) can outlive the user's selection.
         """
         result = sess.result
-        skey = _make_session_key(sid, sess.name)
-        series_label = rec.style.get("label", sid)
-        label = f"{series_label} — {sess.name}"
-
-        self.plot_mgr.clear_fit_session(skey)
-        self._plot_fit_for_session(skey, sess, label)
-
-        if self.plot_controls.residuals_var.get():
-            self._plot_residuals_for_session(skey, sess, rec)
+        skey = self._show_fit_on_plot(sid, sess, rec)
 
         self._display_result(result)
 
@@ -268,27 +256,11 @@ class FitHandlersMixin:
             )
 
             session_name = sess.name
-            show_resid = self.plot_controls.residuals_var.get()
 
             for (sid, r), result in zip(selected_recs, results):
-                if session_name not in r.fit_sessions:
-                    color = FIT_COLORS[len(r.fit_sessions) % len(FIT_COLORS)]
-                    r.fit_sessions[session_name] = FitSession(
-                        name=session_name, color=color,
-                    )
-                    if r.active_session_name is None:
-                        r.active_session_name = session_name
-
-                target_sess = r.fit_sessions[session_name]
+                target_sess = r.ensure_session(session_name)
                 target_sess.result = result
-
-                skey = _make_session_key(sid, session_name)
-                series_label = r.style.get("label", sid)
-                label = f"{series_label} — {session_name}"
-                self.plot_mgr.clear_fit_session(skey)
-                self._plot_fit_for_session(skey, target_sess, label)
-                if show_resid:
-                    self._plot_residuals_for_session(skey, target_sess, r)
+                self._show_fit_on_plot(sid, target_sess, r)
 
             self._refresh_session_ui()
 
@@ -308,20 +280,10 @@ class FitHandlersMixin:
 
         session_name = sess.name
         summary_rows = []
-        show_resid = self.plot_controls.residuals_var.get()
         reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
 
         for sid, target_rec in self._series_records.items():
-            # Ensure target series has a session with the same name
-            if session_name not in target_rec.fit_sessions:
-                color = FIT_COLORS[len(target_rec.fit_sessions) % len(FIT_COLORS)]
-                target_rec.fit_sessions[session_name] = FitSession(
-                    name=session_name, color=color,
-                )
-                if target_rec.active_session_name is None:
-                    target_rec.active_session_name = session_name
-
-            target_sess = target_rec.fit_sessions[session_name]
+            target_sess = target_rec.ensure_session(session_name)
             target_fm = target_sess.fit_manager
 
             # Clone model components from source
@@ -338,16 +300,9 @@ class FitHandlersMixin:
                     scale_covar=scale_covar,
                 )
                 target_sess.result = result
+                self._show_fit_on_plot(sid, target_sess, target_rec)
 
-                skey = _make_session_key(sid, session_name)
                 series_label = target_rec.style.get("label", sid)
-                label = f"{series_label} — {session_name}"
-
-                self.plot_mgr.clear_fit_session(skey)
-                self._plot_fit_for_session(skey, target_sess, label)
-                if show_resid:
-                    self._plot_residuals_for_session(skey, target_sess, target_rec)
-
                 model_desc = target_fm.model_description()
                 gof = result.gof
                 summary_rows.append({

@@ -13,7 +13,7 @@ from .data_manager import DataManager
 from .fit_manager import FitManager
 from .plot_manager import PlotManager, SeriesStyle
 from .session import (
-    FIT_COLORS, FitSession, ParamEdit, SeriesRecord,
+    FitSession, ParamEdit, SeriesRecord,
     make_series_id as _make_series_id,
     make_session_key as _make_session_key,
 )
@@ -554,6 +554,17 @@ class CurveLabApp(
             show_band=show_band,
         )
 
+    def _show_fit_on_plot(self, sid: str, sess: FitSession, rec: SeriesRecord) -> str:
+        """Clear and redraw one session's fit curve, plus residuals when the
+        residuals panel is shown. Returns the session key of the artists."""
+        skey = _make_session_key(sid, sess.name)
+        label = f"{rec.style.get('label', sid)} — {sess.name}"
+        self.plot_mgr.clear_fit_session(skey)
+        self._plot_fit_for_session(skey, sess, label)
+        if self.plot_controls.residuals_var.get():
+            self._plot_residuals_for_session(skey, sess, rec)
+        return skey
+
     # --- Dataset callbacks ---
 
     def _on_load_file(self, filepath: str):
@@ -675,16 +686,11 @@ class CurveLabApp(
                 messagebox.showerror("Plot Error", f"Error plotting series: {e}")
 
         self._series_records = new_records
-        show_resid = self.plot_controls.residuals_var.get()
 
         for sid, rec in self._series_records.items():
-            for sess_name, sess in rec.fit_sessions.items():
+            for sess in rec.fit_sessions.values():
                 if sess.result is not None and sess.visible:
-                    skey = _make_session_key(sid, sess_name)
-                    label = f"{rec.style.get('label', sid)} \u2014 {sess_name}"
-                    self._plot_fit_for_session(skey, sess, label)
-                    if show_resid:
-                        self._plot_residuals_for_session(skey, sess, rec)
+                    self._show_fit_on_plot(sid, sess, rec)
 
         # Switch to the most recently added series so new sessions target it
         if latest_new_sid is not None:
@@ -741,13 +747,9 @@ class CurveLabApp(
                     self.plot_mgr.plot_series(
                         rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
                     )
-            for sess_name, sess in rec.fit_sessions.items():
+            for sess in rec.fit_sessions.values():
                 if sess.result is not None and sess.visible:
-                    skey = _make_session_key(sid, sess_name)
-                    label = f"{s.get('label', sid)} \u2014 {sess_name}"
-                    self._plot_fit_for_session(skey, sess, label)
-                    if show_resid:
-                        self._plot_residuals_for_session(skey, sess, rec)
+                    self._show_fit_on_plot(sid, sess, rec)
 
         # Restore residuals visibility state
         self.plot_mgr.set_residuals_visible(show_resid)
@@ -813,9 +815,7 @@ class CurveLabApp(
             return
 
         self._session_counter += 1
-        color = FIT_COLORS[len(rec.fit_sessions) % len(FIT_COLORS)]
-        sess = FitSession(name=name, color=color)
-        rec.fit_sessions[name] = sess
+        rec.ensure_session(name)
         rec.active_session_name = name
         self._refresh_session_ui()
 

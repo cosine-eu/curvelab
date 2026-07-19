@@ -108,3 +108,14 @@ class SeriesRecord:
         if self.active_session_name is None:
             return None
         return self.fit_sessions.get(self.active_session_name)
+
+    def ensure_session(self, name: str) -> FitSession:
+        """Return the named session, creating it (with the next fit color)
+        if absent. A newly created session becomes active only when no
+        session was active before."""
+        if name not in self.fit_sessions:
+            color = FIT_COLORS[len(self.fit_sessions) % len(FIT_COLORS)]
+            self.fit_sessions[name] = FitSession(name=name, color=color)
+            if self.active_session_name is None:
+                self.active_session_name = name
+        return self.fit_sessions[name]
