@@ -209,6 +209,11 @@ The **Show/Hide** button toggles per-series visibility. Hidden series
 disappear from the plot but their fit sessions and data remain intact.
 The listbox shows a `[hidden]` prefix for hidden series.
 
+The **Remove** button below the style controls takes the selected series
+off the plot and discards its fit sessions. If the series has any, you are
+asked to confirm first — to hide a series without losing its fits, use
+**Show/Hide** instead.
+
 In the Fit panel, a **Show/Hide All** button next to the Series dropdown
 toggles the active series and all of its fit sessions at once. This is
 convenient for temporarily hiding an entire dataset and its fits when
