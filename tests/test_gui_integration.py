@@ -214,6 +214,23 @@ class ParamUndoRedoTests(GuiTestBase):
         self.assertEqual(fm.params["slope"].expr, "intercept*2")
         self.assertFalse(fm.params["slope"].vary)
 
+    def test_field_parsing_and_rejection(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+
+        self.app._on_param_edited("slope", "min", "")        # empty means -inf
+        self.app._on_param_edited("slope", "max", "inf")
+        self.app._on_param_edited("slope", "vary", "No")
+        self.assertEqual(fm.params["slope"].min, float("-inf"))
+        self.assertEqual(fm.params["slope"].max, float("inf"))
+        self.assertFalse(fm.params["slope"].vary)
+
+        n_undo = len(sess.undo_stack)
+        self.app._on_param_edited("slope", "value", "banana")
+        self.assertEqual(len(sess.undo_stack), n_undo)       # nothing recorded
+        self.app._on_param_edited("slope", "nonsense", "1")
+        self.assertEqual(len(sess.undo_stack), n_undo)
+
     def test_undo_value_edit_unchanged(self):
         rec, sess = self._add_fitted_series()
         fm = sess.fit_manager

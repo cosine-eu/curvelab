@@ -28,6 +28,20 @@ from .app_series import SeriesSessionMixin
 from .app_plotting import PlottingMixin
 
 
+# Editable parameter-table fields: how to read the current value off an
+# lmfit Parameter, and how to parse the text typed into the cell.
+_PARAM_FIELD_EDITORS = {
+    "vary": (lambda par: par.vary,
+             lambda text: text.lower() in ("yes", "true", "1")),
+    "value": (lambda par: par.value, float),
+    "min": (lambda par: par.min,
+            lambda text: float("-inf") if text in ("-inf", "") else float(text)),
+    "max": (lambda par: par.max,
+            lambda text: float("inf") if text in ("inf", "") else float(text)),
+    "expr": (lambda par: par.expr or "", lambda text: text.strip()),
+}
+
+
 class CurveLabApp(
     MenuMixin, SeriesSessionMixin, PlottingMixin, AnalysisHandlersMixin,
     DataToolsMixin, WorkspaceMixin, FitHandlersMixin, ttk.Frame,
@@ -458,42 +472,24 @@ class CurveLabApp(
             return
         if param_name not in fm.params:
             return
+        editor = _PARAM_FIELD_EDITORS.get(field)
+        if editor is None:
+            return
+        read_current, parse = editor
+        old_value = read_current(fm.params[param_name])
         try:
-            par = fm.params[param_name]
-            if field == "vary":
-                old_value = par.vary
-                new_value = value.lower() in ("yes", "true", "1")
-                fm.set_param(param_name, vary=new_value)
-                fm.set_param_hint(param_name, vary=new_value)
-            elif field == "value":
-                old_value = par.value
-                new_value = float(value)
-                fm.set_param(param_name, value=new_value)
-                fm.set_param_hint(param_name, value=new_value)
-            elif field == "min":
-                old_value = par.min
-                new_value = float("-inf") if value in ("-inf", "") else float(value)
-                fm.set_param(param_name, min=new_value)
-                fm.set_param_hint(param_name, min=new_value)
-            elif field == "max":
-                old_value = par.max
-                new_value = float("inf") if value in ("inf", "") else float(value)
-                fm.set_param(param_name, max=new_value)
-                fm.set_param_hint(param_name, max=new_value)
-            elif field == "expr":
-                old_value = par.expr or ""
-                new_value = value.strip()
-                kwargs = self._param_field_kwargs(field, new_value)
-                fm.set_param(param_name, **kwargs)
-                fm.set_param_hint(param_name, **kwargs)
-            else:
-                return
-            edit = ParamEdit(param_name=param_name, field=field,
-                             old_value=old_value, new_value=new_value)
-            sess.undo_stack.append(edit)
-            sess.redo_stack.clear()
+            new_value = parse(value)
+            kwargs = self._param_field_kwargs(field, new_value)
+            fm.set_param(param_name, **kwargs)
+            fm.set_param_hint(param_name, **kwargs)
         except ValueError:
             self._refresh_param_display()
+            return
+        sess.undo_stack.append(ParamEdit(
+            param_name=param_name, field=field,
+            old_value=old_value, new_value=new_value,
+        ))
+        sess.redo_stack.clear()
 
     @staticmethod
     def _param_field_kwargs(field: str, value) -> dict:
