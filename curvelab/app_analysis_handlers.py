@@ -7,7 +7,7 @@ fit_panel), so they are not usable standalone.
 
 from tkinter import messagebox, filedialog
 
-from .fit_manager import FitManager
+from .fit_manager import FitManager, make_gof
 from .ui_dialogs_analysis import (
     ModelComparisonDialog, FTestDialog,
     ConfidenceIntervalDialog, CorrelationMatrixDialog, CovarianceMatrixDialog,
@@ -251,13 +251,13 @@ class AnalysisHandlersMixin:
 
             # Display params and report in the results panel
             self.fit_results.set_params(FitManager.params_to_info(loaded.params))
-            gof = {
-                "chi-squared": getattr(loaded, "chisqr", None),
-                "reduced chi-squared": getattr(loaded, "redchi", None),
-                "R-squared": getattr(loaded, "rsquared", None),
-                "AIC": getattr(loaded, "aic", None),
-                "BIC": getattr(loaded, "bic", None),
-            }
+            gof = make_gof(
+                chisqr=getattr(loaded, "chisqr", None),
+                redchi=getattr(loaded, "redchi", None),
+                rsquared=getattr(loaded, "rsquared", None),
+                aic=getattr(loaded, "aic", None),
+                bic=getattr(loaded, "bic", None),
+            )
             self.fit_results.set_gof(gof)
             self.fit_results.set_report(loaded.fit_report())
         except Exception as e:

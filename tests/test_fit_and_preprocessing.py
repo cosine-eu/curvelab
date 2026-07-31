@@ -6,6 +6,35 @@ import unittest
 import numpy as np
 
 
+class ResultBuilderTests(unittest.TestCase):
+    """make_gof and param_info are the single definition of the result
+    dict shapes that run_fit, run_global_fit, and run_odr all produce."""
+
+    def test_gof_keeps_canonical_order(self):
+        from curvelab.fit_manager import make_gof
+        gof = make_gof(chisqr=1.0, redchi=0.5, rsquared=0.99, aic=3.0, bic=4.0)
+        self.assertEqual(
+            list(gof),
+            ["chi-squared", "reduced chi-squared", "R-squared", "AIC", "BIC"],
+        )
+
+    def test_gof_omits_missing_statistics(self):
+        from curvelab.fit_manager import make_gof
+        # ODR reports no AIC/BIC; absent beats None, which can't be formatted.
+        gof = make_gof(chisqr=1.0, redchi=0.5, rsquared=0.99)
+        self.assertEqual(list(gof), ["chi-squared", "reduced chi-squared", "R-squared"])
+
+    def test_param_info_defaults(self):
+        from curvelab.fit_manager import param_info
+        info = param_info(2.0)
+        self.assertEqual(info["value"], 2.0)
+        self.assertIsNone(info["stderr"])
+        self.assertEqual(info["min"], -np.inf)
+        self.assertEqual(info["max"], np.inf)
+        self.assertTrue(info["vary"])
+        self.assertEqual(info["expr"], "")
+
+
 class FitManagerRunFitTests(unittest.TestCase):
     """Gap 1: Test that run_fit recovers known parameters."""
 

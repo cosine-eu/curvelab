@@ -63,6 +63,40 @@ DEFAULT_FIT_METHOD = "least_squares"
 # Points in the dense grid used for smooth fit curves.
 N_DENSE = 500
 
+# Central-difference step for df/dx in effective-variance weights: relative
+# to |x|, with a floor so x == 0 still gets a usable step.
+DFDX_REL_STEP = 1e-8
+DFDX_MIN_STEP = 1e-10
+
+
+def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dict:
+    """Goodness-of-fit dict with the canonical key names and order.
+
+    Statistics that a fit doesn't provide (ODR has no AIC/BIC) are left
+    out, so consumers never have to format a None.
+    """
+    values = {
+        "chi-squared": chisqr,
+        "reduced chi-squared": redchi,
+        "R-squared": rsquared,
+        "AIC": aic,
+        "BIC": bic,
+    }
+    return {k: v for k, v in values.items() if v is not None}
+
+
+def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
+               vary=True, expr="") -> dict:
+    """One parameter's entry for FitResult.params."""
+    return {
+        "value": value,
+        "stderr": stderr,
+        "min": minimum,
+        "max": maximum,
+        "vary": vary,
+        "expr": expr,
+    }
+
 
 @dataclass
 class FitComponent:
@@ -366,16 +400,19 @@ class FitManager:
     def params_to_info(params) -> dict[str, dict]:
         """Convert lmfit Parameters to {name: {value, stderr, min, max, vary, expr}}."""
         return {
-            name: {
-                "value": par.value,
-                "stderr": par.stderr,
-                "min": par.min,
-                "max": par.max,
-                "vary": par.vary,
-                "expr": par.expr or "",
-            }
+            name: param_info(par.value, par.stderr, par.min, par.max,
+                             par.vary, par.expr or "")
             for name, par in params.items()
         }
+
+    @staticmethod
+    def _effective_variance_weights(eval_at, x, yerr, xerr):
+        """w = 1/sqrt(yerr² + (df/dx)²·xerr²), with df/dx by central
+        difference. eval_at(x) evaluates the model at the given x."""
+        h = np.maximum(np.abs(x) * DFDX_REL_STEP, DFDX_MIN_STEP)
+        dfdx = (eval_at(x + h) - eval_at(x - h)) / (2 * h)
+        denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
+        return 1.0 / denom
 
     @staticmethod
     def _compute_weights(y, yerr, weight_mode):
@@ -428,15 +465,11 @@ class FitManager:
 
         weights = self._compute_weights(y, yerr, weight_mode)
 
-        # Effective variance: w = 1/sqrt(yerr² + (df/dx)² · xerr²)
         if weight_mode == WEIGHT_EFFECTIVE_VARIANCE:
             if xerr is not None and yerr is not None:
-                h = np.maximum(np.abs(x) * 1e-8, 1e-10)
-                y_plus = self._model.eval(self._params, x=x + h)
-                y_minus = self._model.eval(self._params, x=x - h)
-                dfdx = (y_plus - y_minus) / (2 * h)
-                denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
-                weights = 1.0 / denom
+                weights = self._effective_variance_weights(
+                    lambda xv: self._model.eval(self._params, x=xv), x, yerr, xerr
+                )
             elif yerr is not None:
                 weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
             else:
@@ -482,13 +515,13 @@ class FitManager:
         # Update internal params with fitted values
         self._params = self._last_result.params
 
-        gof = {
-            "chi-squared": self._last_result.chisqr,
-            "reduced chi-squared": self._last_result.redchi,
-            "R-squared": self._last_result.rsquared,
-            "AIC": self._last_result.aic,
-            "BIC": self._last_result.bic,
-        }
+        gof = make_gof(
+            chisqr=self._last_result.chisqr,
+            redchi=self._last_result.redchi,
+            rsquared=self._last_result.rsquared,
+            aic=self._last_result.aic,
+            bic=self._last_result.bic,
+        )
 
         # Capture brute-force candidates
         candidates = None
@@ -604,12 +637,9 @@ class FitManager:
                 weights = precomputed_weights[i]
                 # Effective variance: recompute per iteration (depends on df/dx)
                 if use_effective_variance and xerr is not None and yerr is not None:
-                    h = np.maximum(np.abs(x) * 1e-8, 1e-10)
-                    y_plus = self._model.eval(x=x + h, **kw)
-                    y_minus = self._model.eval(x=x - h, **kw)
-                    dfdx = (y_plus - y_minus) / (2 * h)
-                    denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
-                    weights = 1.0 / denom
+                    weights = self._effective_variance_weights(
+                        lambda xv: self._model.eval(x=xv, **kw), x, yerr, xerr
+                    )
                 if weights is not None:
                     resid = resid * weights
                 all_resid.append(resid)
@@ -634,14 +664,9 @@ class FitManager:
                     p = mini_result.params[name]
                 else:
                     p = mini_result.params[f"s{i}_{name}"]
-                params_info[name] = {
-                    "value": p.value,
-                    "stderr": p.stderr,
-                    "min": p.min,
-                    "max": p.max,
-                    "vary": p.vary,
-                    "expr": p.expr or "",
-                }
+                params_info[name] = param_info(
+                    p.value, p.stderr, p.min, p.max, p.vary, p.expr or ""
+                )
                 init_values[name] = bp.value
 
             # Evaluate model for this dataset
@@ -650,13 +675,13 @@ class FitManager:
             y_fit_data = self._model.eval(x=x, **eval_kw)
             y_fit_dense = self._model.eval(x=x_dense, **eval_kw)
 
-            gof = {
-                "chi-squared": mini_result.chisqr,
-                "reduced chi-squared": mini_result.redchi,
-                "R-squared": 1 - np.sum((y - y_fit_data) ** 2) / np.sum((y - y.mean()) ** 2),
-                "AIC": mini_result.aic,
-                "BIC": mini_result.bic,
-            }
+            gof = make_gof(
+                chisqr=mini_result.chisqr,
+                redchi=mini_result.redchi,
+                rsquared=1 - np.sum((y - y_fit_data) ** 2) / np.sum((y - y.mean()) ** 2),
+                aic=mini_result.aic,
+                bic=mini_result.bic,
+            )
 
             # Generate a report string
             lines = [f"Global Fit — Dataset {i + 1}/{n}"]
@@ -847,14 +872,12 @@ class FitManager:
         # Build params info
         params_info = {}
         for i, name in enumerate(param_names):
-            params_info[name] = {
-                "value": result.beta[i],
-                "stderr": result.sd_beta[i] if vary_mask[i] else None,
-                "min": self._params[name].min,
-                "max": self._params[name].max,
-                "vary": vary_mask[i],
-                "expr": "",
-            }
+            params_info[name] = param_info(
+                result.beta[i],
+                result.sd_beta[i] if vary_mask[i] else None,
+                self._params[name].min, self._params[name].max,
+                vary_mask[i],
+            )
 
         # GOF
         n_data = len(x)
@@ -865,11 +888,7 @@ class FitManager:
         ss_tot = np.sum((y - y.mean()) ** 2)
         r_squared = 1 - np.sum((y - y_fit_data) ** 2) / ss_tot if ss_tot > 0 else 0
 
-        gof = {
-            "chi-squared": chisqr,
-            "reduced chi-squared": redchi,
-            "R-squared": r_squared,
-        }
+        gof = make_gof(chisqr=chisqr, redchi=redchi, rsquared=r_squared)
 
         # Report
         lines = ["Orthogonal Distance Regression (odrpack)"]
