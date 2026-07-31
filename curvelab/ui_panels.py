@@ -8,7 +8,7 @@ from .fit_manager import (
     REDUCE_FUNCTIONS, WEIGHT_MODES,
 )
 from .models import MODEL_NAMES
-from .ui_common import set_readonly_text
+from .ui_common import configure_row_tags, row_tag, set_readonly_text
 
 # Marker choices for the style dropdown
 MARKERS = ["o", "s", "^", "v", "D", "x", "+", ".", "*", "h"]
@@ -1002,9 +1002,7 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree.column("#0", width=200, stretch=False)
         self.param_tree.heading("#0", text="Name")
 
-        # Alternating row colors
-        self.param_tree.tag_configure("even", background="#f0f0f0")
-        self.param_tree.tag_configure("odd", background="#ffffff")
+        configure_row_tags(self.param_tree)
 
         tree_scroll = ttk.Scrollbar(
             tree_frame, orient=tk.VERTICAL, command=self.param_tree.yview
@@ -1043,7 +1041,7 @@ class FitResultsPanel(ttk.LabelFrame):
             mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
             vary = "Yes" if info.get("vary", True) else "No"
             expr = info.get("expr") or ""
-            tag = "even" if i % 2 == 0 else "odd"
+            tag = row_tag(i)
             self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=(tag,))
 
     def set_gof(self, gof: dict | None):
