@@ -375,6 +375,47 @@ class BatchFitWarningTests(GuiTestBase):
         self.assertEqual(app_mb.showwarning.call_args[0][1].count("\n"), 0)
 
 
+class PlotControlPersistenceTests(GuiTestBase):
+    """Controls that change what is plotted or computed must survive a save
+    and load; several were written to the widget but never to the file."""
+
+    NON_DEFAULTS = {
+        "weighted_resid_var": False,
+        "data_var": False,
+        "band_sigma_var": "3",
+        "residuals_var": True,
+        "confidence_band_var": True,
+    }
+
+    def test_plot_controls_round_trip(self):
+        for name, value in self.NON_DEFAULTS.items():
+            getattr(self.app.plot_controls, name).set(value)
+        self.app.fit_panel.scale_covar_var.set(False)
+
+        ws = self.app._serialize_workspace()
+
+        # A fresh app starts at the defaults, then restores from the dict.
+        import tkinter as tk
+        from curvelab.app import CurveLabApp
+        root2 = tk.Tk()
+        try:
+            app2 = CurveLabApp(root2)
+            app2._load_workspace_plot_controls(ws)
+            for name, value in self.NON_DEFAULTS.items():
+                self.assertEqual(getattr(app2.plot_controls, name).get(), value, name)
+            self.assertFalse(app2.fit_panel.scale_covar_var.get())
+        finally:
+            root2.destroy()
+
+    def test_missing_keys_fall_back_to_defaults(self):
+        self.app._load_workspace_plot_controls({"plot_controls": {}})
+
+        self.assertTrue(self.app.plot_controls.weighted_resid_var.get())
+        self.assertTrue(self.app.plot_controls.data_var.get())
+        self.assertEqual(self.app.plot_controls.band_sigma_var.get(), "1")
+        self.assertTrue(self.app.fit_panel.scale_covar_var.get())
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log

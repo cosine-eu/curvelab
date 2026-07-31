@@ -158,7 +158,11 @@ class WorkspaceMixin:
                 "fit_xmin": self.plot_controls.fit_xmin_var.get(),
                 "fit_xmax": self.plot_controls.fit_xmax_var.get(),
                 "residuals": self.plot_controls.residuals_var.get(),
+                "weighted_resid": self.plot_controls.weighted_resid_var.get(),
                 "confidence_band": self.plot_controls.confidence_band_var.get(),
+                "band_sigma": self.plot_controls.band_sigma_var.get(),
+                "data": self.plot_controls.data_var.get(),
+                "scale_covar": self.fit_panel.scale_covar_var.get(),
                 "fit_method": self.fit_panel.method_var.get(),
                 "reduce_fcn": self.fit_panel.reduce_var.get(),
                 "weight_mode": self.fit_panel.weight_var.get(),
@@ -308,7 +312,11 @@ class WorkspaceMixin:
         self.plot_controls.fit_xmin_var.set(pc.get("fit_xmin", ""))
         self.plot_controls.fit_xmax_var.set(pc.get("fit_xmax", ""))
         self.plot_controls.residuals_var.set(pc.get("residuals", False))
+        self.plot_controls.weighted_resid_var.set(pc.get("weighted_resid", True))
         self.plot_controls.confidence_band_var.set(pc.get("confidence_band", False))
+        self.plot_controls.band_sigma_var.set(pc.get("band_sigma", "1"))
+        self.plot_controls.data_var.set(pc.get("data", True))
+        self.fit_panel.scale_covar_var.set(pc.get("scale_covar", True))
         self.fit_panel.method_var.set(pc.get("fit_method", "least_squares"))
         self.fit_panel.reduce_var.set(pc.get("reduce_fcn", "Chi-square (default)"))
         self.fit_panel.weight_var.set(pc.get("weight_mode", "1/yerr (default)"))
