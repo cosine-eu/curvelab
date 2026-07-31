@@ -60,6 +60,115 @@ SLOW_METHODS = {
 }
 DEFAULT_FIT_METHOD = "least_squares"
 
+# --- Method capabilities and objectives ---------------------------------
+#
+# Not every Method + Objective combination is meaningful: reduce_fcn is only
+# consumed by the scalar minimizers, least_squares takes a scipy robust
+# `loss` instead, emcee optimizes a log-posterior, and ODR minimizes
+# orthogonal distance. Each method therefore declares which *objective kind*
+# it supports, plus which shared controls it honors, so the UI can offer only
+# valid choices and disable the rest. Verified against lmfit 1.3.4.
+
+# Objective kinds (how the residual becomes the thing minimized):
+OBJ_RESIDUAL = "residual"      # array residual, no scalarizing (leastsq)
+OBJ_LOSS = "loss"             # scipy robust loss on least_squares
+OBJ_SCALAR = "scalar"         # reduce_fcn scalarizes (nelder, powell, ...)
+OBJ_POSTERIOR = "posterior"    # emcee log-posterior
+OBJ_ODR = "odr"               # orthogonal distance regression
+
+
+@dataclass(frozen=True)
+class MethodCaps:
+    """What a fit method supports, so the UI can constrain the choices."""
+
+    objective: str                          # one of the OBJ_* kinds
+    needs_bounds: bool = False              # finite min/max on varied params
+    honors_weights: bool = True
+    honors_max_nfev: bool = True
+    honors_scale_covar: bool = True
+    requires: tuple[str, ...] = ()          # importable modules the method needs
+
+
+_SCALAR = MethodCaps(objective=OBJ_SCALAR)
+_SCALAR_BOUNDED = MethodCaps(objective=OBJ_SCALAR, needs_bounds=True)
+
+METHOD_CAPS: dict[str, MethodCaps] = {
+    "leastsq": MethodCaps(objective=OBJ_RESIDUAL),
+    "least_squares": MethodCaps(objective=OBJ_LOSS),
+    "nelder": _SCALAR,
+    "powell": _SCALAR,
+    "cobyla": _SCALAR,
+    "lbfgsb": _SCALAR,
+    "basinhopping": _SCALAR,
+    "ampgo": _SCALAR,
+    "differential_evolution": _SCALAR_BOUNDED,
+    "dual_annealing": _SCALAR_BOUNDED,
+    "shgo": _SCALAR_BOUNDED,
+    "brute": _SCALAR_BOUNDED,
+    "emcee": MethodCaps(objective=OBJ_POSTERIOR),
+    "odr": MethodCaps(
+        objective=OBJ_ODR, honors_weights=False,
+        honors_max_nfev=False, honors_scale_covar=False,
+        requires=("odrpack",),
+    ),
+}
+
+
+# Objective choices per kind. For OBJ_SCALAR the label maps to a reduce_fcn
+# (reusing REDUCE_FUNCTIONS); for OBJ_LOSS it maps to a scipy loss name.
+LEAST_SQUARES_DEFAULT = "Least squares"
+# label -> scipy least_squares `loss` value
+LOSS_FUNCTIONS: dict[str, str] = {
+    LEAST_SQUARES_DEFAULT: "linear",
+    "Soft L1": "soft_l1",
+    "Huber": "huber",
+    "Cauchy": "cauchy",
+    "Arctan": "arctan",
+}
+# Robust losses (everything except plain linear least squares) take an
+# f_scale; the UI enables its entry only for these.
+ROBUST_LOSSES = frozenset(LOSS_FUNCTIONS) - {LEAST_SQUARES_DEFAULT}
+DEFAULT_F_SCALE = 1.0
+
+# Single-choice objective labels for the kinds that offer no alternatives.
+_FIXED_OBJECTIVE_CHOICES = {
+    OBJ_RESIDUAL: ["Least squares"],
+    OBJ_POSTERIOR: ["Log-posterior"],
+    OBJ_ODR: ["Orthogonal distance"],
+}
+
+
+def objective_choices(method: str) -> list[str]:
+    """Objective labels valid for a method (first is the default)."""
+    kind = METHOD_CAPS[method].objective
+    if kind == OBJ_LOSS:
+        return list(LOSS_FUNCTIONS)
+    if kind == OBJ_SCALAR:
+        return list(REDUCE_FUNCTIONS)
+    return list(_FIXED_OBJECTIVE_CHOICES[kind])
+
+
+def objective_kwargs(method: str, label: str, f_scale: float = DEFAULT_F_SCALE) -> dict:
+    """fit_kws contribution for a method's chosen objective.
+
+    Returns {"reduce_fcn": fn} for scalar methods, {"loss": ..., "f_scale":
+    ...} for least_squares, or {} for methods whose objective is fixed.
+    Unknown labels fall back to the method's default (empty kwargs), so a
+    stale selection can never inject an invalid argument.
+    """
+    kind = METHOD_CAPS[method].objective
+    if kind == OBJ_LOSS:
+        loss = LOSS_FUNCTIONS.get(label, "linear")
+        kws = {"loss": loss}
+        if loss != "linear":
+            kws["f_scale"] = f_scale
+        return kws
+    if kind == OBJ_SCALAR:
+        fn = REDUCE_FUNCTIONS.get(label)
+        return {"reduce_fcn": fn} if fn is not None else {}
+    return {}
+
+
 # Points in the dense grid used for smooth fit curves.
 N_DENSE = 500
 

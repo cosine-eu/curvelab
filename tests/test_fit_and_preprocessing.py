@@ -35,6 +35,63 @@ class ResultBuilderTests(unittest.TestCase):
         self.assertEqual(info["expr"], "")
 
 
+class MethodCapabilityTests(unittest.TestCase):
+    """METHOD_CAPS + objective helpers constrain the Method/Objective menus
+    so no inert or invalid combination can be chosen."""
+
+    def test_every_method_has_capabilities(self):
+        from curvelab.fit_manager import FIT_METHODS, METHOD_CAPS
+        self.assertEqual(set(METHOD_CAPS), set(FIT_METHODS))
+
+    def test_objective_choices_match_kind(self):
+        from curvelab.fit_manager import objective_choices
+        # least_squares offers robust losses...
+        self.assertEqual(objective_choices("least_squares")[0], "Least squares")
+        self.assertIn("Cauchy", objective_choices("least_squares"))
+        # ...scalar methods offer the reduce functions...
+        self.assertIn("Neg. entropy", objective_choices("nelder"))
+        # ...and fixed-objective methods offer exactly one label.
+        self.assertEqual(objective_choices("leastsq"), ["Least squares"])
+        self.assertEqual(objective_choices("emcee"), ["Log-posterior"])
+        self.assertEqual(objective_choices("odr"), ["Orthogonal distance"])
+
+    def test_loss_kwargs_carry_f_scale_only_for_robust(self):
+        from curvelab.fit_manager import objective_kwargs
+        self.assertEqual(objective_kwargs("least_squares", "Least squares"),
+                         {"loss": "linear"})
+        self.assertEqual(objective_kwargs("least_squares", "Cauchy", f_scale=2.5),
+                         {"loss": "cauchy", "f_scale": 2.5})
+
+    def test_scalar_kwargs_map_to_reduce_fcn(self):
+        from curvelab.fit_manager import objective_kwargs, _reduce_negentropy
+        self.assertEqual(objective_kwargs("nelder", "Neg. entropy"),
+                         {"reduce_fcn": _reduce_negentropy})
+        # The default (Chi-square) means "no reduce_fcn", not None-injected.
+        self.assertEqual(objective_kwargs("nelder", "Chi-square (default)"), {})
+
+    def test_fixed_objective_methods_add_nothing(self):
+        from curvelab.fit_manager import objective_kwargs
+        self.assertEqual(objective_kwargs("leastsq", "Least squares"), {})
+        self.assertEqual(objective_kwargs("emcee", "Log-posterior"), {})
+
+    def test_stale_label_falls_back_to_default(self):
+        from curvelab.fit_manager import objective_kwargs
+        # A label left over from another method must not inject a bad arg.
+        self.assertEqual(objective_kwargs("least_squares", "Neg. entropy"),
+                         {"loss": "linear"})
+        self.assertEqual(objective_kwargs("nelder", "Cauchy"), {})
+
+    def test_bounds_and_package_flags(self):
+        from curvelab.fit_manager import METHOD_CAPS
+        for m in ("differential_evolution", "dual_annealing", "shgo", "brute"):
+            self.assertTrue(METHOD_CAPS[m].needs_bounds, m)
+        self.assertFalse(METHOD_CAPS["least_squares"].needs_bounds)
+        self.assertEqual(METHOD_CAPS["odr"].requires, ("odrpack",))
+        caps = METHOD_CAPS["odr"]
+        self.assertFalse(caps.honors_weights)
+        self.assertFalse(caps.honors_scale_covar)
+
+
 class FitManagerRunFitTests(unittest.TestCase):
     """Gap 1: Test that run_fit recovers known parameters."""
 
