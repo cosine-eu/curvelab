@@ -230,6 +230,13 @@ class WorkspaceMixin:
         # Replot everything and sync UI
         self._refresh_all_ui()
 
+    def _sqlite_dataset_index(self) -> dict[tuple[str, str], str]:
+        """(filepath, table name) -> dataset name, for loaded SQLite tables."""
+        return {
+            (str(self.data_mgr.filepaths.get(ds_name)), table): ds_name
+            for ds_name, table in self.data_mgr.table_names.items()
+        }
+
     def _load_workspace_datasets(self, ws) -> dict:
         """Reload datasets from saved filepaths; return {old name -> new name}."""
         self.data_mgr = DataManager()
@@ -239,26 +246,16 @@ class WorkspaceMixin:
         for name, fpath in ws.get("data_filepaths", {}).items():
             try:
                 fpath_str = str(fpath)
-                ext = Path(fpath).suffix.lower()
-                if ext in (".sqlite", ".db"):
-                    if fpath_str in loaded_sqlite_files:
-                        # Already loaded — find the matching dataset by table name
-                        table = saved_table_names.get(name, "")
-                        for ds_name, tbl in self.data_mgr.table_names.items():
-                            if tbl == table and str(self.data_mgr.filepaths.get(ds_name)) == fpath_str:
-                                dataset_name_map[name] = ds_name
-                                break
-                        continue
-                    loaded_sqlite_files.add(fpath_str)
-                    self.data_mgr.load(fpath)
-                    # Map all old names for this file to their new dataset names
-                    for old_name, old_fpath in ws.get("data_filepaths", {}).items():
-                        if str(old_fpath) == fpath_str:
-                            table = saved_table_names.get(old_name, "")
-                            for ds_name, tbl in self.data_mgr.table_names.items():
-                                if tbl == table and str(self.data_mgr.filepaths.get(ds_name)) == fpath_str:
-                                    dataset_name_map[old_name] = ds_name
-                                    break
+                if Path(fpath).suffix.lower() in (".sqlite", ".db"):
+                    # One load brings in every table of the file as its own
+                    # dataset, so match this entry by (file, table).
+                    if fpath_str not in loaded_sqlite_files:
+                        loaded_sqlite_files.add(fpath_str)
+                        self.data_mgr.load(fpath)
+                    table = saved_table_names.get(name, "")
+                    ds_name = self._sqlite_dataset_index().get((fpath_str, table))
+                    if ds_name is not None:
+                        dataset_name_map[name] = ds_name
                 else:
                     new_name, columns = self.data_mgr.load(fpath)
                     dataset_name_map[name] = new_name

@@ -1,5 +1,6 @@
 """lmfit 1D model registry."""
 
+from collections.abc import Callable
 from functools import partial
 
 import numpy as np
@@ -45,8 +46,9 @@ try:
 except ImportError:
     FermiModel = None
 
-# Display name -> factory callable (no-arg returns a fresh Model instance)
-MODEL_REGISTRY: dict[str, type] = {
+# Display name -> factory: factory(prefix=...) returns a fresh lmfit Model.
+# None marks a model that needs extra input at creation time (see below).
+MODEL_REGISTRY: dict[str, Callable | None] = {
     "Gaussian": GaussianModel,
     "Lorentzian": LorentzianModel,
     "Voigt": VoigtModel,

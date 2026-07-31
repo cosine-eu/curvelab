@@ -59,8 +59,7 @@ class SeriesSessionMixin:
             if rec.dataset_name == name
         ]
         n_sessions = sum(
-            len(rec.fit_sessions) for sid in to_remove
-            for rec in [self._series_records[sid]]
+            len(self._series_records[sid].fit_sessions) for sid in to_remove
         )
         if n_sessions > 0:
             ok = messagebox.askyesno(

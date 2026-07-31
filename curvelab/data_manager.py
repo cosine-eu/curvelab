@@ -44,6 +44,21 @@ def _open_text_with_encoding_fallback(path):
     raise AssertionError("unreachable: latin-1 never raises UnicodeDecodeError")
 
 
+# Extension -> reader. Anything else falls back to whitespace-separated text.
+_LOADERS = {
+    ".csv": _read_csv_with_encoding_fallback,
+    ".tsv": lambda p: _read_csv_with_encoding_fallback(p, sep="\t"),
+    ".xlsx": pd.read_excel,
+    ".xls": pd.read_excel,
+    ".ods": lambda p: pd.read_excel(p, engine="odf"),
+    ".json": pd.read_json,
+    ".parquet": pd.read_parquet,
+    ".h5": pd.read_hdf,
+    ".hdf5": pd.read_hdf,
+    ".hdf": pd.read_hdf,
+}
+
+
 class DataManager:
     """Wraps pandas DataFrames. Loads various tabular formats and exposes columns."""
 
@@ -76,22 +91,7 @@ class DataManager:
         if ext in (".sqlite", ".db"):
             return self._load_sqlite(filepath)
 
-        loaders = {
-            ".csv": lambda p: _read_csv_with_encoding_fallback(p),
-            ".tsv": lambda p: _read_csv_with_encoding_fallback(p, sep="\t"),
-            ".xlsx": lambda p: pd.read_excel(p),
-            ".xls": lambda p: pd.read_excel(p),
-            ".ods": lambda p: pd.read_excel(p, engine="odf"),
-            ".json": lambda p: pd.read_json(p),
-            ".parquet": lambda p: pd.read_parquet(p),
-            ".h5": lambda p: pd.read_hdf(p),
-            ".hdf5": lambda p: pd.read_hdf(p),
-            ".hdf": lambda p: pd.read_hdf(p),
-        }
-        loader = loaders.get(ext)
-        if loader is None:
-            loader = lambda p: self._load_text_columns(p)
-
+        loader = _LOADERS.get(ext, self._load_text_columns)
         df = loader(filepath)
 
         name = self._dedupe_name(filepath.name)

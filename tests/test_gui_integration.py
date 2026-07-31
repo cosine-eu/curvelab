@@ -11,6 +11,7 @@ The whole module skips cleanly when no display / Tk is available, so a headless
 run without Xvfb doesn't fail.
 """
 
+import os
 import unittest
 from unittest import mock
 
@@ -465,6 +466,38 @@ class SimulatedSeriesTests(GuiTestBase):
         entry = [s for s in self.app.data_panel.series_list
                  if s["dataset"] == name][0]
         self.assertEqual(entry["linestyle"], "-")
+
+
+class SqliteWorkspaceReloadTests(GuiTestBase):
+    """A SQLite file loads all its tables as separate datasets, so a
+    workspace reload has to map each saved name back by (file, table)."""
+
+    def _make_db(self):
+        import os, sqlite3, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "meas.sqlite")
+        conn = sqlite3.connect(path)
+        for table in ("run1", "run2"):
+            conn.execute(f"CREATE TABLE {table} (x REAL, y REAL)")
+            conn.executemany(f"INSERT INTO {table} VALUES (?, ?)",
+                             [(float(i), 2.0 * i) for i in range(5)])
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_both_tables_map_back_to_their_datasets(self):
+        path = self._make_db()
+        name = os.path.basename(path)
+        ws = {
+            "data_filepaths": {f"{name}::run1": path, f"{name}::run2": path},
+            "table_names": {f"{name}::run1": "run1", f"{name}::run2": "run2"},
+        }
+
+        mapping = self.app._load_workspace_datasets(ws)
+
+        self.assertEqual(mapping[f"{name}::run1"], f"{name}::run1")
+        self.assertEqual(mapping[f"{name}::run2"], f"{name}::run2")
+        # The file is opened once, not once per saved dataset.
+        self.assertEqual(len(self.app.data_mgr.datasets), 2)
 
 
 class ScaleRoundTripTests(GuiTestBase):
