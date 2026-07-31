@@ -185,6 +185,48 @@ class ParamEditorGuardTests(GuiTestBase):
         self.assertTrue(panel._editing_done)
 
 
+class ParamUndoRedoTests(GuiTestBase):
+    """lmfit forces vary=False when an expression is set and never restores
+    it, so undoing an expression edit must restore vary explicitly -- else
+    the parameter stays frozen with no visible cause."""
+
+    def test_undo_expression_edit_restores_vary(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+
+        self.app._on_param_edited("slope", "expr", "intercept*2")
+        self.assertEqual(fm.params["slope"].expr, "intercept*2")
+        self.assertFalse(fm.params["slope"].vary)
+
+        self.app._undo_param_edit()
+
+        self.assertIn(fm.params["slope"].expr, (None, ""))
+        self.assertTrue(fm.params["slope"].vary)
+
+    def test_redo_reapplies_expression(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+
+        self.app._on_param_edited("slope", "expr", "intercept*2")
+        self.app._undo_param_edit()
+        self.app._redo_param_edit()
+
+        self.assertEqual(fm.params["slope"].expr, "intercept*2")
+        self.assertFalse(fm.params["slope"].vary)
+
+    def test_undo_value_edit_unchanged(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+        original = fm.params["slope"].value
+
+        self.app._on_param_edited("slope", "value", "42.0")
+        self.assertEqual(fm.params["slope"].value, 42.0)
+
+        self.app._undo_param_edit()
+
+        self.assertAlmostEqual(fm.params["slope"].value, original)
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log

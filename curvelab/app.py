@@ -465,12 +465,9 @@ class CurveLabApp(
             elif field == "expr":
                 old_value = par.expr or ""
                 new_value = value.strip()
-                if new_value:
-                    fm.set_param(param_name, expr=new_value)
-                    fm.set_param_hint(param_name, expr=new_value)
-                else:
-                    fm.set_param(param_name, expr="", vary=True)
-                    fm.set_param_hint(param_name, expr="", vary=True)
+                kwargs = self._param_field_kwargs(field, new_value)
+                fm.set_param(param_name, **kwargs)
+                fm.set_param_hint(param_name, **kwargs)
             else:
                 return
             edit = ParamEdit(param_name=param_name, field=field,
@@ -479,6 +476,18 @@ class CurveLabApp(
             sess.redo_stack.clear()
         except ValueError:
             self._refresh_param_display()
+
+    @staticmethod
+    def _param_field_kwargs(field: str, value) -> dict:
+        """Parameter attributes to write for one edited field.
+
+        Clearing an expression also restores vary: lmfit forces vary=False
+        when an expression is set and never restores it when the expression
+        is removed, so an undone expression edit would leave the parameter
+        frozen."""
+        if field == "expr" and not value:
+            return {"expr": "", "vary": True}
+        return {field: value}
 
     def _refresh_param_display(self):
         """Refresh the parameter table from the live FitManager params."""
@@ -493,7 +502,9 @@ class CurveLabApp(
         if sess is None or fm is None or not sess.undo_stack:
             return
         edit = sess.undo_stack.pop()
-        fm.set_param_hint(edit.param_name, **{edit.field: edit.old_value})
+        fm.set_param_hint(
+            edit.param_name, **self._param_field_kwargs(edit.field, edit.old_value)
+        )
         sess.redo_stack.append(edit)
         self._refresh_param_display()
 
@@ -503,7 +514,9 @@ class CurveLabApp(
         if sess is None or fm is None or not sess.redo_stack:
             return
         edit = sess.redo_stack.pop()
-        fm.set_param_hint(edit.param_name, **{edit.field: edit.new_value})
+        fm.set_param_hint(
+            edit.param_name, **self._param_field_kwargs(edit.field, edit.new_value)
+        )
         sess.undo_stack.append(edit)
         self._refresh_param_display()
 
