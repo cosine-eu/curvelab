@@ -130,7 +130,6 @@ class SmoothOutlierDialog(BaseDialog):
         self.after(200, self._update_preview)
 
     def _build_ui(self):
-        import numpy as np
         n = len(self._x)
 
         # --- Smoothing ---
@@ -258,7 +257,6 @@ class SmoothOutlierDialog(BaseDialog):
         )
 
     def _update_preview(self):
-        import numpy as np
         self._debounce_id = None
 
         # Remove old artists
@@ -304,8 +302,6 @@ class SmoothOutlierDialog(BaseDialog):
         self._canvas.draw_idle()
 
     def _apply_exclusions(self):
-        import numpy as np
-        from tkinter import messagebox
         if self._outlier_mask is None:
             messagebox.showinfo("No Outliers", "Enable outlier detection first.", parent=self)
             return
@@ -519,7 +515,6 @@ class EvaluateModelDialog(BaseDialog):
         return parse_x_spec(self._x_entry.get())
 
     def _evaluate(self):
-        import numpy as np
         try:
             x = self._parse_x()
             if x is None or len(x) == 0:
@@ -532,7 +527,6 @@ class EvaluateModelDialog(BaseDialog):
             self._last_text = "\n".join(lines)
             set_readonly_text(self._result_text, self._last_text)
         except Exception as e:
-            from tkinter import messagebox
             messagebox.showerror("Evaluate Error", str(e), parent=self)
 
     def _copy(self):

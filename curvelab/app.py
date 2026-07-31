@@ -3,7 +3,7 @@
 import threading
 import tkinter as tk
 import warnings
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 from pathlib import Path
 
 import numpy as np
@@ -49,7 +49,6 @@ class CurveLabApp(
         # Multi-series / multi-session state
         self._series_records: dict[str, SeriesRecord] = {}
         self._active_series_id: str | None = None
-        self._session_counter: int = 0
         self._simulated_counter: int = 0
 
         # Font state
@@ -217,7 +216,6 @@ class CurveLabApp(
         self.data_panel = DataPanel(
             left_pane,
             on_load=self._on_load_file,
-            on_add_series=None,
             on_plot=self._on_plot,
             on_dataset_selected=self._on_dataset_selected,
             on_remove_dataset=self._on_remove_dataset,

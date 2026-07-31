@@ -1,7 +1,7 @@
 """Core tkinter panel widgets: DataPanel, PlotControlPanel, FitPanel, FitResultsPanel."""
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, simpledialog
 
 from .fit_manager import REDUCE_FUNCTIONS, WEIGHT_MODES
 from .models import MODEL_NAMES
@@ -24,7 +24,6 @@ class DataPanel(ttk.LabelFrame):
         self,
         parent,
         on_load=None,
-        on_add_series=None,
         on_plot=None,
         on_dataset_selected=None,
         on_remove_dataset=None,
@@ -34,7 +33,6 @@ class DataPanel(ttk.LabelFrame):
     ):
         super().__init__(parent, text="Data", padding=5)
         self._on_load = on_load
-        self._on_add_series = on_add_series
         self._on_plot = on_plot
         self._on_dataset_selected = on_dataset_selected
         self._on_remove_dataset = on_remove_dataset
@@ -228,7 +226,7 @@ class DataPanel(ttk.LabelFrame):
         else:
             self.dataset_var.set("")
 
-    def set_columns(self, columns: list[str], filename: str = ""):
+    def set_columns(self, columns: list[str]):
         """Populate dropdowns with column names."""
         err_columns = [""] + columns
         # Preserve current selections if still valid
@@ -282,8 +280,6 @@ class DataPanel(ttk.LabelFrame):
         )
         self.series_listbox.selection_clear(0, tk.END)
         self.series_listbox.selection_set(tk.END)
-        if self._on_add_series:
-            self._on_add_series(series_info)
 
     def _on_select_series(self, event=None):
         sel = self.series_listbox.curselection()
@@ -564,7 +560,6 @@ class FitPanel(ttk.LabelFrame):
         on_auto_guess=None,
         on_fit=None,
         on_clear_fit=None,
-        on_param_changed=None,
         on_series_selected=None,
         on_session_selected=None,
         on_new_session=None,
@@ -582,7 +577,6 @@ class FitPanel(ttk.LabelFrame):
         self._on_auto_guess = on_auto_guess
         self._on_fit = on_fit
         self._on_clear_fit = on_clear_fit
-        self._on_param_changed = on_param_changed
         self._on_series_selected = on_series_selected
         self._on_session_selected = on_session_selected
         self._on_new_session = on_new_session

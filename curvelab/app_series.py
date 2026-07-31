@@ -164,7 +164,6 @@ class SeriesSessionMixin:
             messagebox.showwarning("Duplicate", f"Session '{name}' already exists.")
             return
 
-        self._session_counter += 1
         rec.ensure_session(name)
         rec.active_session_name = name
         self._refresh_session_ui()

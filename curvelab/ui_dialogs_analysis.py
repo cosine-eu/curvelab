@@ -1,7 +1,7 @@
 """Analysis and statistics dialog classes for CurveLab."""
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 import tkinter.font as tkfont
 
 from .analysis_tools import compute_diagnostic_stats
@@ -224,16 +224,16 @@ class FTestDialog(BaseDialog):
         lines = [
             f"Reduced model: {r_name}",
             f"  Parameters: {p1},  \u03c7\u00b2 = {chi1:.6g}",
-            f"",
+            "",
             f"Full model: {f_name}",
             f"  Parameters: {p2},  \u03c7\u00b2 = {chi2:.6g}",
-            f"",
+            "",
             f"Extra parameters: {df1}",
             f"Residual DOF:     {df2}",
-            f"",
+            "",
             f"F-statistic: {f_stat:.4f}",
             f"p-value:     {p_value:.6g}",
-            f"",
+            "",
         ]
         if p_value < 0.01:
             lines.append("The extra parameters significantly improve the fit (p < 0.01).")
@@ -254,8 +254,6 @@ class CovarianceMatrixDialog(BaseDialog):
 
     def __init__(self, parent, param_names: list[str], cov_matrix):
         super().__init__(parent, "Covariance Matrix", size="700x400")
-
-        import numpy as np
 
         n = len(param_names)
         # Format matrix as aligned text
@@ -700,7 +698,6 @@ class ProfileLikelihoodDialog(BaseDialog):
                  best_chi2: float):
         super().__init__(parent, "Profile Likelihood", size="900x600")
 
-        import numpy as np
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         from matplotlib.figure import Figure
 

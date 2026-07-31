@@ -805,10 +805,7 @@ class FitManager:
         # Component curves
         component_curves = {}
         if len(self.components) > 1:
-            comps = model.eval(x=x_dense, **best_kw)  # full eval
-            # Try to get individual components
             try:
-                from lmfit.model import CompositeModel
                 if isinstance(model, CompositeModel):
                     for comp in model.components:
                         comp_kw = {n: best_kw[n] for n in comp.param_names if n in best_kw}
