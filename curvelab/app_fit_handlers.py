@@ -10,7 +10,9 @@ import threading
 from tkinter import messagebox
 
 from .fit_manager import FitManager, REDUCE_FUNCTIONS, SLOW_METHODS
-from .ui_dialogs_analysis import ModelComparisonDialog, GlobalFitDialog
+from .ui_dialogs_analysis import (
+    GlobalFitDialog, ModelComparisonDialog, comparison_row,
+)
 
 
 class FitHandlersMixin:
@@ -306,28 +308,15 @@ class FitHandlersMixin:
                 self._show_fit_on_plot(sid, target_sess, target_rec)
 
                 series_label = target_rec.style.get("label", sid)
-                model_desc = target_fm.model_description()
-                gof = result.gof
-                summary_rows.append({
-                    "session": f"{series_label} / {session_name}",
-                    "model": model_desc,
-                    "n_params": len(result.params),
-                    "chisqr": gof.get("chi-squared"),
-                    "redchi": gof.get("reduced chi-squared"),
-                    "aic": gof.get("AIC"),
-                    "bic": gof.get("BIC"),
-                })
+                summary_rows.append(comparison_row(
+                    f"{series_label} / {session_name}",
+                    target_fm.model_description(), result,
+                ))
             except Exception as e:
                 series_label = target_rec.style.get("label", sid)
-                summary_rows.append({
-                    "session": f"{series_label} / {session_name}",
-                    "model": "ERROR",
-                    "n_params": 0,
-                    "chisqr": None,
-                    "redchi": None,
-                    "aic": None,
-                    "bic": None,
-                })
+                summary_rows.append(comparison_row(
+                    f"{series_label} / {session_name}", "ERROR",
+                ))
                 fit_errors.append(f"{series_label}: {e}")
 
         # Sync UI to the currently active session

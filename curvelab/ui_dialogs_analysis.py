@@ -89,6 +89,20 @@ class FontDialog(BaseDialog):
         self.destroy()
 
 
+def comparison_row(label: str, model_desc: str, result=None) -> dict:
+    """One ModelComparisonDialog row. result=None marks a failed fit."""
+    gof = result.gof if result is not None else {}
+    return {
+        "session": label,
+        "model": model_desc,
+        "n_params": len(result.params) if result is not None else 0,
+        "chisqr": gof.get("chi-squared"),
+        "redchi": gof.get("reduced chi-squared"),
+        "aic": gof.get("AIC"),
+        "bic": gof.get("BIC"),
+    }
+
+
 class ModelComparisonDialog(BaseDialog):
     """Side-by-side comparison of fit sessions: AIC, BIC, reduced chi-squared."""
 

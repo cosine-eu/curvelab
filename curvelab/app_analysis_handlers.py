@@ -9,7 +9,7 @@ from tkinter import messagebox, filedialog
 
 from .fit_manager import FitManager, make_gof
 from .ui_dialogs_analysis import (
-    ModelComparisonDialog, FTestDialog,
+    ModelComparisonDialog, FTestDialog, comparison_row,
     ConfidenceIntervalDialog, CorrelationMatrixDialog, CovarianceMatrixDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog, ProfileLikelihoodDialog,
     BootstrapDialog, BruteCandidatesDialog, EmceeSummaryDialog,
@@ -35,17 +35,9 @@ class AnalysisHandlersMixin:
         for sess_name, sess in rec.fit_sessions.items():
             if sess.result is None:
                 continue
-            model_desc = sess.fit_manager.model_description()
-            gof = sess.result.gof
-            rows.append({
-                "session": sess_name,
-                "model": model_desc,
-                "n_params": len(sess.result.params),
-                "chisqr": gof.get("chi-squared"),
-                "redchi": gof.get("reduced chi-squared"),
-                "aic": gof.get("AIC"),
-                "bic": gof.get("BIC"),
-            })
+            rows.append(comparison_row(
+                sess_name, sess.fit_manager.model_description(), sess.result
+            ))
         if not rows:
             messagebox.showinfo("No Fits", "No completed fits to compare.")
             return
