@@ -10,6 +10,12 @@ from matplotlib.figure import Figure
 
 matplotlib.use("TkAgg")
 
+# Parameter annotations start at the top-left of the axes, each further
+# one nudged down so several fits' boxes stay readable.
+ANNOTATION_X = 0.02
+ANNOTATION_TOP_Y = 0.98
+ANNOTATION_Y_STEP = 0.02
+
 
 @dataclass
 class SeriesStyle:
@@ -277,10 +283,10 @@ class PlotManager:
         text = "\n".join(lines)
 
         # Offset annotations vertically based on how many already exist
-        y_offset = 0.98 - 0.02 * len(self._annotations)
+        y_offset = ANNOTATION_TOP_Y - ANNOTATION_Y_STEP * len(self._annotations)
 
         annotation = self.ax.text(
-            0.02,
+            ANNOTATION_X,
             y_offset,
             text,
             transform=self.ax.transAxes,

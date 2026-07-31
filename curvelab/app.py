@@ -52,6 +52,8 @@ class CurveLabApp(
     _CLICK_HIT_RADIUS_PX = 10
     # Poll interval (ms) for checking on a background fit thread.
     _FIT_POLL_INTERVAL_MS = 100
+    # How long the splash screen stays up before the main window appears.
+    _SPLASH_DURATION_MS = 1500
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
@@ -565,7 +567,8 @@ class CurveLabApp(
 
         # Close splash and show main window
         if splash is not None:
-            root.after(1500, lambda: (splash.destroy(), root.deiconify()))
+            root.after(cls._SPLASH_DURATION_MS,
+                       lambda: (splash.destroy(), root.deiconify()))
         else:
             root.deiconify()
 

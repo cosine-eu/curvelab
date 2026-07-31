@@ -255,7 +255,7 @@ class PlottingMixin:
                 best_sid = sid
                 best_idx = i
 
-        # Only toggle if click is within 10 pixels of a point
+        # Only toggle when the click landed near an actual point
         if best_sid is None or best_dist > self._CLICK_HIT_RADIUS_PX:
             return
 

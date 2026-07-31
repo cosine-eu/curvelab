@@ -9,6 +9,9 @@ import numpy as np
 
 SMOOTH_METHODS = ["Savitzky-Golay", "Moving Average", "Median Filter", "Gaussian Filter"]
 
+# Gaussian FWHM = 2*sqrt(2*ln2) * sigma.
+FWHM_TO_SIGMA = 1.0 / (2.0 * np.sqrt(2.0 * np.log(2.0)))
+
 
 def smooth_data(y: np.ndarray, method: str, window: int = 11, order: int = 3,
                 sigma: float = 5) -> np.ndarray:
