@@ -227,6 +227,49 @@ class ParamUndoRedoTests(GuiTestBase):
         self.assertAlmostEqual(fm.params["slope"].value, original)
 
 
+class ExclusionRenderTests(GuiTestBase):
+    """Excluded points are dimmed on every drawing path. _on_plot used to
+    ignore the mask, so pressing Plot showed all points as included while
+    fits still used the reduced set."""
+
+    def _series_with_exclusion(self):
+        rec, sess = self._add_fitted_series(run=False)
+        rec.mask = np.ones(len(rec.x), dtype=bool)
+        rec.mask[0] = False
+        self.app.data_panel.add_series_entry(rec.style)
+        return rec
+
+    def test_plot_dims_excluded_points(self):
+        rec = self._series_with_exclusion()
+        self.app._on_plot(self.app.data_panel.series_list)
+
+        lines = self.app.plot_mgr._series_lines
+        self.assertEqual(len(lines), 2)                    # included + excluded
+        self.assertIn("gray", [ln.get_color() for ln in lines])
+        self.assertEqual(len(lines[1].get_xdata()), 1)     # the one excluded point
+
+    def test_replot_matches_plot(self):
+        rec = self._series_with_exclusion()
+        self.app._on_plot(self.app.data_panel.series_list)
+        n_after_plot = len(self.app.plot_mgr._series_lines)
+
+        self.app._replot_all_series()
+
+        self.assertEqual(len(self.app.plot_mgr._series_lines), n_after_plot)
+
+    def test_stale_mask_dropped_when_column_length_changes(self):
+        import pandas as pd
+        rec = self._series_with_exclusion()
+        # Reload the dataset with fewer rows, as a re-import would.
+        self.app.data_mgr.datasets["ds"] = pd.DataFrame(
+            {"x": np.linspace(0, 10, 5), "y": np.linspace(0, 10, 5)}
+        )
+
+        self.app._on_plot(self.app.data_panel.series_list)
+
+        self.assertIsNone(rec.mask)
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log

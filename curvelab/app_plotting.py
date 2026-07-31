@@ -19,8 +19,53 @@ from .session import (
 )
 
 
+# Excluded points are drawn dimmed on top of the included ones.
+_EXCLUDED_COLOR = "gray"
+_EXCLUDED_MARKERSIZE = 3.0
+
+
+def _style_from(style: dict) -> SeriesStyle:
+    """Build a SeriesStyle from a series-definition dict."""
+    return SeriesStyle(
+        marker=style.get("marker", "o"),
+        linestyle=style.get("linestyle", "None"),
+        color=style.get("color", ""),
+        label=style.get("label") or style.get("y", ""),
+    )
+
+
+def _subset(arr, mask):
+    return arr[mask] if arr is not None else None
+
+
 class PlottingMixin:
     """Series/fit/residual drawing and plot interaction."""
+
+    def _draw_series(self, rec: SeriesRecord):
+        """Draw one series' data points, dimming any excluded points."""
+        style = _style_from(rec.style)
+        mask = rec.mask
+        if mask is None or mask.all():
+            self.plot_mgr.plot_series(
+                rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
+            )
+            return
+
+        self.plot_mgr.plot_series(
+            rec.x[mask], rec.y[mask],
+            yerr=_subset(rec.yerr, mask), xerr=_subset(rec.xerr, mask),
+            style=style,
+        )
+        exc = ~mask
+        exc_style = SeriesStyle(
+            marker=style.marker, linestyle="None",
+            color=_EXCLUDED_COLOR, markersize=_EXCLUDED_MARKERSIZE,
+        )
+        self.plot_mgr.plot_series(
+            rec.x[exc], rec.y[exc],
+            yerr=_subset(rec.yerr, exc), xerr=_subset(rec.xerr, exc),
+            style=exc_style,
+        )
 
     def _iter_visible_results(self):
         """Yield (sid, rec, sess) for every visible session holding a result."""
@@ -100,6 +145,10 @@ class PlottingMixin:
                     rec.yerr = yerr
                     rec.xerr = xerr
                     rec.style = s
+                    # Reloaded columns can differ in length; a stale mask
+                    # would no longer address the right points.
+                    if rec.mask is not None and len(rec.mask) != len(x):
+                        rec.mask = None
                 else:
                     rec = SeriesRecord(
                         x=x, y=y, yerr=yerr, xerr=xerr,
@@ -108,13 +157,7 @@ class PlottingMixin:
                     latest_new_sid = sid
 
                 if rec.visible:
-                    style = SeriesStyle(
-                        marker=s.get("marker", "o"),
-                        linestyle=s.get("linestyle", "None"),
-                        color=s.get("color", ""),
-                        label=s.get("label", s["y"]),
-                    )
-                    self.plot_mgr.plot_series(x, y, yerr=yerr, xerr=xerr, style=style)
+                    self._draw_series(rec)
 
                 new_records[sid] = rec
 
@@ -140,47 +183,8 @@ class PlottingMixin:
         show_resid = self.plot_controls.residuals_var.get()
 
         for sid, rec in self._series_records.items():
-            s = rec.style
             if rec.visible:
-                mask = rec.mask
-                if mask is not None and not mask.all():
-                    # Plot included points normally
-                    style = SeriesStyle(
-                        marker=s.get("marker", "o"),
-                        linestyle=s.get("linestyle", "None"),
-                        color=s.get("color", ""),
-                        label=s.get("label", ""),
-                    )
-                    inc_yerr = rec.yerr[mask] if rec.yerr is not None else None
-                    inc_xerr = rec.xerr[mask] if rec.xerr is not None else None
-                    self.plot_mgr.plot_series(
-                        rec.x[mask], rec.y[mask],
-                        yerr=inc_yerr, xerr=inc_xerr, style=style,
-                    )
-                    # Plot excluded points as dimmed
-                    exc = ~mask
-                    exc_style = SeriesStyle(
-                        marker=s.get("marker", "o"),
-                        linestyle="None",
-                        color="gray",
-                        markersize=3.0,
-                    )
-                    exc_yerr = rec.yerr[exc] if rec.yerr is not None else None
-                    exc_xerr = rec.xerr[exc] if rec.xerr is not None else None
-                    self.plot_mgr.plot_series(
-                        rec.x[exc], rec.y[exc],
-                        yerr=exc_yerr, xerr=exc_xerr, style=exc_style,
-                    )
-                else:
-                    style = SeriesStyle(
-                        marker=s.get("marker", "o"),
-                        linestyle=s.get("linestyle", "None"),
-                        color=s.get("color", ""),
-                        label=s.get("label", ""),
-                    )
-                    self.plot_mgr.plot_series(
-                        rec.x, rec.y, yerr=rec.yerr, xerr=rec.xerr, style=style
-                    )
+                self._draw_series(rec)
             for sess in rec.fit_sessions.values():
                 if sess.result is not None and sess.visible:
                     self._show_fit_on_plot(sid, sess, rec)
