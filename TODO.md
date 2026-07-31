@@ -91,7 +91,14 @@ Improvements, in suggested order:
 2. **Check `version` on load**: warn on files written by a newer CurveLab;
    define a bump policy (bump on any semantic change to the structure).
    Optionally also record the app version string for diagnostics.
-3. **Optional "embed data in workspace"**: store datasets inline (the
+3. **Write strict JSON**: `encode_value` turns inf into `"Infinity"`
+   strings, but NaN inside a saved array reaches `json.dump` through
+   `ndarray.tolist()` and is written as a bare `NaN` token (allow_nan
+   defaults to True). Python reads it back fine; other JSON parsers
+   reject it. Fix by encoding NaN the same way as inf (a marker string,
+   decoded back on load) and passing `allow_nan=False` so any remaining
+   case fails loudly instead of silently producing invalid JSON.
+4. **Optional "embed data in workspace"**: store datasets inline (the
    ndarray machinery already exists) for self-contained, shareable files
    at the cost of size. Could auto-embed datasets that lack a file path,
    which would also fix item 1 properly.
