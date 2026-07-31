@@ -148,12 +148,19 @@ class CurveLabApp(
 
     # --- Shared fit-data preparation (used by fit, analysis, and data tools) ---
 
-    def _get_fit_data(self, rec: SeriesRecord):
-        """Return (x, y, yerr, xerr) cleaned and optionally masked to fit range."""
+    def _get_fit_data(self, rec: SeriesRecord, warnings_out: list[str] | None = None):
+        """Return (x, y, yerr, xerr) cleaned and optionally masked to fit range.
+
+        Preparation warnings pop up as dialogs. Callers that prepare many
+        series in a loop (batch and global fit) pass warnings_out instead:
+        messages are labelled by series and appended there, so the caller
+        can report them once rather than one dialog per series.
+        """
         from .preprocessing import prepare_fit_data
 
         # Determine x range from UI
         x_range = None
+        range_warning = None
         xmin_str = self.plot_controls.fit_xmin_var.get().strip()
         xmax_str = self.plot_controls.fit_xmax_var.get().strip()
         if xmin_str or xmax_str:
@@ -162,24 +169,36 @@ class CurveLabApp(
                 xmax = float(xmax_str) if xmax_str else np.inf
                 x_range = (xmin, xmax)
             except ValueError:
-                messagebox.showwarning(
-                    "Invalid Fit Range",
+                range_warning = (
                     f"Could not parse fit range ('{xmin_str}', '{xmax_str}') "
-                    "as numbers. Fitting the full data range instead.",
+                    "as numbers. Fitting the full data range instead."
                 )
         elif self.plot_controls.fit_visible_var.get():
             x_range = self.plot_mgr.ax.get_xlim()
 
         x, y, yerr, xerr, warnings = prepare_fit_data(rec, x_range=x_range)
 
-        # Show warnings via UI
-        for w in warnings:
-            if "NaN" in w:
-                messagebox.showinfo("Data Cleaned", w)
-            else:
-                messagebox.showwarning("Duplicate X Values", w)
+        if warnings_out is not None:
+            label = rec.style.get("label") or ""
+            messages = ([range_warning] if range_warning else []) + warnings
+            warnings_out.extend(f"{label}: {m}" if label else m for m in messages)
+        else:
+            if range_warning:
+                messagebox.showwarning("Invalid Fit Range", range_warning)
+            for w in warnings:
+                if "NaN" in w:
+                    messagebox.showinfo("Data Cleaned", w)
+                else:
+                    messagebox.showwarning("Duplicate X Values", w)
 
         return x, y, yerr, xerr
+
+    def _report_collected_warnings(self, title: str, messages: list[str]):
+        """Show messages collected over a multi-series run as one dialog."""
+        if not messages:
+            return
+        unique = list(dict.fromkeys(messages))
+        messagebox.showwarning(title, "\n".join(unique))
 
     # --- Layout ---
 

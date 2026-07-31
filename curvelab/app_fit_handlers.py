@@ -242,11 +242,13 @@ class FitHandlersMixin:
         def on_fit(selected_ids, shared):
             datasets = []
             selected_recs = []
+            data_warnings: list[str] = []
             for sid in selected_ids:
                 r = self._series_records[sid]
-                x, y, yerr, xerr = self._get_fit_data(r)
+                x, y, yerr, xerr = self._get_fit_data(r, warnings_out=data_warnings)
                 datasets.append((x, y, yerr, xerr))
                 selected_recs.append((sid, r))
+            self._report_collected_warnings("Data Warnings", data_warnings)
 
             _, weight_mode, max_nfev, _, _ = self._get_fit_options()
             method = self.fit_panel.method_var.get()
@@ -280,6 +282,8 @@ class FitHandlersMixin:
 
         session_name = sess.name
         summary_rows = []
+        data_warnings: list[str] = []
+        fit_errors: list[str] = []
         reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
 
         for sid, target_rec in self._series_records.items():
@@ -290,7 +294,9 @@ class FitHandlersMixin:
             source_fm.clone_components_to(target_fm)
 
             try:
-                x, y, yerr, xerr = self._get_fit_data(target_rec)
+                x, y, yerr, xerr = self._get_fit_data(
+                    target_rec, warnings_out=data_warnings
+                )
                 target_fm.auto_guess(x, y)
                 method = self.fit_panel.method_var.get()
                 result = target_fm.run_fit(
@@ -325,13 +331,13 @@ class FitHandlersMixin:
                     "aic": None,
                     "bic": None,
                 })
-                messagebox.showwarning(
-                    "Batch Fit Warning",
-                    f"Fit failed for {series_label}: {e}",
-                )
+                fit_errors.append(f"{series_label}: {e}")
 
         # Sync UI to the currently active session
         self._refresh_session_ui()
+
+        self._report_collected_warnings("Data Warnings", data_warnings)
+        self._report_collected_warnings("Batch Fit Warnings", fit_errors)
 
         if summary_rows:
             ModelComparisonDialog(self, summary_rows)

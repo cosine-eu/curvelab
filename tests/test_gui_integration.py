@@ -313,6 +313,68 @@ class RemoveSeriesConfirmTests(GuiTestBase):
         self.assertEqual(len(self.app.data_panel.series_list), 0)
 
 
+class BatchFitWarningTests(GuiTestBase):
+    """Batch fit prepares every series in a loop; data warnings and failures
+    are collected and reported once instead of one modal dialog per series."""
+
+    def _add_series_with_nans(self, n_series=3):
+        import pandas as pd
+        from curvelab.session import SeriesRecord, FitSession
+        for i in range(n_series):
+            x = np.linspace(0, 10, 20)
+            y = 2.0 * x + 1.0
+            y[i] = np.nan                       # one bad point per series
+            ds = f"ds{i}"
+            self.app.data_mgr.add_dataframe(ds, pd.DataFrame({"x": x, "y": y}))
+            sid = f"{ds}::x::y"
+            rec = SeriesRecord(
+                x=x, y=y, dataset_name=ds,
+                style={"dataset": ds, "x": "x", "y": "y", "label": f"s{i}"},
+            )
+            self.app._series_records[sid] = rec
+            sess = FitSession(name="Fit 1", color="C0")
+            rec.fit_sessions["Fit 1"] = sess
+            rec.active_session_name = "Fit 1"
+            sess.fit_manager.add_component("Linear")
+            if i == 0:
+                self.app._active_series_id = sid
+
+    def test_batch_fit_reports_data_warnings_once(self):
+        self._add_series_with_nans()
+        with mock.patch("curvelab.app.messagebox") as app_mb, \
+             mock.patch("curvelab.app_fit_handlers.ModelComparisonDialog"):
+            self.app._on_batch_fit()
+
+        self.assertEqual(app_mb.showinfo.call_count, 0)      # no per-series info
+        self.assertEqual(app_mb.showwarning.call_count, 1)   # one summary
+        body = app_mb.showwarning.call_args[0][1]
+        for label in ("s0", "s1", "s2"):
+            self.assertIn(label, body)
+
+    def test_single_fit_still_shows_dialog(self):
+        self._add_series_with_nans(n_series=1)
+        rec = self.app._series_records["ds0::x::y"]
+        with mock.patch("curvelab.app.messagebox") as app_mb:
+            self.app._get_fit_data(rec)
+
+        self.assertEqual(app_mb.showinfo.call_count, 1)
+
+    def test_collected_warnings_are_labelled_and_deduplicated(self):
+        self._add_series_with_nans(n_series=1)
+        rec = self.app._series_records["ds0::x::y"]
+        collected = []
+        with mock.patch("curvelab.app.messagebox") as app_mb:
+            self.app._get_fit_data(rec, warnings_out=collected)
+            self.app._get_fit_data(rec, warnings_out=collected)
+            app_mb.showinfo.assert_not_called()
+            self.app._report_collected_warnings("Data Warnings", collected)
+
+        self.assertEqual(len(collected), 2)
+        self.assertTrue(all(m.startswith("s0: ") for m in collected))
+        # Identical messages collapse into one line in the dialog.
+        self.assertEqual(app_mb.showwarning.call_args[0][1].count("\n"), 0)
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log
