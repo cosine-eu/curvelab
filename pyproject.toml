@@ -24,7 +24,17 @@ dependencies = [
     "numpy",
     "pandas",
     "matplotlib",
+    "scipy",
     "lmfit",
+    # Imported directly by CurveLab (also lmfit core deps, listed for clarity).
+    "asteval",
+    "uncertainties",
+    # Fitting stack: numdifftools gives uncertainties for scalar/global
+    # methods, emcee provides the MCMC method, tqdm its progress bars. These
+    # are optional extras of lmfit, so they are required explicitly here.
+    "numdifftools",
+    "emcee",
+    "tqdm",
 ]
 license-files = ["LICENSE"]
 [project.urls]
@@ -39,6 +49,10 @@ notebook = ["ipywidgets", "ipympl"]
 excel = ["openpyxl"]
 ods = ["odfpy"]
 hdf5 = ["tables"]
+parquet = ["pyarrow"]
+# ODR is a fit method whose backend (odrpack) ships Fortran-built wheels that
+# aren't available on every platform, so it stays optional to keep installs
+# from failing where no wheel exists.
 odr = ["odrpack"]
 test = ["pytest", "pytest-cov"]
 
