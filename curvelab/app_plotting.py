@@ -288,13 +288,17 @@ class PlottingMixin:
         self.plot_mgr.canvas.draw()
         self.parent.title("CurveLab")
 
+    def _replot_all_residuals(self):
+        """Redraw residuals for every visible session that has a result."""
+        self.plot_mgr.clear_all_residuals()
+        for sid, rec, sess in self._iter_visible_results():
+            skey = _make_session_key(sid, sess.name)
+            self._plot_residuals_for_session(skey, sess, rec)
+
     def _on_residuals_toggled(self, show: bool):
         self.plot_mgr.set_residuals_visible(show)
         if show:
-            # Plot residuals for all sessions that have results
-            for sid, rec, sess in self._iter_visible_results():
-                skey = _make_session_key(sid, sess.name)
-                self._plot_residuals_for_session(skey, sess, rec)
+            self._replot_all_residuals()
         else:
             self.plot_mgr.clear_all_residuals()
 
@@ -302,11 +306,7 @@ class PlottingMixin:
         """Re-plot residuals when weighted/raw toggle changes."""
         if not self.plot_controls.residuals_var.get():
             return
-        # Clear and re-plot all residuals
-        self.plot_mgr.clear_all_residuals()
-        for sid, rec, sess in self._iter_visible_results():
-            skey = _make_session_key(sid, sess.name)
-            self._plot_residuals_for_session(skey, sess, rec)
+        self._replot_all_residuals()
         self.plot_mgr.canvas.draw_idle()
 
     def _on_confidence_band_toggled(self, show: bool):
