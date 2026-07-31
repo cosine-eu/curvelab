@@ -66,18 +66,10 @@ class DataToolsMixin:
     def _export_smooth_series(self, x, y, label_suffix):
         rec = self._active_record
         ds_base = rec.dataset_name if rec else "data"
-        ds_name = f"{ds_base} ({label_suffix})"
         df = pd.DataFrame({"x": x, "y": y})
-        ds_name, columns = self.data_mgr.add_dataframe(ds_name, df)
-        self.data_panel.set_datasets(self.data_mgr.dataset_names, select=ds_name)
-        self.data_panel.set_columns(columns)
-        series_info = {
-            "dataset": ds_name,
-            "x": "x", "y": "y", "yerr": "", "xerr": "",
-            "marker": "o", "linestyle": "-", "color": "",
-            "label": ds_name,
-        }
-        self.data_panel.add_series_entry(series_info)
+        self._register_series_dataframe(
+            f"{ds_base} ({label_suffix})", df, linestyle="-"
+        )
         self._on_plot(self.data_panel.series_list)
 
     def _show_derivative_integral(self):
@@ -175,29 +167,16 @@ class DataToolsMixin:
                     break
         else:
             self._simulated_counter += 1
-            n = self._simulated_counter
             data = {"x": x, "y": y}
             if yerr is not None:
                 data["yerr"] = yerr
             if xerr is not None:
                 data["xerr"] = xerr
-            df = pd.DataFrame(data)
-            ds_name, columns = self.data_mgr.add_dataframe(f"Simulated {n}", df)
-
-            self.data_panel.set_datasets(
-                self.data_mgr.dataset_names, select=ds_name
+            self._register_series_dataframe(
+                f"Simulated {self._simulated_counter}", pd.DataFrame(data),
+                yerr="yerr" if yerr is not None else "",
+                xerr="xerr" if xerr is not None else "",
             )
-            self.data_panel.set_columns(columns)
-
-            series_info = {
-                "dataset": ds_name,
-                "x": "x", "y": "y",
-                "yerr": "yerr" if yerr is not None else "",
-                "xerr": "xerr" if xerr is not None else "",
-                "marker": "o", "linestyle": "None", "color": "",
-                "label": ds_name,
-            }
-            self.data_panel.add_series_entry(series_info)
 
         self._on_plot(self.data_panel.series_list)
 

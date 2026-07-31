@@ -433,6 +433,40 @@ class PlotControlPersistenceTests(GuiTestBase):
         self.assertTrue(self.app.fit_panel.scale_covar_var.get())
 
 
+class SimulatedSeriesTests(GuiTestBase):
+    """Generated series (simulate, export smoothed, placeholder) all register
+    through one helper: dataset, column combos, and panel entry together."""
+
+    def test_simulated_data_registers_dataset_and_series(self):
+        rec, sess = self._add_fitted_series(run=False)
+        self.app.data_panel.add_series_entry(rec.style)
+
+        self.app._generate_simulated_data(
+            0.0, 10.0, 50, {"gaussian": True, "gaussian_sigma": 0.1}
+        )
+
+        self.assertIn("Simulated 1", self.app.data_mgr.datasets)
+        sid = "Simulated 1::x::y"
+        self.assertIn(sid, self.app._series_records)
+        self.assertEqual(len(self.app._series_records[sid].x), 50)
+        # Noise produced a yerr column, and the series entry points at it.
+        entry = [s for s in self.app.data_panel.series_list
+                 if s["dataset"] == "Simulated 1"][0]
+        self.assertEqual(entry["yerr"], "yerr")
+
+    def test_exported_smooth_series_is_registered(self):
+        rec, sess = self._add_fitted_series(run=False)
+        self.app.data_panel.add_series_entry(rec.style)
+
+        self.app._export_smooth_series(rec.x, rec.y, "Smoothed")
+
+        name = f"{rec.dataset_name} (Smoothed)"
+        self.assertIn(name, self.app.data_mgr.datasets)
+        entry = [s for s in self.app.data_panel.series_list
+                 if s["dataset"] == name][0]
+        self.assertEqual(entry["linestyle"], "-")
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log

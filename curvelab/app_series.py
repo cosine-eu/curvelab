@@ -91,6 +91,22 @@ class SeriesSessionMixin:
 
         self._refresh_all_ui()
 
+    def _register_series_dataframe(self, name: str, df, linestyle: str = "None",
+                                   yerr: str = "", xerr: str = "") -> tuple[str, dict]:
+        """Register a DataFrame as a dataset and add a matching x/y series
+        entry to the DataPanel. Returns (dataset_name, series_info)."""
+        ds_name, columns = self.data_mgr.add_dataframe(name, df)
+        self.data_panel.set_datasets(self.data_mgr.dataset_names, select=ds_name)
+        self.data_panel.set_columns(columns)
+        series_info = {
+            "dataset": ds_name,
+            "x": "x", "y": "y", "yerr": yerr, "xerr": xerr,
+            "marker": "o", "linestyle": linestyle, "color": "",
+            "label": ds_name,
+        }
+        self.data_panel.add_series_entry(series_info)
+        return ds_name, series_info
+
     def _confirm_remove_series(self, series_info: dict) -> bool:
         """Ask before removing a plotted series that carries fit sessions;
         removing it discards them, as removing a dataset does."""
@@ -128,22 +144,10 @@ class SeriesSessionMixin:
         if self._active_series_id is not None:
             return
         self._simulated_counter += 1
-        n = self._simulated_counter
         df = pd.DataFrame({"x": pd.Series(dtype=float), "y": pd.Series(dtype=float)})
-        ds_name, columns = self.data_mgr.add_dataframe(f"Simulated {n}", df)
-
-        self.data_panel.set_datasets(
-            self.data_mgr.dataset_names, select=ds_name
+        ds_name, series_info = self._register_series_dataframe(
+            f"Simulated {self._simulated_counter}", df
         )
-        self.data_panel.set_columns(columns)
-
-        series_info = {
-            "dataset": ds_name,
-            "x": "x", "y": "y", "yerr": "", "xerr": "",
-            "marker": "o", "linestyle": "None", "color": "",
-            "label": ds_name,
-        }
-        self.data_panel.add_series_entry(series_info)
 
         # Create the series record so it becomes the active series
         sid = _make_series_id(ds_name, "x", "y")
