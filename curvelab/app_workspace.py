@@ -12,6 +12,7 @@ import pandas as pd
 from tkinter import messagebox, filedialog
 
 from .data_manager import DataManager
+from .fit_manager import DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE
 from .workspace import (
     WorkspaceEncoder, decode_workspace,
     serialize_series_records, deserialize_series_record,
@@ -317,9 +318,9 @@ class WorkspaceMixin:
         self.plot_controls.band_sigma_var.set(pc.get("band_sigma", "1"))
         self.plot_controls.data_var.set(pc.get("data", True))
         self.fit_panel.scale_covar_var.set(pc.get("scale_covar", True))
-        self.fit_panel.method_var.set(pc.get("fit_method", "least_squares"))
+        self.fit_panel.method_var.set(pc.get("fit_method", DEFAULT_FIT_METHOD))
         self.fit_panel.reduce_var.set(pc.get("reduce_fcn", "Chi-square (default)"))
-        self.fit_panel.weight_var.set(pc.get("weight_mode", "1/yerr (default)"))
+        self.fit_panel.weight_var.set(pc.get("weight_mode", DEFAULT_WEIGHT_MODE))
         self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))
         self.plot_controls.xlabel_var.set(pc.get("xlabel", ""))
         self.plot_controls.ylabel_var.set(pc.get("ylabel", ""))

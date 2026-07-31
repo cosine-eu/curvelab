@@ -3,7 +3,10 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, simpledialog
 
-from .fit_manager import REDUCE_FUNCTIONS, WEIGHT_MODES
+from .fit_manager import (
+    DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, FIT_METHODS,
+    REDUCE_FUNCTIONS, WEIGHT_MODES,
+)
 from .models import MODEL_NAMES
 from .ui_common import set_readonly_text
 
@@ -685,17 +688,11 @@ class FitPanel(ttk.LabelFrame):
         method_frame = ttk.Frame(self)
         method_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(method_frame, text="Method:").pack(side=tk.LEFT)
-        self.method_var = tk.StringVar(value="least_squares")
+        self.method_var = tk.StringVar(value=DEFAULT_FIT_METHOD)
         ttk.Combobox(
             method_frame,
             textvariable=self.method_var,
-            values=[
-                "leastsq", "least_squares", "nelder", "powell",
-                "cobyla", "lbfgsb",
-                "differential_evolution", "basinhopping",
-                "dual_annealing", "shgo", "ampgo",
-                "brute", "emcee", "odr",
-            ],
+            values=FIT_METHODS,
             state="readonly",
             width=20,
         ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
@@ -717,7 +714,7 @@ class FitPanel(ttk.LabelFrame):
         weight_frame = ttk.Frame(self)
         weight_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(weight_frame, text="Weights:").pack(side=tk.LEFT)
-        self.weight_var = tk.StringVar(value="1/yerr (default)")
+        self.weight_var = tk.StringVar(value=DEFAULT_WEIGHT_MODE)
         ttk.Combobox(
             weight_frame,
             textvariable=self.weight_var,

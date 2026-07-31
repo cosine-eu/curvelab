@@ -9,15 +9,12 @@ state (_fit_thread, _fit_abort, _FIT_POLL_INTERVAL_MS) held on CurveLabApp.
 import threading
 from tkinter import messagebox
 
-from .fit_manager import FitManager, REDUCE_FUNCTIONS
+from .fit_manager import FitManager, REDUCE_FUNCTIONS, SLOW_METHODS
 from .ui_dialogs_analysis import ModelComparisonDialog, GlobalFitDialog
 
 
 class FitHandlersMixin:
     """Fit execution: single/ODR/async runs, auto-guess, global and batch fit."""
-
-    _SLOW_METHODS = {"emcee", "brute", "differential_evolution", "basinhopping",
-                      "dual_annealing", "shgo", "ampgo"}
 
     def _on_auto_guess(self):
         sess = self._require_session()
@@ -71,7 +68,7 @@ class FitHandlersMixin:
 
         if method == "odr":
             self._run_fit_odr(rec, sess, sid)
-        elif method in self._SLOW_METHODS:
+        elif method in SLOW_METHODS:
             self._run_fit_async(rec, sess, method, sid)
         else:
             self._run_fit_sync(rec, sess, method, sid)

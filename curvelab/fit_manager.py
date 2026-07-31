@@ -28,14 +28,40 @@ REDUCE_FUNCTIONS = {
     "Cauchy log-pdf": _reduce_cauchylogpdf,
 }
 
+# Weight modes double as UI labels and dispatch keys, so they are named once.
+WEIGHT_INV_YERR = "1/yerr (default)"
+WEIGHT_INV_YERR2 = "1/yerr\u00b2"
+WEIGHT_INV_Y = "1/y"
+WEIGHT_NONE = "No weights"
+WEIGHT_YERR = "yerr as weights"
+WEIGHT_EFFECTIVE_VARIANCE = "Effective variance"
+
 WEIGHT_MODES = [
-    "1/yerr (default)",
-    "1/yerr\u00b2",
-    "1/y",
-    "No weights",
-    "yerr as weights",
-    "Effective variance",
+    WEIGHT_INV_YERR,
+    WEIGHT_INV_YERR2,
+    WEIGHT_INV_Y,
+    WEIGHT_NONE,
+    WEIGHT_YERR,
+    WEIGHT_EFFECTIVE_VARIANCE,
 ]
+DEFAULT_WEIGHT_MODE = WEIGHT_INV_YERR
+
+# Minimizers offered in the UI. The slow ones run on a background thread.
+FIT_METHODS = [
+    "leastsq", "least_squares", "nelder", "powell",
+    "cobyla", "lbfgsb",
+    "differential_evolution", "basinhopping",
+    "dual_annealing", "shgo", "ampgo",
+    "brute", "emcee", "odr",
+]
+SLOW_METHODS = {
+    "emcee", "brute", "differential_evolution", "basinhopping",
+    "dual_annealing", "shgo", "ampgo",
+}
+DEFAULT_FIT_METHOD = "least_squares"
+
+# Points in the dense grid used for smooth fit curves.
+N_DENSE = 500
 
 
 @dataclass
@@ -353,17 +379,22 @@ class FitManager:
 
     @staticmethod
     def _compute_weights(y, yerr, weight_mode):
-        """Compute weights array from y, yerr, and the selected weight mode."""
-        if weight_mode == "No weights":
+        """Compute weights array from y, yerr, and the selected weight mode.
+
+        Effective variance is not handled here: it depends on the model
+        derivative, so it is computed per fit (and per iteration for a
+        global fit) by _effective_variance_weights.
+        """
+        if weight_mode == WEIGHT_NONE:
             return None
-        if weight_mode == "1/yerr\u00b2" and yerr is not None:
+        if weight_mode == WEIGHT_INV_YERR2 and yerr is not None:
             safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
             return 1.0 / (safe_yerr * safe_yerr)
-        if weight_mode == "1/y":
+        if weight_mode == WEIGHT_INV_Y:
             return 1.0 / np.maximum(np.abs(y), MIN_ERROR)
-        if weight_mode == "yerr as weights" and yerr is not None:
+        if weight_mode == WEIGHT_YERR and yerr is not None:
             return yerr
-        # Default: "1/yerr (default)"
+        # Default: WEIGHT_INV_YERR
         if yerr is not None:
             return 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
         return None
@@ -374,12 +405,12 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         xerr: np.ndarray | None = None,
-        n_dense: int = 500,
-        method: str = "least_squares",
+        n_dense: int = N_DENSE,
+        method: str = DEFAULT_FIT_METHOD,
         iter_cb=None,
         fit_kws: dict | None = None,
         reduce_fcn=None,
-        weight_mode: str = "1/yerr (default)",
+        weight_mode: str = DEFAULT_WEIGHT_MODE,
         max_nfev: int | None = None,
         band_sigma: int = 1,
         scale_covar: bool = True,
@@ -398,7 +429,7 @@ class FitManager:
         weights = self._compute_weights(y, yerr, weight_mode)
 
         # Effective variance: w = 1/sqrt(yerr² + (df/dx)² · xerr²)
-        if weight_mode == "Effective variance":
+        if weight_mode == WEIGHT_EFFECTIVE_VARIANCE:
             if xerr is not None and yerr is not None:
                 h = np.maximum(np.abs(x) * 1e-8, 1e-10)
                 y_plus = self._model.eval(self._params, x=x + h)
@@ -502,12 +533,12 @@ class FitManager:
             return
         x, y = result.x_data, result.y_data
         yerr = result.yerr_data
-        weights = self._compute_weights(y, yerr, "1/yerr (default)")
+        weights = self._compute_weights(y, yerr, DEFAULT_WEIGHT_MODE)
         if self._has_spline:
             self._rebuild_model_with_data(x)
         self._last_result = self._model.fit(
             y, self._params, x=x, weights=weights,
-            method="least_squares", nan_policy="omit",
+            method=DEFAULT_FIT_METHOD, nan_policy="omit",
         )
         self._params = self._last_result.params
 
@@ -515,9 +546,9 @@ class FitManager:
         self,
         datasets: list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]],
         shared_params: set[str],
-        method: str = "least_squares",
+        method: str = DEFAULT_FIT_METHOD,
         max_nfev: int | None = None,
-        weight_mode: str = "1/yerr (default)",
+        weight_mode: str = DEFAULT_WEIGHT_MODE,
     ) -> list[FitResult]:
         """Run a global fit across multiple datasets with shared parameters.
 
@@ -551,7 +582,7 @@ class FitManager:
 
         # Pre-compute constant weights (everything except Effective variance
         # with xerr, which depends on the model derivative per iteration)
-        use_effective_variance = weight_mode == "Effective variance"
+        use_effective_variance = weight_mode == WEIGHT_EFFECTIVE_VARIANCE
         precomputed_weights = [
             self._compute_weights(y, yerr, weight_mode)
             for _, y, yerr, _ in datasets
@@ -615,7 +646,7 @@ class FitManager:
 
             # Evaluate model for this dataset
             eval_kw = {name: params_info[name]["value"] for name in base_names}
-            x_dense = np.linspace(x.min(), x.max(), 500)
+            x_dense = np.linspace(x.min(), x.max(), N_DENSE)
             y_fit_data = self._model.eval(x=x, **eval_kw)
             y_fit_dense = self._model.eval(x=x_dense, **eval_kw)
 
@@ -700,7 +731,7 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         xerr: np.ndarray | None = None,
-        n_dense: int = 500,
+        n_dense: int = N_DENSE,
         band_sigma: int = 1,
     ) -> FitResult:
         """Run orthogonal distance regression using the odrpack package.
@@ -874,9 +905,9 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         n_boot: int = 200,
-        method: str = "least_squares",
+        method: str = DEFAULT_FIT_METHOD,
         boot_type: str = "residual",
-        weight_mode: str = "1/yerr (default)",
+        weight_mode: str = DEFAULT_WEIGHT_MODE,
     ) -> tuple[dict[str, np.ndarray], int]:
         """Run bootstrap resampling and return parameter distributions.
 
