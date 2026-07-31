@@ -150,6 +150,67 @@ class ObjectiveKwargsRunFitTests(unittest.TestCase):
         self.assertAlmostEqual(res.params["slope"]["value"], 2.0, delta=0.1)
 
 
+class ValidateFitSetupTests(unittest.TestCase):
+    """validate_fit_setup blocks configurations that can't run and warns
+    about ones that run differently than configured."""
+
+    def _params(self, bounded=True):
+        from lmfit import Parameters
+        p = Parameters()
+        p.add("a", value=1.0,
+              min=0.0 if bounded else -np.inf,
+              max=10.0 if bounded else np.inf)
+        p.add("b", value=2.0, min=0.0, max=10.0)
+        return p
+
+    def test_clean_least_squares_has_no_issues(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, warnings = validate_fit_setup(
+            "least_squares", self._params(), has_xerr=False,
+            weight_mode="1/yerr (default)")
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
+    def test_bounds_required_method_flags_unbounded_param(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, _ = validate_fit_setup(
+            "differential_evolution", self._params(bounded=False),
+            has_xerr=False, weight_mode="No weights")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("finite", errors[0])
+        self.assertIn("a", errors[0])
+
+    def test_bounds_required_method_ok_when_bounded(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, _ = validate_fit_setup(
+            "differential_evolution", self._params(bounded=True),
+            has_xerr=False, weight_mode="No weights")
+        self.assertEqual(errors, [])
+
+    def test_effective_variance_without_xerr_warns(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, warnings = validate_fit_setup(
+            "least_squares", self._params(), has_xerr=False,
+            weight_mode="Effective variance")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(warnings), 1)
+        # With x-errors present it's silent.
+        _, warnings2 = validate_fit_setup(
+            "least_squares", self._params(), has_xerr=True,
+            weight_mode="Effective variance")
+        self.assertEqual(warnings2, [])
+
+    def test_missing_package_is_an_error(self):
+        from unittest import mock
+        from curvelab.fit_manager import validate_fit_setup
+        # ODR needs odrpack; simulate it being absent.
+        with mock.patch("importlib.util.find_spec", return_value=None):
+            errors, _ = validate_fit_setup(
+                "odr", self._params(), has_xerr=True, weight_mode="No weights")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("odrpack", errors[0])
+
+
 class FitManagerRunFitTests(unittest.TestCase):
     """Gap 1: Test that run_fit recovers known parameters."""
 

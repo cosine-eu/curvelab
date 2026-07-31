@@ -500,6 +500,40 @@ class SqliteWorkspaceReloadTests(GuiTestBase):
         self.assertEqual(len(self.app.data_mgr.datasets), 2)
 
 
+class FitValidationTests(GuiTestBase):
+    """_on_fit refuses a method whose requirements aren't met, and doesn't
+    launch a fit in that case."""
+
+    def test_bounds_required_method_blocks_fit(self):
+        rec, sess = self._add_fitted_series(run=False)
+        # Linear params default to unbounded, and DE needs finite bounds.
+        self.app.fit_panel.method_var.set("differential_evolution")
+
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn, \
+             mock.patch.object(self.app, "_run_fit_sync") as sync, \
+             mock.patch.object(self.app, "_run_fit_async") as async_:
+            self.app._on_fit()
+
+        warn.assert_called_once()
+        self.assertIn("finite", warn.call_args[0][1])
+        sync.assert_not_called()
+        async_.assert_not_called()
+
+    def test_bounded_params_allow_fit(self):
+        rec, sess = self._add_fitted_series(run=False)
+        fm = sess.fit_manager
+        for name in fm.params:
+            fm.set_param(name, min=-100.0, max=100.0)
+        self.app.fit_panel.method_var.set("differential_evolution")
+
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn, \
+             mock.patch.object(self.app, "_run_fit_async") as async_:
+            self.app._on_fit()
+
+        warn.assert_not_called()
+        async_.assert_called_once()   # DE is a slow method -> async path
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log

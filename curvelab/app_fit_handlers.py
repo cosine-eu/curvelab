@@ -9,7 +9,9 @@ state (_fit_thread, _fit_abort, _FIT_POLL_INTERVAL_MS) held on CurveLabApp.
 import threading
 from tkinter import messagebox
 
-from .fit_manager import FitManager, REDUCE_FUNCTIONS, SLOW_METHODS
+from .fit_manager import (
+    FitManager, REDUCE_FUNCTIONS, SLOW_METHODS, validate_fit_setup,
+)
 from .ui_dialogs_analysis import (
     GlobalFitDialog, ModelComparisonDialog, comparison_row,
 )
@@ -51,17 +53,19 @@ class FitHandlersMixin:
 
         method = self.fit_panel.method_var.get()
 
-        # Brute validation: all varied params need finite bounds
-        if method == "brute":
-            if fm.params is not None:
-                for name, par in fm.params.items():
-                    if par.vary and (par.min == float("-inf") or par.max == float("inf")):
-                        messagebox.showwarning(
-                            "Brute Requires Bounds",
-                            f"Parameter '{name}' needs finite min and max bounds "
-                            f"for brute-force search.",
-                        )
-                        return
+        # Reject configurations the method can't run (missing backend package,
+        # or a bounds-requiring method with an unbounded parameter); warn about
+        # ones that will run but not as configured.
+        errors, warnings = validate_fit_setup(
+            method, fm.params,
+            has_xerr=rec.xerr is not None,
+            weight_mode=self.fit_panel.weight_var.get(),
+        )
+        if errors:
+            messagebox.showwarning("Cannot Fit", "\n".join(errors))
+            return
+        if warnings:
+            messagebox.showinfo("Fit Warning", "\n".join(warnings))
 
         # Capture the series id now, since an async fit can outlive the
         # user's current selection (e.g. they switch to another series

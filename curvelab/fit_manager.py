@@ -148,6 +148,51 @@ def objective_choices(method: str) -> list[str]:
     return list(_FIXED_OBJECTIVE_CHOICES[kind])
 
 
+def validate_fit_setup(method: str, params, has_xerr: bool,
+                       weight_mode: str) -> tuple[list[str], list[str]]:
+    """Check a fit configuration before running it.
+
+    Returns (errors, warnings). Errors mean the fit cannot run as configured
+    (missing backend package, or a bounds-requiring method with an unbounded
+    varying parameter). Warnings mean it will run but not as the user might
+    expect (effective-variance weighting without x-errors).
+    """
+    import importlib.util
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    caps = METHOD_CAPS.get(method)
+    if caps is None:
+        return errors, warnings
+
+    for module in caps.requires:
+        if importlib.util.find_spec(module) is None:
+            errors.append(
+                f"The '{method}' method needs the '{module}' package, which "
+                f"is not installed."
+            )
+
+    if caps.needs_bounds and params is not None:
+        unbounded = [
+            name for name, par in params.items()
+            if par.vary and not (np.isfinite(par.min) and np.isfinite(par.max))
+        ]
+        if unbounded:
+            errors.append(
+                f"The '{method}' method needs finite min and max bounds on "
+                f"every varying parameter. Missing bounds: "
+                f"{', '.join(unbounded)}."
+            )
+
+    if weight_mode == WEIGHT_EFFECTIVE_VARIANCE and not has_xerr:
+        warnings.append(
+            "Effective-variance weighting needs x-errors; this series has "
+            "none, so 1/yerr weighting is used instead."
+        )
+
+    return errors, warnings
+
+
 def objective_kwargs(method: str, label: str, f_scale: float = DEFAULT_F_SCALE) -> dict:
     """fit_kws contribution for a method's chosen objective.
 
