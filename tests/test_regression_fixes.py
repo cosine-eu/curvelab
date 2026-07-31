@@ -207,6 +207,51 @@ class ParamHintPersistenceTests(unittest.TestCase):
         self.assertEqual(fm.params["linear1_slope"].min, -5.0)
 
 
+class RemoveComponentHintsTests(unittest.TestCase):
+    """Parameter hints are keyed by prefixed name, so removing a component
+    must drop its hints and re-key a lone survivor's when it loses its
+    prefix -- otherwise fixed values and bounds are silently lost."""
+
+    def test_survivor_hints_follow_prefix_reset(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.add_component("Linear")
+        fm.set_param_hint("gaussian1_center", value=5.0, min=0.0)
+
+        fm.remove_component(1)   # Linear; Gaussian loses its prefix
+
+        self.assertEqual(fm.components[0].prefix, "")
+        self.assertEqual(fm.params["center"].value, 5.0)
+        self.assertEqual(fm.params["center"].min, 0.0)
+
+    def test_removed_component_hints_are_dropped(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.add_component("Linear")
+        fm.add_component("Constant")
+        fm.set_param_hint("linear1_slope", value=3.0, vary=False)
+        fm.set_param_hint("gaussian1_center", value=5.0)
+
+        fm.remove_component(1)   # Linear
+
+        self.assertNotIn("linear1_slope", fm._param_hints)
+        # Prefixes of the survivors are unchanged, so their hints still apply.
+        self.assertEqual(fm.params["gaussian1_center"].value, 5.0)
+
+    def test_similar_prefixes_are_not_confused(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        for _ in range(11):
+            fm.add_component("Gaussian")
+        fm.set_param_hint("gaussian11_center", value=7.0)
+
+        fm.remove_component(0)   # gaussian1_, not gaussian11_
+
+        self.assertEqual(fm.params["gaussian11_center"].value, 7.0)
+
+
 class OdsEngineTests(unittest.TestCase):
     """07c55a5: .ods loading used the package name instead of pandas engine id."""
 

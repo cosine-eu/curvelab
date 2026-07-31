@@ -85,13 +85,35 @@ class FitManager:
         return comp
 
     def remove_component(self, index: int):
-        """Remove a component by index and rebuild."""
-        if 0 <= index < len(self.components):
-            self.components.pop(index)
-            # Reset prefixes
-            if len(self.components) == 1:
-                self.components[0].prefix = ""
-            self._rebuild_model()
+        """Remove a component by index and rebuild.
+
+        Parameter hints are keyed by prefixed parameter name, so they follow
+        the component list: the removed component's hints are dropped, and a
+        lone survivor's hints are re-keyed when it loses its prefix.
+        """
+        if not (0 <= index < len(self.components)):
+            return
+        removed = self.components.pop(index)
+        self._drop_param_hints(removed.prefix)
+        if len(self.components) == 1:
+            # Single component: no prefix for cleaner parameter names
+            old_prefix = self.components[0].prefix
+            self.components[0].prefix = ""
+            self._reprefix_param_hints(old_prefix, "")
+        self._rebuild_model()
+
+    def _drop_param_hints(self, prefix: str):
+        """Forget hints belonging to a component prefix."""
+        for name in [n for n in self._param_hints if n.startswith(prefix)]:
+            del self._param_hints[name]
+
+    def _reprefix_param_hints(self, old_prefix: str, new_prefix: str):
+        """Re-key hints from one component prefix to another."""
+        if old_prefix == new_prefix:
+            return
+        for name in [n for n in self._param_hints if n.startswith(old_prefix)]:
+            hints = self._param_hints.pop(name)
+            self._param_hints[new_prefix + name[len(old_prefix):]] = hints
 
     def edit_expression(self, index: int, new_expr: str):
         """Update the expression of an Expression component and rebuild."""
