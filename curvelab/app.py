@@ -204,6 +204,7 @@ class CurveLabApp(
             on_remove_dataset=self._on_remove_dataset,
             on_toggle_series_visible=self._on_toggle_series_visible,
             on_column_calc=self._on_column_calc,
+            on_confirm_remove_series=self._confirm_remove_series,
         )
         left_pane.add(self.data_panel, weight=1)
 

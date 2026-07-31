@@ -91,6 +91,23 @@ class SeriesSessionMixin:
 
         self._refresh_all_ui()
 
+    def _confirm_remove_series(self, series_info: dict) -> bool:
+        """Ask before removing a plotted series that carries fit sessions;
+        removing it discards them, as removing a dataset does."""
+        sid = _make_series_id(
+            series_info.get("dataset", ""), series_info.get("x", ""),
+            series_info.get("y", ""),
+        )
+        rec = self._series_records.get(sid)
+        if rec is None or not rec.fit_sessions:
+            return True
+        label = rec.style.get("label", sid)
+        return messagebox.askyesno(
+            "Confirm Remove",
+            f"Series '{label}' has {len(rec.fit_sessions)} fit session(s).\n\n"
+            "Remove series and discard all fit sessions?",
+        )
+
     # --- Series / Session callbacks ---
 
     def _on_series_selected(self, series_id: str):

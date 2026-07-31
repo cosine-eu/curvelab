@@ -30,6 +30,7 @@ class DataPanel(ttk.LabelFrame):
         on_remove_dataset=None,
         on_toggle_series_visible=None,
         on_column_calc=None,
+        on_confirm_remove_series=None,
     ):
         super().__init__(parent, text="Data", padding=5)
         self._on_load = on_load
@@ -39,6 +40,7 @@ class DataPanel(ttk.LabelFrame):
         self._on_remove_dataset = on_remove_dataset
         self._on_toggle_series_visible = on_toggle_series_visible
         self._on_column_calc = on_column_calc
+        self._on_confirm_remove_series = on_confirm_remove_series
         self._series_items = []  # list of dicts describing each series
 
         self._build_ui()
@@ -312,12 +314,18 @@ class DataPanel(ttk.LabelFrame):
 
     def _remove_series(self):
         sel = self.series_listbox.curselection()
-        if sel:
-            idx = sel[0]
-            self.series_listbox.delete(idx)
-            self._series_items.pop(idx)
-            if self._on_plot:
-                self._on_plot(self._series_items)
+        if not sel:
+            return
+        idx = sel[0]
+        # Removing a series discards its fit sessions, so let the app veto.
+        if self._on_confirm_remove_series and not self._on_confirm_remove_series(
+            self._series_items[idx]
+        ):
+            return
+        self.series_listbox.delete(idx)
+        self._series_items.pop(idx)
+        if self._on_plot:
+            self._on_plot(self._series_items)
 
     def _plot(self):
         if self._on_plot:

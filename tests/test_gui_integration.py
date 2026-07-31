@@ -270,6 +270,49 @@ class ExclusionRenderTests(GuiTestBase):
         self.assertIsNone(rec.mask)
 
 
+class RemoveSeriesConfirmTests(GuiTestBase):
+    """Removing a series from the DataPanel discards its fit sessions, so it
+    asks first -- as removing a dataset already did."""
+
+    def _series_with_session(self):
+        rec, sess = self._add_fitted_series()
+        self.app.data_panel.add_series_entry(rec.style)
+        self.app.data_panel.series_listbox.selection_set(0)
+        return rec
+
+    def test_declining_keeps_series_and_sessions(self):
+        rec = self._series_with_session()
+        with mock.patch("curvelab.app_series.messagebox.askyesno",
+                        return_value=False) as ask:
+            self.app.data_panel._remove_series()
+
+        ask.assert_called_once()
+        self.assertIn("ds::x::y", self.app._series_records)
+        self.assertEqual(len(self.app.data_panel.series_list), 1)
+
+    def test_accepting_removes_series(self):
+        self._series_with_session()
+        with mock.patch("curvelab.app_series.messagebox.askyesno",
+                        return_value=True):
+            self.app.data_panel._remove_series()
+
+        self.assertNotIn("ds::x::y", self.app._series_records)
+        self.assertEqual(len(self.app.data_panel.series_list), 0)
+
+    def test_series_without_sessions_removed_without_asking(self):
+        rec, sess = self._add_fitted_series(run=False)
+        rec.fit_sessions.clear()
+        rec.active_session_name = None
+        self.app.data_panel.add_series_entry(rec.style)
+        self.app.data_panel.series_listbox.selection_set(0)
+
+        with mock.patch("curvelab.app_series.messagebox.askyesno") as ask:
+            self.app.data_panel._remove_series()
+
+        ask.assert_not_called()
+        self.assertEqual(len(self.app.data_panel.series_list), 0)
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log
