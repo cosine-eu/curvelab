@@ -92,6 +92,64 @@ class MethodCapabilityTests(unittest.TestCase):
         self.assertFalse(caps.honors_scale_covar)
 
 
+class ObjectiveKwargsRunFitTests(unittest.TestCase):
+    """run_fit threads objective_kws to the right place: a scipy robust loss
+    for least_squares, a reduce_fcn for scalar methods."""
+
+    def _line_with_outlier(self):
+        x = np.linspace(0, 10, 41)
+        y = 2.0 * x + 1.0
+        # Off-center so the outlier actually biases the slope (a point at the
+        # x-mean has zero leverage on it).
+        y[35] += 60.0
+        return x, y
+
+    def _fit_line(self, x, y, **run_kw):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        return fm.run_fit(x, y, weight_mode="No weights", **run_kw)
+
+    def test_robust_loss_resists_outlier(self):
+        from curvelab.fit_manager import objective_kwargs
+        x, y = self._line_with_outlier()
+
+        linear = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Least squares"))
+        cauchy = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Cauchy"))
+
+        true_slope = 2.0
+        lin_err = abs(linear.params["slope"]["value"] - true_slope)
+        cau_err = abs(cauchy.params["slope"]["value"] - true_slope)
+        # The robust loss must recover the true slope markedly better.
+        self.assertLess(cau_err, lin_err)
+        self.assertLess(cau_err, 0.1)
+
+    def test_f_scale_changes_robust_fit(self):
+        from curvelab.fit_manager import objective_kwargs
+        x, y = self._line_with_outlier()
+        tight = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Cauchy", f_scale=0.5))
+        loose = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Cauchy", f_scale=50.0))
+        # A large f_scale barely down-weights the outlier, so its slope drifts
+        # further from truth than the tight one.
+        self.assertNotAlmostEqual(
+            tight.params["slope"]["value"], loose.params["slope"]["value"], places=3)
+
+    def test_scalar_reduce_fcn_is_applied(self):
+        from curvelab.fit_manager import objective_kwargs
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        # A scalar method with a reduce_fcn must still complete and fit well.
+        res = self._fit_line(
+            x, y, method="nelder",
+            objective_kws=objective_kwargs("nelder", "Neg. entropy"))
+        self.assertAlmostEqual(res.params["slope"]["value"], 2.0, delta=0.1)
+
+
 class FitManagerRunFitTests(unittest.TestCase):
     """Gap 1: Test that run_fit recovers known parameters."""
 

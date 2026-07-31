@@ -556,12 +556,20 @@ class FitManager:
         iter_cb=None,
         fit_kws: dict | None = None,
         reduce_fcn=None,
+        objective_kws: dict | None = None,
         weight_mode: str = DEFAULT_WEIGHT_MODE,
         max_nfev: int | None = None,
         band_sigma: int = 1,
         scale_covar: bool = True,
     ) -> FitResult:
-        """Run the fit and return results."""
+        """Run the fit and return results.
+
+        objective_kws (from objective_kwargs()) carries the method-appropriate
+        objective: a scipy ``loss``/``f_scale`` for least_squares, or a
+        ``reduce_fcn`` for the scalar minimizers. The standalone reduce_fcn
+        argument is kept for direct callers; objective_kws wins if both give
+        the same key.
+        """
         if self._model is None or self._params is None:
             raise ValueError("No model defined")
 
@@ -587,6 +595,8 @@ class FitManager:
         kws = dict(fit_kws or {})
         if reduce_fcn is not None:
             kws["reduce_fcn"] = reduce_fcn
+        if objective_kws:
+            kws.update(objective_kws)
 
         fit_kwargs = dict(
             method=method, nan_policy="omit",
