@@ -482,6 +482,18 @@ class TitleAndAxisLimitTests(GuiTestBase):
         self.assertLess(ax.get_xlim()[0], 1.0)
         self.assertGreater(ax.get_xlim()[1], 9.0)
 
+    def test_pinned_limits_survive_equal_aspect_toggle(self):
+        self._add_fitted_series()
+        self.app._replot_all_series()
+        ax = self.app.plot_mgr.ax
+        self.app._on_axis_limits("1", "5", "-2", "8")
+
+        self.app.plot_mgr.set_equal_aspect(True)
+        self.app.plot_mgr.set_equal_aspect(False)
+
+        self.assertEqual(ax.get_xlim(), (1.0, 5.0))
+        self.assertEqual(ax.get_ylim(), (-2.0, 8.0))
+
     def test_bad_limit_warns_and_keeps_previous(self):
         self._add_fitted_series()
         self.app._replot_all_series()

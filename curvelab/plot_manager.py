@@ -50,6 +50,9 @@ class PlotManager:
         # User-pinned axis limits; None on a side means automatic.
         self._user_xlim: tuple[float | None, float | None] = (None, None)
         self._user_ylim: tuple[float | None, float | None] = (None, None)
+        # Limits stashed while equal aspect is on (it rescales the axes).
+        self._saved_xlim: tuple[float, float] | None = None
+        self._saved_ylim: tuple[float, float] | None = None
 
         self.ax.grid(self._show_grid)
         self.ax_resid.grid(self._show_grid)
@@ -363,9 +366,12 @@ class PlotManager:
         else:
             self.ax.set_aspect("auto")
             # Restore original limits
-            if hasattr(self, "_saved_xlim"):
+            if self._saved_xlim is not None:
                 self.ax.set_xlim(self._saved_xlim)
                 self.ax.set_ylim(self._saved_ylim)
+                self._saved_xlim = self._saved_ylim = None
+            # User-pinned limits outrank whatever equal aspect left behind.
+            self._apply_axis_limits()
         # Residuals axis always uses auto aspect
         self.ax_resid.set_aspect("auto")
         self.canvas.draw_idle()
