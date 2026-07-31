@@ -272,6 +272,11 @@ class FitManager:
     def clone_components_to(self, target: "FitManager"):
         """Copy this manager's component list and parameter hints (fixed
         values, bounds) into target, rebuilding its model."""
+        if target is self:
+            # Batch fit clones the source model onto every series, including
+            # the one it came from. Without this guard clear_components()
+            # would empty the list being copied, destroying the model.
+            return
         target.clear_components()
         for comp in self.components:
             target.add_component(comp.name, operator=comp.operator, expression=comp.expression)

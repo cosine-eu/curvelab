@@ -182,6 +182,25 @@ class CloneComponentsHintsTests(unittest.TestCase):
         self.assertEqual(target.params["intercept"].max, 5.0)
 
 
+class CloneComponentsSelfTests(unittest.TestCase):
+    """Batch fit clones the source model onto every series, the source
+    included. Cloning onto itself used to clear the component list it was
+    about to copy, wiping the model and failing every later series."""
+
+    def test_self_clone_preserves_model(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.add_component("Gaussian")
+        fm.set_param_hint("linear1_slope", value=2.0, vary=False)
+
+        fm.clone_components_to(fm)
+
+        self.assertEqual([c.name for c in fm.components], ["Linear", "Gaussian"])
+        self.assertIsNotNone(fm.model)
+        self.assertFalse(fm.params["linear1_slope"].vary)
+
+
 class ParamHintPersistenceTests(unittest.TestCase):
     """69a37b0 (core mechanism): set_param_hint must survive a model rebuild.
 
