@@ -1,0 +1,104 @@
+# Build and publish CurveLab to PyPI using Trusted Publishing (OIDC) — no
+# API tokens are stored in the repository.
+#
+# One-time setup on PyPI (and TestPyPI) before this can publish:
+#   PyPI -> Account -> Publishing -> Add a pending/trusted publisher:
+#     Owner:        cosine-eu           (the GitHub org/user that owns the repo)
+#     Repository:   curvelab
+#     Workflow:     publish.yml
+#     Environment:  pypi                (testpypi for the TestPyPI publisher)
+#   Then create the matching GitHub environments (Settings -> Environments):
+#     "pypi" and "testpypi".
+#
+# Usage:
+#   - Publish to PyPI: create a GitHub Release (tag e.g. v0.11.1). The tag
+#     must match the version in pyproject.toml; a version can only be
+#     uploaded to PyPI once.
+#   - Dry run to TestPyPI: run this workflow manually (Actions -> Run workflow).
+
+name: Publish
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:        # manual TestPyPI dry-run
+
+jobs:
+  build:
+    name: Build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify release tag matches the package version
+        if: github.event_name == 'release'
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          tag="${{ github.event.release.tag_name }}"
+          if [ "${tag#v}" != "$version" ]; then
+            echo "::error::Release tag '$tag' does not match pyproject version '$version'"
+            exit 1
+          fi
+          echo "Tag '$tag' matches version '$version'."
+      - name: Build sdist and wheel
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  test:
+    name: Test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install with test extras
+        run: python -m pip install -e .[test]
+      - name: Run tests
+        # A virtual display lets the headless GUI integration tests run
+        # instead of self-skipping; they fall back to skipping if Tk is
+        # unavailable.
+        run: xvfb-run -a python -m pytest tests/
+
+  publish-testpypi:
+    name: Publish to TestPyPI (dry run)
+    if: github.event_name == 'workflow_dispatch'
+    needs: [build]
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write       # required for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    if: github.event_name == 'release'
+    needs: [build, test]    # only release a build that also passed the tests
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write       # required for trusted publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
