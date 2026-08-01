@@ -10,7 +10,8 @@ import threading
 from tkinter import messagebox
 
 from .fit_manager import (
-    FitManager, REDUCE_FUNCTIONS, SLOW_METHODS, validate_fit_setup,
+    DEFAULT_F_SCALE, FitManager, SLOW_METHODS,
+    objective_kwargs, validate_fit_setup,
 )
 from .ui_dialogs_analysis import (
     GlobalFitDialog, ModelComparisonDialog, comparison_row,
@@ -80,24 +81,30 @@ class FitHandlersMixin:
             self._run_fit_sync(rec, sess, method, sid)
 
     def _get_fit_options(self):
-        """Read reduce function, weight mode, max_nfev, band_sigma, scale_covar from UI."""
-        reduce_fcn = REDUCE_FUNCTIONS.get(self.fit_panel.reduce_var.get())
+        """Read objective, weight mode, max_nfev, band_sigma, scale_covar from UI."""
+        method = self.fit_panel.method_var.get()
+        try:
+            f_scale = float(self.fit_panel.f_scale_var.get())
+        except ValueError:
+            f_scale = DEFAULT_F_SCALE
+        objective_kws = objective_kwargs(
+            method, self.fit_panel.objective_var.get(), f_scale)
         weight_mode = self.fit_panel.weight_var.get()
         max_nfev_str = self.fit_panel.max_nfev_var.get().strip()
         max_nfev = int(max_nfev_str) if max_nfev_str else None
         band_sigma = int(self.plot_controls.band_sigma_var.get())
         scale_covar = self.fit_panel.scale_covar_var.get()
-        return reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar
+        return objective_kws, weight_mode, max_nfev, band_sigma, scale_covar
 
     def _run_fit_sync(self, rec, sess, method, sid):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
             x, y, yerr, xerr = self._get_fit_data(rec)
-            reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+            objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
             result = fm.run_fit(
                 x, y, yerr=yerr, xerr=xerr, method=method,
-                reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                objective_kws=objective_kws, weight_mode=weight_mode,
                 max_nfev=max_nfev, band_sigma=band_sigma,
                 scale_covar=scale_covar,
             )
@@ -157,7 +164,7 @@ class FitHandlersMixin:
         if method == "emcee":
             fit_kws["is_weighted"] = yerr is not None
 
-        reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
 
         # Container for result/error from the thread
         container = {"result": None, "error": None}
@@ -167,7 +174,7 @@ class FitHandlersMixin:
                 result = fm.run_fit(
                     x, y, yerr=yerr, xerr=xerr, method=method,
                     iter_cb=iter_cb, fit_kws=fit_kws,
-                    reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                    objective_kws=objective_kws, weight_mode=weight_mode,
                     max_nfev=max_nfev, band_sigma=band_sigma,
                     scale_covar=scale_covar,
                 )
@@ -287,7 +294,7 @@ class FitHandlersMixin:
         summary_rows = []
         data_warnings: list[str] = []
         fit_errors: list[str] = []
-        reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
 
         for sid, target_rec in self._series_records.items():
             target_sess = target_rec.ensure_session(session_name)
@@ -304,7 +311,7 @@ class FitHandlersMixin:
                 method = self.fit_panel.method_var.get()
                 result = target_fm.run_fit(
                     x, y, yerr=yerr, xerr=xerr, method=method,
-                    reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                    objective_kws=objective_kws, weight_mode=weight_mode,
                     max_nfev=max_nfev, band_sigma=band_sigma,
                     scale_covar=scale_covar,
                 )

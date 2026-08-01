@@ -500,6 +500,89 @@ class SqliteWorkspaceReloadTests(GuiTestBase):
         self.assertEqual(len(self.app.data_mgr.datasets), 2)
 
 
+class ObjectiveControlTests(GuiTestBase):
+    """The Objective control follows the method, f_scale enables only for
+    robust losses, and the app turns the selection into fit_kws."""
+
+    def _state(self, w):
+        return str(w.cget("state"))
+
+    def test_objective_choices_and_control_states_follow_method(self):
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        self.assertIn("Cauchy", fp._objective_combo["values"])
+        self.assertEqual(self._state(fp._f_scale_entry), "disabled")  # linear
+
+        fp.objective_var.set("Cauchy"); fp._on_objective_changed()
+        self.assertEqual(self._state(fp._f_scale_entry), "normal")
+
+        fp.method_var.set("odr"); fp._on_method_changed()
+        self.assertEqual(fp._objective_combo["values"], ("Orthogonal distance",))
+        self.assertEqual(self._state(fp._weight_combo), "disabled")
+        self.assertEqual(self._state(fp._scale_covar_check), "disabled")
+
+        # Remembered loss restored when returning to least_squares.
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        self.assertEqual(fp.objective_var.get(), "Cauchy")
+        self.assertEqual(self._state(fp._weight_combo), "readonly")
+
+    def test_get_fit_options_builds_objective_kws(self):
+        self._add_fitted_series(run=False)
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        fp.objective_var.set("Cauchy"); fp._on_objective_changed()
+        fp.f_scale_var.set("3.0")
+
+        objective_kws, *_ = self.app._get_fit_options()
+        self.assertEqual(objective_kws, {"loss": "cauchy", "f_scale": 3.0})
+
+        fp.method_var.set("nelder"); fp._on_method_changed()
+        fp.objective_var.set("Neg. entropy"); fp._on_objective_changed()
+        objective_kws, *_ = self.app._get_fit_options()
+        self.assertIn("reduce_fcn", objective_kws)
+
+    def test_bad_f_scale_falls_back_to_default(self):
+        self._add_fitted_series(run=False)
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        fp.objective_var.set("Cauchy"); fp._on_objective_changed()
+        fp.f_scale_var.set("not a number")
+        objective_kws, *_ = self.app._get_fit_options()
+        self.assertEqual(objective_kws["f_scale"], 1.0)
+
+
+class ObjectiveWorkspaceTests(GuiTestBase):
+    """The objective survives a workspace round trip, and an old reduce_fcn
+    key still loads."""
+
+    def test_objective_round_trip(self):
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        fp.objective_var.set("Huber"); fp._on_objective_changed()
+        fp.f_scale_var.set("2.5")
+        ws = self.app._serialize_workspace()
+
+        import tkinter as tk
+        from curvelab.app import CurveLabApp
+        root2 = tk.Tk()
+        try:
+            app2 = CurveLabApp(root2)
+            app2._load_workspace_plot_controls(ws)
+            self.assertEqual(app2.fit_panel.method_var.get(), "least_squares")
+            self.assertEqual(app2.fit_panel.objective_var.get(), "Huber")
+            self.assertEqual(app2.fit_panel.f_scale_var.get(), "2.5")
+        finally:
+            root2.destroy()
+
+    def test_legacy_reduce_fcn_key_still_loads(self):
+        # A pre-objective workspace: scalar method + reduce label.
+        ws = {"plot_controls": {"fit_method": "nelder",
+                                "reduce_fcn": "Neg. entropy"}}
+        self.app._load_workspace_plot_controls(ws)
+        self.assertEqual(self.app.fit_panel.method_var.get(), "nelder")
+        self.assertEqual(self.app.fit_panel.objective_var.get(), "Neg. entropy")
+
+
 class FitValidationTests(GuiTestBase):
     """_on_fit refuses a method whose requirements aren't met, and doesn't
     launch a fit in that case."""

@@ -4,8 +4,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, simpledialog
 
 from .fit_manager import (
-    DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, FIT_METHODS,
-    REDUCE_FUNCTIONS, WEIGHT_MODES,
+    DEFAULT_F_SCALE, DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, FIT_METHODS,
+    METHOD_CAPS, ROBUST_LOSSES, WEIGHT_MODES, objective_choices,
 )
 from .models import MODEL_NAMES
 from .ui_common import configure_row_tags, row_tag, set_readonly_text
@@ -689,56 +689,72 @@ class FitPanel(ttk.LabelFrame):
         method_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(method_frame, text="Method:").pack(side=tk.LEFT)
         self.method_var = tk.StringVar(value=DEFAULT_FIT_METHOD)
-        ttk.Combobox(
+        method_combo = ttk.Combobox(
             method_frame,
             textvariable=self.method_var,
             values=FIT_METHODS,
             state="readonly",
             width=20,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        )
+        method_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        method_combo.bind("<<ComboboxSelected>>", self._on_method_changed)
 
-        # --- Reduce function ---
-        reduce_frame = ttk.Frame(self)
-        reduce_frame.pack(fill=tk.X, pady=(3, 0))
-        ttk.Label(reduce_frame, text="Reduce:").pack(side=tk.LEFT)
-        self.reduce_var = tk.StringVar(value="Chi-square (default)")
-        ttk.Combobox(
-            reduce_frame,
-            textvariable=self.reduce_var,
-            values=list(REDUCE_FUNCTIONS.keys()),
-            state="readonly",
-            width=20,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        # --- Objective + robust-loss scale ---
+        # Which objectives are valid depends on the method, so the combobox
+        # is repopulated on method change. The user's pick is remembered per
+        # objective kind (see _apply_method_capabilities).
+        obj_frame = ttk.Frame(self)
+        obj_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(obj_frame, text="Objective:").pack(side=tk.LEFT)
+        self.objective_var = tk.StringVar()
+        self._objective_combo = ttk.Combobox(
+            obj_frame, textvariable=self.objective_var,
+            state="readonly", width=16,
+        )
+        self._objective_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        self._objective_combo.bind("<<ComboboxSelected>>", self._on_objective_changed)
+        self._f_scale_label = ttk.Label(obj_frame, text="f_scale:")
+        self._f_scale_label.pack(side=tk.LEFT)
+        self.f_scale_var = tk.StringVar(value=str(DEFAULT_F_SCALE))
+        self._f_scale_entry = ttk.Entry(obj_frame, textvariable=self.f_scale_var, width=6)
+        self._f_scale_entry.pack(side=tk.LEFT, padx=2)
+        # Remembers the chosen label for each objective kind across method
+        # switches, keyed by the first choice of that kind.
+        self._objective_memory: dict[str, str] = {}
 
         # --- Weights ---
         weight_frame = ttk.Frame(self)
         weight_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(weight_frame, text="Weights:").pack(side=tk.LEFT)
         self.weight_var = tk.StringVar(value=DEFAULT_WEIGHT_MODE)
-        ttk.Combobox(
+        self._weight_combo = ttk.Combobox(
             weight_frame,
             textvariable=self.weight_var,
             values=WEIGHT_MODES,
             state="readonly",
             width=20,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        )
+        self._weight_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         # --- Max nfev ---
         nfev_frame = ttk.Frame(self)
         nfev_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(nfev_frame, text="Max nfev:").pack(side=tk.LEFT)
         self.max_nfev_var = tk.StringVar(value="")
-        ttk.Entry(nfev_frame, textvariable=self.max_nfev_var, width=10).pack(
-            side=tk.LEFT, padx=2
-        )
+        self._max_nfev_entry = ttk.Entry(nfev_frame, textvariable=self.max_nfev_var, width=10)
+        self._max_nfev_entry.pack(side=tk.LEFT, padx=2)
         ttk.Label(nfev_frame, text="(empty = unlimited)").pack(side=tk.LEFT, padx=2)
 
         # --- Scale covariance ---
         self.scale_covar_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        self._scale_covar_check = ttk.Checkbutton(
             self, text="Scale covariance by reduced \u03c7\u00b2 (assume model is correct)",
             variable=self.scale_covar_var,
-        ).pack(anchor=tk.W, pady=(3, 0))
+        )
+        self._scale_covar_check.pack(anchor=tk.W, pady=(3, 0))
+
+        # Populate the objective control and control states for the default method.
+        self._apply_method_capabilities()
 
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
@@ -757,6 +773,61 @@ class FitPanel(ttk.LabelFrame):
             fit_btn_frame, text="Clear Model", command=self._clear_fit
         )
         self._clear_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+
+    # --- Method / objective capability wiring ---
+
+    @staticmethod
+    def _set_enabled(widget, enabled: bool, readonly: bool = False):
+        widget.configure(state=("readonly" if readonly else "normal") if enabled
+                         else "disabled")
+
+    def _on_method_changed(self, event=None):
+        self._apply_method_capabilities()
+
+    def _on_objective_changed(self, event=None):
+        method = self.method_var.get()
+        caps = METHOD_CAPS.get(method)
+        if caps is not None:
+            self._objective_memory[caps.objective] = self.objective_var.get()
+        self._update_f_scale_state()
+
+    def _update_f_scale_state(self):
+        """f_scale only applies to the robust least_squares losses."""
+        robust = self.objective_var.get() in ROBUST_LOSSES
+        self._set_enabled(self._f_scale_entry, robust)
+        self._f_scale_label.state(["!disabled"] if robust else ["disabled"])
+
+    def _apply_method_capabilities(self):
+        """Repopulate the objective control and enable only the controls the
+        current method honors."""
+        method = self.method_var.get()
+        caps = METHOD_CAPS.get(method)
+        if caps is None:
+            return
+        choices = objective_choices(method)
+        self._objective_combo["values"] = choices
+        remembered = self._objective_memory.get(caps.objective)
+        self.objective_var.set(remembered if remembered in choices else choices[0])
+        # A single-choice objective (leastsq, emcee, odr) is not selectable.
+        self._objective_combo.configure(
+            state="readonly" if len(choices) > 1 else "disabled")
+        self._update_f_scale_state()
+        self._set_enabled(self._weight_combo, caps.honors_weights, readonly=True)
+        self._set_enabled(self._max_nfev_entry, caps.honors_max_nfev)
+        self._set_enabled(self._scale_covar_check, caps.honors_scale_covar)
+
+    def set_objective(self, label: str | None, f_scale=None):
+        """Restore a saved objective for the current method (workspace load).
+        Call after method_var is set."""
+        self._apply_method_capabilities()
+        if label and label in self._objective_combo["values"]:
+            self.objective_var.set(label)
+            caps = METHOD_CAPS.get(self.method_var.get())
+            if caps is not None:
+                self._objective_memory[caps.objective] = label
+        if f_scale not in (None, ""):
+            self.f_scale_var.set(str(f_scale))
+        self._update_f_scale_state()
 
     def _series_selected(self, event=None):
         if self._on_series_selected:

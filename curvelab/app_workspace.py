@@ -165,7 +165,8 @@ class WorkspaceMixin:
                 "data": self.plot_controls.data_var.get(),
                 "scale_covar": self.fit_panel.scale_covar_var.get(),
                 "fit_method": self.fit_panel.method_var.get(),
-                "reduce_fcn": self.fit_panel.reduce_var.get(),
+                "objective": self.fit_panel.objective_var.get(),
+                "f_scale": self.fit_panel.f_scale_var.get(),
                 "weight_mode": self.fit_panel.weight_var.get(),
                 "max_nfev": self.fit_panel.max_nfev_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
@@ -316,9 +317,13 @@ class WorkspaceMixin:
         self.plot_controls.data_var.set(pc.get("data", True))
         self.fit_panel.scale_covar_var.set(pc.get("scale_covar", True))
         self.fit_panel.method_var.set(pc.get("fit_method", DEFAULT_FIT_METHOD))
-        self.fit_panel.reduce_var.set(pc.get("reduce_fcn", "Chi-square (default)"))
         self.fit_panel.weight_var.set(pc.get("weight_mode", DEFAULT_WEIGHT_MODE))
         self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))
+        # Objective replaces the old reduce_fcn key; fall back to it for
+        # workspaces written before the change. set_objective must run after
+        # method_var is set, since the valid objectives depend on the method.
+        self.fit_panel.set_objective(
+            pc.get("objective", pc.get("reduce_fcn")), pc.get("f_scale"))
         self.plot_controls.xlabel_var.set(pc.get("xlabel", ""))
         self.plot_controls.ylabel_var.set(pc.get("ylabel", ""))
 
