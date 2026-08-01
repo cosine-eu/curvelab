@@ -305,7 +305,8 @@ class CurveLabApp(
 
         # Fit results panel
         self.fit_results = FitResultsPanel(
-            right_frame, on_param_edited=self._on_param_edited
+            right_frame, on_param_edited=self._on_param_edited,
+            on_use_as_start=self._on_use_result_as_start,
         )
         self.fit_results.grid(row=2, column=0, sticky="nsew")
         right_frame.rowconfigure(2, weight=1)
@@ -508,6 +509,26 @@ class CurveLabApp(
         if field == "expr" and not value:
             return {"expr": "", "vary": True}
         return {field: value}
+
+    def _on_use_result_as_start(self):
+        """Adopt the last fit's parameters as the starting point for the next
+        fit. Fits otherwise restart from the guess each time; this is the
+        opt-in way to chain a refinement."""
+        sess = self._require_fit_result()
+        if sess is None:
+            return
+        fm = sess.fit_manager
+        if fm.params is None:
+            return
+        fm.capture_start_values()
+        # Reflect the adopted start in the Initial column as feedback.
+        params_display = {}
+        for name, info in sess.result.params.items():
+            entry = dict(info)
+            if name in fm.params:
+                entry["init_value"] = fm.params[name].value
+            params_display[name] = entry
+        self.fit_results.set_params(params_display)
 
     def _refresh_param_display(self):
         """Refresh the parameter table from the live FitManager params."""

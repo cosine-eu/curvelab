@@ -1019,17 +1019,20 @@ class FitPanel(ttk.LabelFrame):
 class FitResultsPanel(ttk.LabelFrame):
     """Parameter table and fit report display."""
 
-    def __init__(self, parent, on_param_edited=None):
+    def __init__(self, parent, on_param_edited=None, on_use_as_start=None):
         super().__init__(parent, text="Fit Results", padding=5)
         self._on_param_edited = on_param_edited
+        self._on_use_as_start = on_use_as_start
         self._editing_entry = None
         self._editing_done = True  # no edit in progress
         self._locked = False
         self._build_ui()
 
     def set_locked(self, locked: bool):
-        """Disable cell editing while a background fit is mutating params."""
+        """Disable cell editing and the seed-from-result button while a
+        background fit is mutating params."""
         self._locked = locked
+        self._use_start_btn.configure(state=tk.DISABLED if locked else tk.NORMAL)
         if locked and self._editing_entry is not None:
             # Mark done first so the <FocusOut> that destroy() triggers
             # doesn't re-enter commit()/cancel() on a destroyed widget.
@@ -1085,9 +1088,16 @@ class FitResultsPanel(ttk.LabelFrame):
         # Double-click to edit
         self.param_tree.bind("<Double-1>", self._on_double_click)
 
-        # --- Copy button ---
-        ttk.Button(self, text="Copy Table", command=self._copy_table).pack(
-            anchor=tk.E, pady=(2, 0))
+        # --- Table action buttons ---
+        btn_row = ttk.Frame(self)
+        btn_row.pack(fill=tk.X, pady=(2, 0))
+        # Seed the next fit from this result (opt-in; fits otherwise restart
+        # from the guess each time).
+        self._use_start_btn = ttk.Button(
+            btn_row, text="Use as Start", command=self._use_as_start)
+        self._use_start_btn.pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="Copy Table", command=self._copy_table).pack(
+            side=tk.RIGHT)
 
         # --- Fit report ---
         ttk.Label(self, text="Fit Report:").pack(anchor=tk.W, pady=(5, 0))
@@ -1100,6 +1110,10 @@ class FitResultsPanel(ttk.LabelFrame):
         self.report_text.configure(yscrollcommand=report_scroll.set)
         self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         report_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+    def _use_as_start(self):
+        if self._on_use_as_start:
+            self._on_use_as_start()
 
     def set_params(self, params: dict[str, dict]):
         """Populate parameter table from param info dicts."""

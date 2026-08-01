@@ -304,6 +304,14 @@ class RefitFromGuessTests(unittest.TestCase):
         r = fm.run_fit(x, y, weight_mode="No weights")
         self.assertAlmostEqual(r.init_params["center"], 7.5)
 
+    def test_fixed_parameter_is_not_reset(self):
+        # A pinned (vary=False) value must survive the reset-to-start, not be
+        # clobbered by a stale guess.
+        fm, x, y = self._fit_setup()
+        fm.set_param_hint("center", value=4.0, vary=False)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.params["center"]["value"], 4.0, places=6)
+
     def test_first_fit_without_guess_is_reproducible(self):
         from curvelab.fit_manager import FitManager
         x = np.linspace(0, 10, 40)
@@ -314,6 +322,30 @@ class RefitFromGuessTests(unittest.TestCase):
         r1 = fm.run_fit(x, y, weight_mode="No weights")
         r2 = fm.run_fit(x, y, weight_mode="No weights")
         self.assertEqual(r1.init_params, r2.init_params)
+
+
+class CaptureStartValuesTests(unittest.TestCase):
+    """capture_start_values adopts the current (fitted) values as the next
+    fit's start -- the 'Use as Start' action -- restoring opt-in chaining."""
+
+    def test_capture_makes_next_fit_start_from_result(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 80)
+        y = 3 * np.exp(-(x - 5) ** 2 / (2 * 0.8 ** 2)) + rng.normal(0, 0.02, x.size)
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        guess_center = fm.params["center"].value
+
+        fm.run_fit(x, y, weight_mode="No weights")
+        fitted_center = fm.params["center"].value
+
+        fm.capture_start_values()
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        # Now the fit starts from the fitted values, not the original guess.
+        self.assertAlmostEqual(r.init_params["center"], fitted_center)
+        self.assertNotAlmostEqual(r.init_params["center"], guess_center, places=6)
 
 
 class FitErrorbarsFlagTests(unittest.TestCase):

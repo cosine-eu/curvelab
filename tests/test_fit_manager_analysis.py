@@ -133,6 +133,16 @@ class OdrTests(unittest.TestCase):
         self.assertAlmostEqual(result.params["intercept"]["value"], 1.0, places=6)
         self.assertIsNone(result.params["intercept"]["stderr"])
 
+    def test_odr_refits_from_the_guess(self):
+        # Like run_fit, repeated ODR fits start from the same values instead
+        # of chaining, so they are reproducible.
+        r1 = self.fm.run_odr(self.x, self.y, yerr=self.yerr, xerr=self.xerr)
+        r2 = self.fm.run_odr(self.x, self.y, yerr=self.yerr, xerr=self.xerr)
+        self.assertEqual(r1.init_params, r2.init_params)
+        for name in r1.params:
+            self.assertAlmostEqual(r1.params[name]["value"],
+                                   r2.params[name]["value"], places=8)
+
 
 class GlobalFitTests(unittest.TestCase):
     def setUp(self):

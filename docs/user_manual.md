@@ -495,8 +495,15 @@ Each fit starts from the current parameter values — the Auto Guess result,
 or whatever you have typed into the **Value** column — and clicking **Fit**
 again starts from those same values, not from the previous fit's output. So
 repeated fits are reproducible: the answer doesn't drift when you fit twice.
-To iterate toward a hard solution, either raise **Max nfev** or type the last
-result into the Value column (making it the new starting point).
+This applies to ordinary and ODR fits alike. Fixed (Vary = No) parameters
+keep the value you set; only the varying parameters are reset to the start.
+
+To deliberately refine — start the next fit from the last result — click
+**Use as Start** below the parameter table. It copies the current fitted
+values into the starting values (the Initial column updates to match), so the
+next **Fit** continues from there. Repeat Use as Start → Fit to iterate. This
+is the opt-in replacement for the old automatic chaining; raising **Max nfev**
+is the other way to push a slow fit further.
 
 ### When a fit reports no uncertainties
 

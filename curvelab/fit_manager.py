@@ -357,6 +357,27 @@ class FitManager:
         by the reset-to-guess behavior in run_fit."""
         self._start_values[name] = value
 
+    def capture_start_values(self):
+        """Adopt the current parameter values as the fit starting point,
+        e.g. to reuse a fit's result as the next fit's guess."""
+        if self._params is not None:
+            self._start_values = {n: p.value for n, p in self._params.items()}
+
+    def _reset_to_start_values(self):
+        """Reset each varying parameter to its remembered starting value so
+        repeated fits are reproducible instead of chaining from the previous
+        result. A parameter without a recorded start (first fit, or one added
+        since the last guess) has its current value captured now. Fixed
+        parameters are user-set constants that don't drift, so they are left
+        untouched."""
+        for name, par in self._params.items():
+            if not par.vary:
+                continue
+            if name in self._start_values:
+                par.set(value=self._start_values[name])
+            else:
+                self._start_values[name] = par.value
+
     def _build_component_model(self, comp: FitComponent, x_data: np.ndarray | None = None):
         """Build a single component model. Uses x_data for Spline if available."""
         if comp.name == "Expression":
@@ -636,16 +657,10 @@ class FitManager:
         if self._has_spline:
             self._rebuild_model_with_data(x)
 
-        # Start from the remembered guess/user values rather than chaining
-        # from the previous result, so repeated fits are reproducible and
-        # don't drift along a degenerate direction. Any parameter without a
-        # recorded start (first fit, or one added since the last guess) has
-        # its current value captured now.
-        for name, par in self._params.items():
-            if name in self._start_values:
-                par.set(value=self._start_values[name])
-            else:
-                self._start_values[name] = par.value
+        # Start from the remembered guess/user values, not the previous
+        # result, so repeated fits are reproducible and don't drift along a
+        # degenerate direction.
+        self._reset_to_start_values()
 
         # Snapshot initial parameter values before fitting
         init_values = {name: par.value for name, par in self._params.items()}
@@ -965,6 +980,9 @@ class FitManager:
 
         if self._has_spline:
             self._rebuild_model_with_data(x)
+
+        # Reset to the remembered start so repeated ODR fits are reproducible.
+        self._reset_to_start_values()
 
         # Snapshot initial parameter values
         init_values = {name: par.value for name, par in self._params.items()}

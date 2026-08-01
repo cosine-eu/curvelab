@@ -583,6 +583,30 @@ class ObjectiveWorkspaceTests(GuiTestBase):
         self.assertEqual(self.app.fit_panel.objective_var.get(), "Neg. entropy")
 
 
+class UseResultAsStartTests(GuiTestBase):
+    """The 'Use as Start' button seeds the next fit from the current result,
+    the opt-in way to chain a refinement now that fits restart from the guess."""
+
+    def test_button_transfers_result_into_start_values(self):
+        rec, sess = self._add_fitted_series(run=True)
+        fm = sess.fit_manager
+        # Move the live params off the fitted result, as a stray edit might.
+        fitted = fm.params["slope"].value
+        fm.set_param("slope", value=999.0)
+
+        self.app._on_use_result_as_start()
+
+        # capture_start_values grabbed the current params; the next fit starts
+        # from them. Here we assert the start now reflects the captured values.
+        self.assertEqual(fm._start_values["slope"], 999.0)
+
+    def test_button_needs_a_result(self):
+        rec, sess = self._add_fitted_series(run=False)  # no result yet
+        with mock.patch("curvelab.app.messagebox.showwarning") as warn:
+            self.app._on_use_result_as_start()
+        warn.assert_called_once()
+
+
 class NoUncertaintyWarningTests(GuiTestBase):
     """A fit that produced no uncertainties (singular covariance) warns the
     user, since the curve can look good while parameters are meaningless."""
