@@ -394,6 +394,18 @@ Journal 7(2).
 | `shgo` | Simplicial Homology Global Optimization | Yes | Slow |
 | `ampgo` | Adaptive Memory Programming for Global Optimization | No | Slow |
 
+The bounds-requiring methods (`differential_evolution`, `dual_annealing`,
+`shgo`, and grid `brute`) are checked before the fit starts: if any varying
+parameter lacks a finite min *and* max, CurveLab reports which parameters need
+bounds instead of letting the fit fail partway through. Set the bounds in the
+Fit Results table (the **Min**/**Max** columns) first.
+
+The Fit panel also disables the controls a method doesn't use — for example
+ODR ignores the Weights, Max nfev, and Scale-covariance controls, so they grey
+out while it is selected. A method whose backend package isn't installed (only
+ODR's `odrpack` today, since the rest of the fitting stack is required) is
+reported clearly rather than failing at run time.
+
 #### Differential evolution (`differential_evolution`)
 
 Maintains a population of candidate solutions that evolve through mutation,
@@ -508,18 +520,48 @@ See:
   standard errors of the best straight line*, American Journal of Physics
   72(3).
 
-### Reduce functions
+### Objective
 
-The reduce function transforms the residual vector into a scalar objective.
+The **Objective** selector chooses what is minimized. Not every objective
+applies to every method, so its choices follow the selected **Method** —
+you can only pick a combination that actually does something. The default,
+**Least squares**, minimizes the sum of squared (weighted) residuals.
 
-| Function | Formula | Properties |
-|----------|---------|------------|
-| **Chi-square (default)** | `sum(r_i^2)` | Maximum likelihood estimator for Gaussian errors. Sensitive to outliers. |
+**With `least_squares`** the objective offers scipy's robust loss functions,
+which reshape how large residuals contribute and make the fit resistant to
+outliers:
+
+| Objective | scipy loss | Effect |
+|-----------|-----------|--------|
+| **Least squares** | `linear` | Standard least squares; sensitive to outliers. |
+| **Soft L1** | `soft_l1` | Smooth approximation to L1; mild outlier resistance. |
+| **Huber** | `huber` | Quadratic near zero, linear in the tails. |
+| **Cauchy** | `cauchy` | Strong outlier rejection (Lorentzian-tailed M-estimator). |
+| **Arctan** | `arctan` | Caps the contribution of the largest residuals. |
+
+For every objective except plain Least squares, the **f_scale** entry (next to
+the selector) sets the residual value beyond which points are down-weighted.
+The default is 1.0, which suits weighted residuals of order one; increase it
+for un-weighted data whose residuals are larger.
+
+**With the scalar minimizers** (Nelder-Mead, Powell, differential evolution,
+etc.) the objective offers the *reduce functions*, which collapse the residual
+vector to a single number the optimizer minimizes:
+
+| Objective | Formula | Properties |
+|-----------|---------|------------|
+| **Chi-square (default)** | `sum(r_i^2)` | Maximum likelihood for Gaussian errors. Sensitive to outliers. |
 | **Neg. entropy** | `-sum(r_i * log(|r_i|))` | Robust to outliers; encourages smooth residual distributions. |
-| **Cauchy log-pdf** | `sum(log(1 + r_i^2))` | Heavy-tailed loss function. Strongly downweights large residuals. Related to the Cauchy (Lorentzian) distribution. |
+| **Cauchy log-pdf** | `sum(log(1 + r_i^2))` | Heavy-tailed loss. Strongly down-weights large residuals. |
 
-The Cauchy reduce function produces an M-estimator that is highly resistant
-to outliers.
+**`leastsq`, `emcee`, and `odr`** each have a single fixed objective
+(least squares, the log-posterior, and orthogonal distance respectively), so
+the selector shows one entry and is disabled.
+
+> Robust fitting on the default method used to be impossible: the old
+> Reduce menu was ignored by `least_squares`. The Objective control now maps
+> to scipy's `loss` there, so Cauchy/Huber robustness works with the default
+> method.
 
 See:
 - Huber, P.J. (1981), *Robust Statistics*, Wiley.
