@@ -271,6 +271,77 @@ class RemoveComponentHintsTests(unittest.TestCase):
         self.assertEqual(fm.params["gaussian11_center"].value, 7.0)
 
 
+class RefitFromGuessTests(unittest.TestCase):
+    """Each fit starts from the remembered guess/user values, not the
+    previous result, so repeated fits are reproducible and don't drift
+    along a degenerate direction."""
+
+    def _fit_setup(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 80)
+        y = 3 * np.exp(-(x - 5) ** 2 / (2 * 1.0 ** 2)) + rng.normal(0, 0.02, x.size)
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        return fm, x, y
+
+    def test_repeated_fits_start_from_same_values(self):
+        fm, x, y = self._fit_setup()
+        r1 = fm.run_fit(x, y, weight_mode="No weights")
+        r2 = fm.run_fit(x, y, weight_mode="No weights")
+        # Both fits start from the guess, so their init snapshots match
+        # (under the old chaining, r2 would have started from r1's result).
+        self.assertEqual(r1.init_params, r2.init_params)
+        for name in r1.params:
+            self.assertAlmostEqual(r1.params[name]["value"],
+                                   r2.params[name]["value"], places=8)
+
+    def test_manual_start_value_is_honored(self):
+        fm, x, y = self._fit_setup()
+        fm.run_fit(x, y, weight_mode="No weights")   # move _params off the guess
+        fm.set_start_value("center", 7.5)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], 7.5)
+
+    def test_first_fit_without_guess_is_reproducible(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        # No auto_guess: the first fit records its own starting values.
+        r1 = fm.run_fit(x, y, weight_mode="No weights")
+        r2 = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertEqual(r1.init_params, r2.init_params)
+
+
+class FitErrorbarsFlagTests(unittest.TestCase):
+    """FitResult.errorbars reports whether the fit could estimate
+    uncertainties -- False signals unidentifiable parameters."""
+
+    def test_good_fit_has_errorbars(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 60)
+        y = 3 * np.exp(-(x - 5) ** 2 / (2 * 0.8 ** 2)) + rng.normal(0, 0.02, x.size)
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        self.assertTrue(fm.run_fit(x, y, weight_mode="No weights").errorbars)
+
+    def test_degenerate_fit_reports_no_errorbars(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(2)
+        x = np.linspace(0, 10, 50)
+        y = 5.0 + rng.normal(0, 0.05, x.size)
+        fm = FitManager()
+        fm.add_component("Constant")   # two constants -> perfectly degenerate
+        fm.add_component("Constant")
+        fm.auto_guess(x, y)
+        self.assertFalse(fm.run_fit(x, y, weight_mode="No weights").errorbars)
+
+
 class OdsEngineTests(unittest.TestCase):
     """07c55a5: .ods loading used the package name instead of pandas engine id."""
 

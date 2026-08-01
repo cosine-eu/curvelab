@@ -177,6 +177,7 @@ class AnalysisHandlersMixin:
             fm = sess.fit_manager
             for name, val in params_dict.items():
                 fm.set_param(name, value=val)
+                fm.set_start_value(name, val)  # loaded values become the start
             self._refresh_param_display()
 
         dlg = BruteCandidatesDialog(self, sess.result.candidates, on_select=on_select)

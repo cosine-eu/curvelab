@@ -40,6 +40,7 @@ class FitResult:
     candidates: list[dict] | None = None  # brute-force candidates
     flatchain: object | None = None  # emcee DataFrame
     init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
+    errorbars: bool = True  # False when the fit couldn't estimate uncertainties
 
     def residuals(self) -> np.ndarray:
         """Raw residuals (data minus fit) at the data points."""

@@ -487,6 +487,10 @@ class CurveLabApp(
         except ValueError:
             self._refresh_param_display()
             return
+        # A manually edited value becomes the fit's new starting point, so
+        # the reset-to-guess in run_fit doesn't discard it.
+        if field == "value":
+            fm.set_start_value(param_name, new_value)
         sess.undo_stack.append(ParamEdit(
             param_name=param_name, field=field,
             old_value=old_value, new_value=new_value,
@@ -521,6 +525,8 @@ class CurveLabApp(
         fm.set_param_hint(
             edit.param_name, **self._param_field_kwargs(edit.field, edit.old_value)
         )
+        if edit.field == "value":
+            fm.set_start_value(edit.param_name, edit.old_value)
         sess.redo_stack.append(edit)
         self._refresh_param_display()
 
@@ -533,6 +539,8 @@ class CurveLabApp(
         fm.set_param_hint(
             edit.param_name, **self._param_field_kwargs(edit.field, edit.new_value)
         )
+        if edit.field == "value":
+            fm.set_start_value(edit.param_name, edit.new_value)
         sess.undo_stack.append(edit)
         self._refresh_param_display()
 

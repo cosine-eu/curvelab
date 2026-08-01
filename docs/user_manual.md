@@ -489,6 +489,31 @@ correct and the residual scatter is due to unknown measurement errors.
 When disabled, the standard errors reflect the raw Jacobian and are
 appropriate when you have reliable error bars on your data.
 
+### Starting values and repeated fits
+
+Each fit starts from the current parameter values — the Auto Guess result,
+or whatever you have typed into the **Value** column — and clicking **Fit**
+again starts from those same values, not from the previous fit's output. So
+repeated fits are reproducible: the answer doesn't drift when you fit twice.
+To iterate toward a hard solution, either raise **Max nfev** or type the last
+result into the Value column (making it the new starting point).
+
+### When a fit reports no uncertainties
+
+If the **StdErr** column comes back empty, CurveLab warns you that the fit
+could not estimate uncertainties. This means the covariance matrix is
+singular — the parameters are not all identifiable from the data. The fitted
+*curve* can still look excellent (good chi-squared and R-squared) while
+individual parameter values are meaningless, because the model can trade one
+parameter off against another with no change to the curve.
+
+A classic example is fitting a **Breit-Wigner (Fano)** line to a symmetric
+peak: the amplitude and the asymmetry parameter `q` are degenerate (only their
+combination is determined), so `q` runs off toward large values and the
+amplitude collapses toward zero. The remedies are to fix the undetermined
+parameter (set **Vary** to No), remove a redundant component, or use a simpler
+model — here, a Lorentzian.
+
 ---
 
 ## 6. Weighting and Objective Functions

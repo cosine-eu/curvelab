@@ -583,6 +583,34 @@ class ObjectiveWorkspaceTests(GuiTestBase):
         self.assertEqual(self.app.fit_panel.objective_var.get(), "Neg. entropy")
 
 
+class NoUncertaintyWarningTests(GuiTestBase):
+    """A fit that produced no uncertainties (singular covariance) warns the
+    user, since the curve can look good while parameters are meaningless."""
+
+    def test_warns_when_errorbars_missing(self):
+        rec, sess = self._add_fitted_series(run=False)
+        sess.fit_manager.run_fit  # ensure a fit manager exists
+        # Fabricate a completed result flagged as having no uncertainties.
+        x = np.linspace(0, 1, 10)
+        from curvelab.session import FitResult
+        sess.result = FitResult(
+            x_dense=x, y_fit_dense=x, x_data=x, y_data=x, y_fit_data=x,
+            yerr_data=None, params={}, report="", errorbars=False)
+
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn:
+            self.app._post_fit_update(sess, rec, "ds::x::y")
+
+        warn.assert_called_once()
+        self.assertIn("uncertaint", warn.call_args[0][1].lower())
+
+    def test_no_warning_for_normal_fit(self):
+        rec, sess = self._add_fitted_series(run=True)  # ordinary Linear fit
+        self.assertTrue(sess.result.errorbars)
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn:
+            self.app._post_fit_update(sess, rec, "ds::x::y")
+        warn.assert_not_called()
+
+
 class FitValidationTests(GuiTestBase):
     """_on_fit refuses a method whose requirements aren't met, and doesn't
     launch a fit in that case."""

@@ -231,6 +231,18 @@ class FitHandlersMixin:
                 result.params, gof=result.gof, session_key=skey
             )
 
+        if not result.errorbars:
+            messagebox.showwarning(
+                "No Uncertainties",
+                "The fit did not produce parameter uncertainties (the StdErr "
+                "column is empty).\n\nThis usually means the parameters are "
+                "not all identifiable from the data — for example an over-"
+                "parameterized model, or a parameter the data can't constrain. "
+                "The curve may look good while individual parameter values are "
+                "unreliable. Consider fixing or removing a parameter, or using "
+                "a simpler model.",
+            )
+
     def _on_global_fit(self):
         """Open Global Fit dialog for simultaneous fitting across series."""
         sess = self._require_session()

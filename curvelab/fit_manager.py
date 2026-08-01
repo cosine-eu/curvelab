@@ -272,6 +272,11 @@ class FitManager:
         self._last_result: ModelResult | None = None
         self._param_hints: dict[str, dict] = {}
         self._name_counters: dict[str, int] = {}
+        # Values each fit starts from. Kept separate from _params (which
+        # holds the last fit's result) so repeated fits are reproducible
+        # instead of chaining from the previous result. Set by auto_guess and
+        # by user value edits; keyed by parameter name.
+        self._start_values: dict[str, float] = {}
 
     def add_component(
         self, model_name: str, operator: str = "+", expression: str = ""
@@ -344,6 +349,13 @@ class FitManager:
         self._last_result = None
         self._param_hints.clear()
         self._name_counters.clear()
+        self._start_values.clear()
+
+    def set_start_value(self, name: str, value: float):
+        """Record the value the next fit should start this parameter from.
+        Called when the user edits a value so a manual start isn't discarded
+        by the reset-to-guess behavior in run_fit."""
+        self._start_values[name] = value
 
     def _build_component_model(self, comp: FitComponent, x_data: np.ndarray | None = None):
         """Build a single component model. Uses x_data for Spline if available."""
@@ -481,6 +493,8 @@ class FitManager:
             except NotImplementedError:
                 pass  # Model doesn't implement guess()
 
+        # The guess is the starting point every subsequent fit resets to.
+        self._start_values = {name: par.value for name, par in self._params.items()}
         return self._params
 
     def clone_components_to(self, target: "FitManager"):
@@ -622,6 +636,17 @@ class FitManager:
         if self._has_spline:
             self._rebuild_model_with_data(x)
 
+        # Start from the remembered guess/user values rather than chaining
+        # from the previous result, so repeated fits are reproducible and
+        # don't drift along a degenerate direction. Any parameter without a
+        # recorded start (first fit, or one added since the last guess) has
+        # its current value captured now.
+        for name, par in self._params.items():
+            if name in self._start_values:
+                par.set(value=self._start_values[name])
+            else:
+                self._start_values[name] = par.value
+
         # Snapshot initial parameter values before fitting
         init_values = {name: par.value for name, par in self._params.items()}
 
@@ -718,6 +743,7 @@ class FitManager:
             candidates=candidates,
             flatchain=flatchain,
             init_params=init_values,
+            errorbars=bool(getattr(self._last_result, "errorbars", True)),
         )
 
     def refit_from_result(self, result: FitResult) -> None:
