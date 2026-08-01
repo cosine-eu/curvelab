@@ -3,8 +3,14 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from .analysis_tools import SMOOTH_METHODS
+from .analysis_tools import FWHM_TO_SIGMA, SMOOTH_METHODS
 from .ui_common import BaseDialog, set_readonly_text
+
+# Preview updates are deferred so sliders stay responsive, and run once
+# shortly after a dialog opens so it comes up with a result showing.
+_PREVIEW_DEBOUNCE_MS = 100
+_FIRST_PREVIEW_DELAY_MS = 200
+_FIRST_DETECT_DELAY_MS = 100
 
 
 class SimulateDataDialog(BaseDialog):
@@ -127,10 +133,9 @@ class SmoothOutlierDialog(BaseDialog):
 
         self._build_ui()
         self.protocol("WM_DELETE_WINDOW", self.destroy)
-        self.after(200, self._update_preview)
+        self.after(_FIRST_PREVIEW_DELAY_MS, self._update_preview)
 
     def _build_ui(self):
-        import numpy as np
         n = len(self._x)
 
         # --- Smoothing ---
@@ -235,7 +240,7 @@ class SmoothOutlierDialog(BaseDialog):
     def _schedule_update(self):
         if self._debounce_id is not None:
             self.after_cancel(self._debounce_id)
-        self._debounce_id = self.after(100, self._update_preview)
+        self._debounce_id = self.after(_PREVIEW_DEBOUNCE_MS, self._update_preview)
 
     def _compute_smooth(self):
         return self._compute_smooth_on(self._y.copy())
@@ -258,7 +263,6 @@ class SmoothOutlierDialog(BaseDialog):
         )
 
     def _update_preview(self):
-        import numpy as np
         self._debounce_id = None
 
         # Remove old artists
@@ -304,8 +308,6 @@ class SmoothOutlierDialog(BaseDialog):
         self._canvas.draw_idle()
 
     def _apply_exclusions(self):
-        import numpy as np
-        from tkinter import messagebox
         if self._outlier_mask is None:
             messagebox.showinfo("No Outliers", "Enable outlier detection first.", parent=self)
             return
@@ -448,7 +450,7 @@ class FindPeaksDialog(BaseDialog):
         self._tree.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
 
         # Auto-detect on open with defaults
-        self.after(100, self._detect)
+        self.after(_FIRST_DETECT_DELAY_MS, self._detect)
 
     def _detect(self):
         from .analysis_tools import find_peaks_with_widths
@@ -481,7 +483,7 @@ class FindPeaksDialog(BaseDialog):
             self._fm.add_component(model_name, operator="+")
             # Set initial guesses for the last added component
             prefix = self._fm.components[-1].prefix
-            sigma = w / 2.355 if w > 0 else abs(cx) * 0.01 or 0.1  # FWHM to sigma
+            sigma = w * FWHM_TO_SIGMA if w > 0 else abs(cx) * 0.01 or 0.1
             self._fm.set_param(f"{prefix}center", value=cx)
             self._fm.set_param(f"{prefix}amplitude", value=cy * sigma * (2 * np.pi) ** 0.5)
             self._fm.set_param(f"{prefix}sigma", value=sigma)
@@ -519,7 +521,6 @@ class EvaluateModelDialog(BaseDialog):
         return parse_x_spec(self._x_entry.get())
 
     def _evaluate(self):
-        import numpy as np
         try:
             x = self._parse_x()
             if x is None or len(x) == 0:
@@ -532,7 +533,6 @@ class EvaluateModelDialog(BaseDialog):
             self._last_text = "\n".join(lines)
             set_readonly_text(self._result_text, self._last_text)
         except Exception as e:
-            from tkinter import messagebox
             messagebox.showerror("Evaluate Error", str(e), parent=self)
 
     def _copy(self):

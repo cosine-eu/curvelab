@@ -1,11 +1,14 @@
 """Core tkinter panel widgets: DataPanel, PlotControlPanel, FitPanel, FitResultsPanel."""
 
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, simpledialog
+from tkinter import ttk, filedialog, simpledialog
 
-from .fit_manager import REDUCE_FUNCTIONS, WEIGHT_MODES
+from .fit_manager import (
+    DEFAULT_F_SCALE, DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, FIT_METHODS,
+    METHOD_CAPS, ROBUST_LOSSES, WEIGHT_MODES, objective_choices,
+)
 from .models import MODEL_NAMES
-from .ui_common import set_readonly_text
+from .ui_common import configure_row_tags, row_tag, set_readonly_text
 
 # Marker choices for the style dropdown
 MARKERS = ["o", "s", "^", "v", "D", "x", "+", ".", "*", "h"]
@@ -24,21 +27,21 @@ class DataPanel(ttk.LabelFrame):
         self,
         parent,
         on_load=None,
-        on_add_series=None,
         on_plot=None,
         on_dataset_selected=None,
         on_remove_dataset=None,
         on_toggle_series_visible=None,
         on_column_calc=None,
+        on_confirm_remove_series=None,
     ):
         super().__init__(parent, text="Data", padding=5)
         self._on_load = on_load
-        self._on_add_series = on_add_series
         self._on_plot = on_plot
         self._on_dataset_selected = on_dataset_selected
         self._on_remove_dataset = on_remove_dataset
         self._on_toggle_series_visible = on_toggle_series_visible
         self._on_column_calc = on_column_calc
+        self._on_confirm_remove_series = on_confirm_remove_series
         self._series_items = []  # list of dicts describing each series
 
         self._build_ui()
@@ -226,7 +229,7 @@ class DataPanel(ttk.LabelFrame):
         else:
             self.dataset_var.set("")
 
-    def set_columns(self, columns: list[str], filename: str = ""):
+    def set_columns(self, columns: list[str]):
         """Populate dropdowns with column names."""
         err_columns = [""] + columns
         # Preserve current selections if still valid
@@ -280,8 +283,6 @@ class DataPanel(ttk.LabelFrame):
         )
         self.series_listbox.selection_clear(0, tk.END)
         self.series_listbox.selection_set(tk.END)
-        if self._on_add_series:
-            self._on_add_series(series_info)
 
     def _on_select_series(self, event=None):
         sel = self.series_listbox.curselection()
@@ -312,12 +313,18 @@ class DataPanel(ttk.LabelFrame):
 
     def _remove_series(self):
         sel = self.series_listbox.curselection()
-        if sel:
-            idx = sel[0]
-            self.series_listbox.delete(idx)
-            self._series_items.pop(idx)
-            if self._on_plot:
-                self._on_plot(self._series_items)
+        if not sel:
+            return
+        idx = sel[0]
+        # Removing a series discards its fit sessions, so let the app veto.
+        if self._on_confirm_remove_series and not self._on_confirm_remove_series(
+            self._series_items[idx]
+        ):
+            return
+        self.series_listbox.delete(idx)
+        self._series_items.pop(idx)
+        if self._on_plot:
+            self._on_plot(self._series_items)
 
     def _plot(self):
         if self._on_plot:
@@ -556,7 +563,6 @@ class FitPanel(ttk.LabelFrame):
         on_auto_guess=None,
         on_fit=None,
         on_clear_fit=None,
-        on_param_changed=None,
         on_series_selected=None,
         on_session_selected=None,
         on_new_session=None,
@@ -574,7 +580,6 @@ class FitPanel(ttk.LabelFrame):
         self._on_auto_guess = on_auto_guess
         self._on_fit = on_fit
         self._on_clear_fit = on_clear_fit
-        self._on_param_changed = on_param_changed
         self._on_series_selected = on_series_selected
         self._on_session_selected = on_session_selected
         self._on_new_session = on_new_session
@@ -683,63 +688,73 @@ class FitPanel(ttk.LabelFrame):
         method_frame = ttk.Frame(self)
         method_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(method_frame, text="Method:").pack(side=tk.LEFT)
-        self.method_var = tk.StringVar(value="least_squares")
-        ttk.Combobox(
+        self.method_var = tk.StringVar(value=DEFAULT_FIT_METHOD)
+        method_combo = ttk.Combobox(
             method_frame,
             textvariable=self.method_var,
-            values=[
-                "leastsq", "least_squares", "nelder", "powell",
-                "cobyla", "lbfgsb",
-                "differential_evolution", "basinhopping",
-                "dual_annealing", "shgo", "ampgo",
-                "brute", "emcee", "odr",
-            ],
+            values=FIT_METHODS,
             state="readonly",
             width=20,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        )
+        method_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        method_combo.bind("<<ComboboxSelected>>", self._on_method_changed)
 
-        # --- Reduce function ---
-        reduce_frame = ttk.Frame(self)
-        reduce_frame.pack(fill=tk.X, pady=(3, 0))
-        ttk.Label(reduce_frame, text="Reduce:").pack(side=tk.LEFT)
-        self.reduce_var = tk.StringVar(value="Chi-square (default)")
-        ttk.Combobox(
-            reduce_frame,
-            textvariable=self.reduce_var,
-            values=list(REDUCE_FUNCTIONS.keys()),
-            state="readonly",
-            width=20,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        # --- Objective + robust-loss scale ---
+        # Which objectives are valid depends on the method, so the combobox
+        # is repopulated on method change. The user's pick is remembered per
+        # objective kind (see _apply_method_capabilities).
+        obj_frame = ttk.Frame(self)
+        obj_frame.pack(fill=tk.X, pady=(3, 0))
+        ttk.Label(obj_frame, text="Objective:").pack(side=tk.LEFT)
+        self.objective_var = tk.StringVar()
+        self._objective_combo = ttk.Combobox(
+            obj_frame, textvariable=self.objective_var,
+            state="readonly", width=16,
+        )
+        self._objective_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        self._objective_combo.bind("<<ComboboxSelected>>", self._on_objective_changed)
+        self._f_scale_label = ttk.Label(obj_frame, text="f_scale:")
+        self._f_scale_label.pack(side=tk.LEFT)
+        self.f_scale_var = tk.StringVar(value=str(DEFAULT_F_SCALE))
+        self._f_scale_entry = ttk.Entry(obj_frame, textvariable=self.f_scale_var, width=6)
+        self._f_scale_entry.pack(side=tk.LEFT, padx=2)
+        # Remembers the chosen label for each objective kind across method
+        # switches, keyed by the first choice of that kind.
+        self._objective_memory: dict[str, str] = {}
 
         # --- Weights ---
         weight_frame = ttk.Frame(self)
         weight_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(weight_frame, text="Weights:").pack(side=tk.LEFT)
-        self.weight_var = tk.StringVar(value="1/yerr (default)")
-        ttk.Combobox(
+        self.weight_var = tk.StringVar(value=DEFAULT_WEIGHT_MODE)
+        self._weight_combo = ttk.Combobox(
             weight_frame,
             textvariable=self.weight_var,
             values=WEIGHT_MODES,
             state="readonly",
             width=20,
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
+        )
+        self._weight_combo.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=2)
 
         # --- Max nfev ---
         nfev_frame = ttk.Frame(self)
         nfev_frame.pack(fill=tk.X, pady=(3, 0))
         ttk.Label(nfev_frame, text="Max nfev:").pack(side=tk.LEFT)
         self.max_nfev_var = tk.StringVar(value="")
-        ttk.Entry(nfev_frame, textvariable=self.max_nfev_var, width=10).pack(
-            side=tk.LEFT, padx=2
-        )
+        self._max_nfev_entry = ttk.Entry(nfev_frame, textvariable=self.max_nfev_var, width=10)
+        self._max_nfev_entry.pack(side=tk.LEFT, padx=2)
         ttk.Label(nfev_frame, text="(empty = unlimited)").pack(side=tk.LEFT, padx=2)
 
         # --- Scale covariance ---
         self.scale_covar_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
+        self._scale_covar_check = ttk.Checkbutton(
             self, text="Scale covariance by reduced \u03c7\u00b2 (assume model is correct)",
             variable=self.scale_covar_var,
-        ).pack(anchor=tk.W, pady=(3, 0))
+        )
+        self._scale_covar_check.pack(anchor=tk.W, pady=(3, 0))
+
+        # Populate the objective control and control states for the default method.
+        self._apply_method_capabilities()
 
         # --- Fit buttons ---
         fit_btn_frame = ttk.Frame(self)
@@ -758,6 +773,61 @@ class FitPanel(ttk.LabelFrame):
             fit_btn_frame, text="Clear Model", command=self._clear_fit
         )
         self._clear_fit_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0))
+
+    # --- Method / objective capability wiring ---
+
+    @staticmethod
+    def _set_enabled(widget, enabled: bool, readonly: bool = False):
+        widget.configure(state=("readonly" if readonly else "normal") if enabled
+                         else "disabled")
+
+    def _on_method_changed(self, event=None):
+        self._apply_method_capabilities()
+
+    def _on_objective_changed(self, event=None):
+        method = self.method_var.get()
+        caps = METHOD_CAPS.get(method)
+        if caps is not None:
+            self._objective_memory[caps.objective] = self.objective_var.get()
+        self._update_f_scale_state()
+
+    def _update_f_scale_state(self):
+        """f_scale only applies to the robust least_squares losses."""
+        robust = self.objective_var.get() in ROBUST_LOSSES
+        self._set_enabled(self._f_scale_entry, robust)
+        self._f_scale_label.state(["!disabled"] if robust else ["disabled"])
+
+    def _apply_method_capabilities(self):
+        """Repopulate the objective control and enable only the controls the
+        current method honors."""
+        method = self.method_var.get()
+        caps = METHOD_CAPS.get(method)
+        if caps is None:
+            return
+        choices = objective_choices(method)
+        self._objective_combo["values"] = choices
+        remembered = self._objective_memory.get(caps.objective)
+        self.objective_var.set(remembered if remembered in choices else choices[0])
+        # A single-choice objective (leastsq, emcee, odr) is not selectable.
+        self._objective_combo.configure(
+            state="readonly" if len(choices) > 1 else "disabled")
+        self._update_f_scale_state()
+        self._set_enabled(self._weight_combo, caps.honors_weights, readonly=True)
+        self._set_enabled(self._max_nfev_entry, caps.honors_max_nfev)
+        self._set_enabled(self._scale_covar_check, caps.honors_scale_covar)
+
+    def set_objective(self, label: str | None, f_scale=None):
+        """Restore a saved objective for the current method (workspace load).
+        Call after method_var is set."""
+        self._apply_method_capabilities()
+        if label and label in self._objective_combo["values"]:
+            self.objective_var.set(label)
+            caps = METHOD_CAPS.get(self.method_var.get())
+            if caps is not None:
+                self._objective_memory[caps.objective] = label
+        if f_scale not in (None, ""):
+            self.f_scale_var.set(str(f_scale))
+        self._update_f_scale_state()
 
     def _series_selected(self, event=None):
         if self._on_series_selected:
@@ -949,17 +1019,20 @@ class FitPanel(ttk.LabelFrame):
 class FitResultsPanel(ttk.LabelFrame):
     """Parameter table and fit report display."""
 
-    def __init__(self, parent, on_param_edited=None):
+    def __init__(self, parent, on_param_edited=None, on_use_as_start=None):
         super().__init__(parent, text="Fit Results", padding=5)
         self._on_param_edited = on_param_edited
+        self._on_use_as_start = on_use_as_start
         self._editing_entry = None
         self._editing_done = True  # no edit in progress
         self._locked = False
         self._build_ui()
 
     def set_locked(self, locked: bool):
-        """Disable cell editing while a background fit is mutating params."""
+        """Disable cell editing and the seed-from-result button while a
+        background fit is mutating params."""
         self._locked = locked
+        self._use_start_btn.configure(state=tk.DISABLED if locked else tk.NORMAL)
         if locked and self._editing_entry is not None:
             # Mark done first so the <FocusOut> that destroy() triggers
             # doesn't re-enter commit()/cancel() on a destroyed widget.
@@ -1003,9 +1076,7 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree.column("#0", width=200, stretch=False)
         self.param_tree.heading("#0", text="Name")
 
-        # Alternating row colors
-        self.param_tree.tag_configure("even", background="#f0f0f0")
-        self.param_tree.tag_configure("odd", background="#ffffff")
+        configure_row_tags(self.param_tree)
 
         tree_scroll = ttk.Scrollbar(
             tree_frame, orient=tk.VERTICAL, command=self.param_tree.yview
@@ -1017,9 +1088,16 @@ class FitResultsPanel(ttk.LabelFrame):
         # Double-click to edit
         self.param_tree.bind("<Double-1>", self._on_double_click)
 
-        # --- Copy button ---
-        ttk.Button(self, text="Copy Table", command=self._copy_table).pack(
-            anchor=tk.E, pady=(2, 0))
+        # --- Table action buttons ---
+        btn_row = ttk.Frame(self)
+        btn_row.pack(fill=tk.X, pady=(2, 0))
+        # Seed the next fit from this result (opt-in; fits otherwise restart
+        # from the guess each time).
+        self._use_start_btn = ttk.Button(
+            btn_row, text="Use as Start", command=self._use_as_start)
+        self._use_start_btn.pack(side=tk.LEFT)
+        ttk.Button(btn_row, text="Copy Table", command=self._copy_table).pack(
+            side=tk.RIGHT)
 
         # --- Fit report ---
         ttk.Label(self, text="Fit Report:").pack(anchor=tk.W, pady=(5, 0))
@@ -1033,6 +1111,10 @@ class FitResultsPanel(ttk.LabelFrame):
         self.report_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         report_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
+    def _use_as_start(self):
+        if self._on_use_as_start:
+            self._on_use_as_start()
+
     def set_params(self, params: dict[str, dict]):
         """Populate parameter table from param info dicts."""
         self.param_tree.delete(*self.param_tree.get_children())
@@ -1044,7 +1126,7 @@ class FitResultsPanel(ttk.LabelFrame):
             mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
             vary = "Yes" if info.get("vary", True) else "No"
             expr = info.get("expr") or ""
-            tag = "even" if i % 2 == 0 else "odd"
+            tag = row_tag(i)
             self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=(tag,))
 
     def set_gof(self, gof: dict | None):

@@ -28,14 +28,228 @@ REDUCE_FUNCTIONS = {
     "Cauchy log-pdf": _reduce_cauchylogpdf,
 }
 
+# Weight modes double as UI labels and dispatch keys, so they are named once.
+WEIGHT_INV_YERR = "1/yerr (default)"
+WEIGHT_INV_YERR2 = "1/yerr\u00b2"
+WEIGHT_INV_Y = "1/y"
+WEIGHT_NONE = "No weights"
+WEIGHT_YERR = "yerr as weights"
+WEIGHT_EFFECTIVE_VARIANCE = "Effective variance"
+
 WEIGHT_MODES = [
-    "1/yerr (default)",
-    "1/yerr\u00b2",
-    "1/y",
-    "No weights",
-    "yerr as weights",
-    "Effective variance",
+    WEIGHT_INV_YERR,
+    WEIGHT_INV_YERR2,
+    WEIGHT_INV_Y,
+    WEIGHT_NONE,
+    WEIGHT_YERR,
+    WEIGHT_EFFECTIVE_VARIANCE,
 ]
+DEFAULT_WEIGHT_MODE = WEIGHT_INV_YERR
+
+# Minimizers offered in the UI. The slow ones run on a background thread.
+FIT_METHODS = [
+    "leastsq", "least_squares", "nelder", "powell",
+    "cobyla", "lbfgsb",
+    "differential_evolution", "basinhopping",
+    "dual_annealing", "shgo", "ampgo",
+    "brute", "emcee", "odr",
+]
+SLOW_METHODS = {
+    "emcee", "brute", "differential_evolution", "basinhopping",
+    "dual_annealing", "shgo", "ampgo",
+}
+DEFAULT_FIT_METHOD = "least_squares"
+
+# --- Method capabilities and objectives ---------------------------------
+#
+# Not every Method + Objective combination is meaningful: reduce_fcn is only
+# consumed by the scalar minimizers, least_squares takes a scipy robust
+# `loss` instead, emcee optimizes a log-posterior, and ODR minimizes
+# orthogonal distance. Each method therefore declares which *objective kind*
+# it supports, plus which shared controls it honors, so the UI can offer only
+# valid choices and disable the rest. Verified against lmfit 1.3.4.
+
+# Objective kinds (how the residual becomes the thing minimized):
+OBJ_RESIDUAL = "residual"      # array residual, no scalarizing (leastsq)
+OBJ_LOSS = "loss"             # scipy robust loss on least_squares
+OBJ_SCALAR = "scalar"         # reduce_fcn scalarizes (nelder, powell, ...)
+OBJ_POSTERIOR = "posterior"    # emcee log-posterior
+OBJ_ODR = "odr"               # orthogonal distance regression
+
+
+@dataclass(frozen=True)
+class MethodCaps:
+    """What a fit method supports, so the UI can constrain the choices."""
+
+    objective: str                          # one of the OBJ_* kinds
+    needs_bounds: bool = False              # finite min/max on varied params
+    honors_weights: bool = True
+    honors_max_nfev: bool = True
+    honors_scale_covar: bool = True
+    requires: tuple[str, ...] = ()          # importable modules the method needs
+
+
+_SCALAR = MethodCaps(objective=OBJ_SCALAR)
+_SCALAR_BOUNDED = MethodCaps(objective=OBJ_SCALAR, needs_bounds=True)
+
+METHOD_CAPS: dict[str, MethodCaps] = {
+    "leastsq": MethodCaps(objective=OBJ_RESIDUAL),
+    "least_squares": MethodCaps(objective=OBJ_LOSS),
+    "nelder": _SCALAR,
+    "powell": _SCALAR,
+    "cobyla": _SCALAR,
+    "lbfgsb": _SCALAR,
+    "basinhopping": _SCALAR,
+    "ampgo": _SCALAR,
+    "differential_evolution": _SCALAR_BOUNDED,
+    "dual_annealing": _SCALAR_BOUNDED,
+    "shgo": _SCALAR_BOUNDED,
+    "brute": _SCALAR_BOUNDED,
+    "emcee": MethodCaps(objective=OBJ_POSTERIOR),
+    "odr": MethodCaps(
+        objective=OBJ_ODR, honors_weights=False,
+        honors_max_nfev=False, honors_scale_covar=False,
+        requires=("odrpack",),
+    ),
+}
+
+
+# Objective choices per kind. For OBJ_SCALAR the label maps to a reduce_fcn
+# (reusing REDUCE_FUNCTIONS); for OBJ_LOSS it maps to a scipy loss name.
+LEAST_SQUARES_DEFAULT = "Least squares"
+# label -> scipy least_squares `loss` value
+LOSS_FUNCTIONS: dict[str, str] = {
+    LEAST_SQUARES_DEFAULT: "linear",
+    "Soft L1": "soft_l1",
+    "Huber": "huber",
+    "Cauchy": "cauchy",
+    "Arctan": "arctan",
+}
+# Robust losses (everything except plain linear least squares) take an
+# f_scale; the UI enables its entry only for these.
+ROBUST_LOSSES = frozenset(LOSS_FUNCTIONS) - {LEAST_SQUARES_DEFAULT}
+DEFAULT_F_SCALE = 1.0
+
+# Single-choice objective labels for the kinds that offer no alternatives.
+_FIXED_OBJECTIVE_CHOICES = {
+    OBJ_RESIDUAL: ["Least squares"],
+    OBJ_POSTERIOR: ["Log-posterior"],
+    OBJ_ODR: ["Orthogonal distance"],
+}
+
+
+def objective_choices(method: str) -> list[str]:
+    """Objective labels valid for a method (first is the default)."""
+    kind = METHOD_CAPS[method].objective
+    if kind == OBJ_LOSS:
+        return list(LOSS_FUNCTIONS)
+    if kind == OBJ_SCALAR:
+        return list(REDUCE_FUNCTIONS)
+    return list(_FIXED_OBJECTIVE_CHOICES[kind])
+
+
+def validate_fit_setup(method: str, params, has_xerr: bool,
+                       weight_mode: str) -> tuple[list[str], list[str]]:
+    """Check a fit configuration before running it.
+
+    Returns (errors, warnings). Errors mean the fit cannot run as configured
+    (missing backend package, or a bounds-requiring method with an unbounded
+    varying parameter). Warnings mean it will run but not as the user might
+    expect (effective-variance weighting without x-errors).
+    """
+    import importlib.util
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    caps = METHOD_CAPS.get(method)
+    if caps is None:
+        return errors, warnings
+
+    for module in caps.requires:
+        if importlib.util.find_spec(module) is None:
+            errors.append(
+                f"The '{method}' method needs the '{module}' package, which "
+                f"is not installed."
+            )
+
+    if caps.needs_bounds and params is not None:
+        unbounded = [
+            name for name, par in params.items()
+            if par.vary and not (np.isfinite(par.min) and np.isfinite(par.max))
+        ]
+        if unbounded:
+            errors.append(
+                f"The '{method}' method needs finite min and max bounds on "
+                f"every varying parameter. Missing bounds: "
+                f"{', '.join(unbounded)}."
+            )
+
+    if weight_mode == WEIGHT_EFFECTIVE_VARIANCE and not has_xerr:
+        warnings.append(
+            "Effective-variance weighting needs x-errors; this series has "
+            "none, so 1/yerr weighting is used instead."
+        )
+
+    return errors, warnings
+
+
+def objective_kwargs(method: str, label: str, f_scale: float = DEFAULT_F_SCALE) -> dict:
+    """fit_kws contribution for a method's chosen objective.
+
+    Returns {"reduce_fcn": fn} for scalar methods, {"loss": ..., "f_scale":
+    ...} for least_squares, or {} for methods whose objective is fixed.
+    Unknown labels fall back to the method's default (empty kwargs), so a
+    stale selection can never inject an invalid argument.
+    """
+    kind = METHOD_CAPS[method].objective
+    if kind == OBJ_LOSS:
+        loss = LOSS_FUNCTIONS.get(label, "linear")
+        kws = {"loss": loss}
+        if loss != "linear":
+            kws["f_scale"] = f_scale
+        return kws
+    if kind == OBJ_SCALAR:
+        fn = REDUCE_FUNCTIONS.get(label)
+        return {"reduce_fcn": fn} if fn is not None else {}
+    return {}
+
+
+# Points in the dense grid used for smooth fit curves.
+N_DENSE = 500
+
+# Central-difference step for df/dx in effective-variance weights: relative
+# to |x|, with a floor so x == 0 still gets a usable step.
+DFDX_REL_STEP = 1e-8
+DFDX_MIN_STEP = 1e-10
+
+
+def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dict:
+    """Goodness-of-fit dict with the canonical key names and order.
+
+    Statistics that a fit doesn't provide (ODR has no AIC/BIC) are left
+    out, so consumers never have to format a None.
+    """
+    values = {
+        "chi-squared": chisqr,
+        "reduced chi-squared": redchi,
+        "R-squared": rsquared,
+        "AIC": aic,
+        "BIC": bic,
+    }
+    return {k: v for k, v in values.items() if v is not None}
+
+
+def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
+               vary=True, expr="") -> dict:
+    """One parameter's entry for FitResult.params."""
+    return {
+        "value": value,
+        "stderr": stderr,
+        "min": minimum,
+        "max": maximum,
+        "vary": vary,
+        "expr": expr,
+    }
 
 
 @dataclass
@@ -58,6 +272,11 @@ class FitManager:
         self._last_result: ModelResult | None = None
         self._param_hints: dict[str, dict] = {}
         self._name_counters: dict[str, int] = {}
+        # Values each fit starts from. Kept separate from _params (which
+        # holds the last fit's result) so repeated fits are reproducible
+        # instead of chaining from the previous result. Set by auto_guess and
+        # by user value edits; keyed by parameter name.
+        self._start_values: dict[str, float] = {}
 
     def add_component(
         self, model_name: str, operator: str = "+", expression: str = ""
@@ -85,13 +304,35 @@ class FitManager:
         return comp
 
     def remove_component(self, index: int):
-        """Remove a component by index and rebuild."""
-        if 0 <= index < len(self.components):
-            self.components.pop(index)
-            # Reset prefixes
-            if len(self.components) == 1:
-                self.components[0].prefix = ""
-            self._rebuild_model()
+        """Remove a component by index and rebuild.
+
+        Parameter hints are keyed by prefixed parameter name, so they follow
+        the component list: the removed component's hints are dropped, and a
+        lone survivor's hints are re-keyed when it loses its prefix.
+        """
+        if not (0 <= index < len(self.components)):
+            return
+        removed = self.components.pop(index)
+        self._drop_param_hints(removed.prefix)
+        if len(self.components) == 1:
+            # Single component: no prefix for cleaner parameter names
+            old_prefix = self.components[0].prefix
+            self.components[0].prefix = ""
+            self._reprefix_param_hints(old_prefix, "")
+        self._rebuild_model()
+
+    def _drop_param_hints(self, prefix: str):
+        """Forget hints belonging to a component prefix."""
+        for name in [n for n in self._param_hints if n.startswith(prefix)]:
+            del self._param_hints[name]
+
+    def _reprefix_param_hints(self, old_prefix: str, new_prefix: str):
+        """Re-key hints from one component prefix to another."""
+        if old_prefix == new_prefix:
+            return
+        for name in [n for n in self._param_hints if n.startswith(old_prefix)]:
+            hints = self._param_hints.pop(name)
+            self._param_hints[new_prefix + name[len(old_prefix):]] = hints
 
     def edit_expression(self, index: int, new_expr: str):
         """Update the expression of an Expression component and rebuild."""
@@ -108,6 +349,34 @@ class FitManager:
         self._last_result = None
         self._param_hints.clear()
         self._name_counters.clear()
+        self._start_values.clear()
+
+    def set_start_value(self, name: str, value: float):
+        """Record the value the next fit should start this parameter from.
+        Called when the user edits a value so a manual start isn't discarded
+        by the reset-to-guess behavior in run_fit."""
+        self._start_values[name] = value
+
+    def capture_start_values(self):
+        """Adopt the current parameter values as the fit starting point,
+        e.g. to reuse a fit's result as the next fit's guess."""
+        if self._params is not None:
+            self._start_values = {n: p.value for n, p in self._params.items()}
+
+    def _reset_to_start_values(self):
+        """Reset each varying parameter to its remembered starting value so
+        repeated fits are reproducible instead of chaining from the previous
+        result. A parameter without a recorded start (first fit, or one added
+        since the last guess) has its current value captured now. Fixed
+        parameters are user-set constants that don't drift, so they are left
+        untouched."""
+        for name, par in self._params.items():
+            if not par.vary:
+                continue
+            if name in self._start_values:
+                par.set(value=self._start_values[name])
+            else:
+                self._start_values[name] = par.value
 
     def _build_component_model(self, comp: FitComponent, x_data: np.ndarray | None = None):
         """Build a single component model. Uses x_data for Spline if available."""
@@ -245,11 +514,18 @@ class FitManager:
             except NotImplementedError:
                 pass  # Model doesn't implement guess()
 
+        # The guess is the starting point every subsequent fit resets to.
+        self._start_values = {name: par.value for name, par in self._params.items()}
         return self._params
 
     def clone_components_to(self, target: "FitManager"):
         """Copy this manager's component list and parameter hints (fixed
         values, bounds) into target, rebuilding its model."""
+        if target is self:
+            # Batch fit clones the source model onto every series, including
+            # the one it came from. Without this guard clear_components()
+            # would empty the list being copied, destroying the model.
+            return
         target.clear_components()
         for comp in self.components:
             target.add_component(comp.name, operator=comp.operator, expression=comp.expression)
@@ -313,30 +589,38 @@ class FitManager:
     def params_to_info(params) -> dict[str, dict]:
         """Convert lmfit Parameters to {name: {value, stderr, min, max, vary, expr}}."""
         return {
-            name: {
-                "value": par.value,
-                "stderr": par.stderr,
-                "min": par.min,
-                "max": par.max,
-                "vary": par.vary,
-                "expr": par.expr or "",
-            }
+            name: param_info(par.value, par.stderr, par.min, par.max,
+                             par.vary, par.expr or "")
             for name, par in params.items()
         }
 
     @staticmethod
+    def _effective_variance_weights(eval_at, x, yerr, xerr):
+        """w = 1/sqrt(yerr² + (df/dx)²·xerr²), with df/dx by central
+        difference. eval_at(x) evaluates the model at the given x."""
+        h = np.maximum(np.abs(x) * DFDX_REL_STEP, DFDX_MIN_STEP)
+        dfdx = (eval_at(x + h) - eval_at(x - h)) / (2 * h)
+        denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
+        return 1.0 / denom
+
+    @staticmethod
     def _compute_weights(y, yerr, weight_mode):
-        """Compute weights array from y, yerr, and the selected weight mode."""
-        if weight_mode == "No weights":
+        """Compute weights array from y, yerr, and the selected weight mode.
+
+        Effective variance is not handled here: it depends on the model
+        derivative, so it is computed per fit (and per iteration for a
+        global fit) by _effective_variance_weights.
+        """
+        if weight_mode == WEIGHT_NONE:
             return None
-        if weight_mode == "1/yerr\u00b2" and yerr is not None:
+        if weight_mode == WEIGHT_INV_YERR2 and yerr is not None:
             safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
             return 1.0 / (safe_yerr * safe_yerr)
-        if weight_mode == "1/y":
+        if weight_mode == WEIGHT_INV_Y:
             return 1.0 / np.maximum(np.abs(y), MIN_ERROR)
-        if weight_mode == "yerr as weights" and yerr is not None:
+        if weight_mode == WEIGHT_YERR and yerr is not None:
             return yerr
-        # Default: "1/yerr (default)"
+        # Default: WEIGHT_INV_YERR
         if yerr is not None:
             return 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
         return None
@@ -347,17 +631,25 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         xerr: np.ndarray | None = None,
-        n_dense: int = 500,
-        method: str = "least_squares",
+        n_dense: int = N_DENSE,
+        method: str = DEFAULT_FIT_METHOD,
         iter_cb=None,
         fit_kws: dict | None = None,
         reduce_fcn=None,
-        weight_mode: str = "1/yerr (default)",
+        objective_kws: dict | None = None,
+        weight_mode: str = DEFAULT_WEIGHT_MODE,
         max_nfev: int | None = None,
         band_sigma: int = 1,
         scale_covar: bool = True,
     ) -> FitResult:
-        """Run the fit and return results."""
+        """Run the fit and return results.
+
+        objective_kws (from objective_kwargs()) carries the method-appropriate
+        objective: a scipy ``loss``/``f_scale`` for least_squares, or a
+        ``reduce_fcn`` for the scalar minimizers. The standalone reduce_fcn
+        argument is kept for direct callers; objective_kws wins if both give
+        the same key.
+        """
         if self._model is None or self._params is None:
             raise ValueError("No model defined")
 
@@ -365,20 +657,21 @@ class FitManager:
         if self._has_spline:
             self._rebuild_model_with_data(x)
 
+        # Start from the remembered guess/user values, not the previous
+        # result, so repeated fits are reproducible and don't drift along a
+        # degenerate direction.
+        self._reset_to_start_values()
+
         # Snapshot initial parameter values before fitting
         init_values = {name: par.value for name, par in self._params.items()}
 
         weights = self._compute_weights(y, yerr, weight_mode)
 
-        # Effective variance: w = 1/sqrt(yerr² + (df/dx)² · xerr²)
-        if weight_mode == "Effective variance":
+        if weight_mode == WEIGHT_EFFECTIVE_VARIANCE:
             if xerr is not None and yerr is not None:
-                h = np.maximum(np.abs(x) * 1e-8, 1e-10)
-                y_plus = self._model.eval(self._params, x=x + h)
-                y_minus = self._model.eval(self._params, x=x - h)
-                dfdx = (y_plus - y_minus) / (2 * h)
-                denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
-                weights = 1.0 / denom
+                weights = self._effective_variance_weights(
+                    lambda xv: self._model.eval(self._params, x=xv), x, yerr, xerr
+                )
             elif yerr is not None:
                 weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
             else:
@@ -387,6 +680,8 @@ class FitManager:
         kws = dict(fit_kws or {})
         if reduce_fcn is not None:
             kws["reduce_fcn"] = reduce_fcn
+        if objective_kws:
+            kws.update(objective_kws)
 
         fit_kwargs = dict(
             method=method, nan_policy="omit",
@@ -424,13 +719,13 @@ class FitManager:
         # Update internal params with fitted values
         self._params = self._last_result.params
 
-        gof = {
-            "chi-squared": self._last_result.chisqr,
-            "reduced chi-squared": self._last_result.redchi,
-            "R-squared": self._last_result.rsquared,
-            "AIC": self._last_result.aic,
-            "BIC": self._last_result.bic,
-        }
+        gof = make_gof(
+            chisqr=self._last_result.chisqr,
+            redchi=self._last_result.redchi,
+            rsquared=self._last_result.rsquared,
+            aic=self._last_result.aic,
+            bic=self._last_result.bic,
+        )
 
         # Capture brute-force candidates
         candidates = None
@@ -463,6 +758,7 @@ class FitManager:
             candidates=candidates,
             flatchain=flatchain,
             init_params=init_values,
+            errorbars=bool(getattr(self._last_result, "errorbars", True)),
         )
 
     def refit_from_result(self, result: FitResult) -> None:
@@ -475,12 +771,12 @@ class FitManager:
             return
         x, y = result.x_data, result.y_data
         yerr = result.yerr_data
-        weights = self._compute_weights(y, yerr, "1/yerr (default)")
+        weights = self._compute_weights(y, yerr, DEFAULT_WEIGHT_MODE)
         if self._has_spline:
             self._rebuild_model_with_data(x)
         self._last_result = self._model.fit(
             y, self._params, x=x, weights=weights,
-            method="least_squares", nan_policy="omit",
+            method=DEFAULT_FIT_METHOD, nan_policy="omit",
         )
         self._params = self._last_result.params
 
@@ -488,9 +784,9 @@ class FitManager:
         self,
         datasets: list[tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]],
         shared_params: set[str],
-        method: str = "least_squares",
+        method: str = DEFAULT_FIT_METHOD,
         max_nfev: int | None = None,
-        weight_mode: str = "1/yerr (default)",
+        weight_mode: str = DEFAULT_WEIGHT_MODE,
     ) -> list[FitResult]:
         """Run a global fit across multiple datasets with shared parameters.
 
@@ -524,7 +820,7 @@ class FitManager:
 
         # Pre-compute constant weights (everything except Effective variance
         # with xerr, which depends on the model derivative per iteration)
-        use_effective_variance = weight_mode == "Effective variance"
+        use_effective_variance = weight_mode == WEIGHT_EFFECTIVE_VARIANCE
         precomputed_weights = [
             self._compute_weights(y, yerr, weight_mode)
             for _, y, yerr, _ in datasets
@@ -546,12 +842,9 @@ class FitManager:
                 weights = precomputed_weights[i]
                 # Effective variance: recompute per iteration (depends on df/dx)
                 if use_effective_variance and xerr is not None and yerr is not None:
-                    h = np.maximum(np.abs(x) * 1e-8, 1e-10)
-                    y_plus = self._model.eval(x=x + h, **kw)
-                    y_minus = self._model.eval(x=x - h, **kw)
-                    dfdx = (y_plus - y_minus) / (2 * h)
-                    denom = np.maximum(np.sqrt(yerr**2 + (dfdx * xerr) ** 2), MIN_ERROR)
-                    weights = 1.0 / denom
+                    weights = self._effective_variance_weights(
+                        lambda xv: self._model.eval(x=xv, **kw), x, yerr, xerr
+                    )
                 if weights is not None:
                     resid = resid * weights
                 all_resid.append(resid)
@@ -576,29 +869,24 @@ class FitManager:
                     p = mini_result.params[name]
                 else:
                     p = mini_result.params[f"s{i}_{name}"]
-                params_info[name] = {
-                    "value": p.value,
-                    "stderr": p.stderr,
-                    "min": p.min,
-                    "max": p.max,
-                    "vary": p.vary,
-                    "expr": p.expr or "",
-                }
+                params_info[name] = param_info(
+                    p.value, p.stderr, p.min, p.max, p.vary, p.expr or ""
+                )
                 init_values[name] = bp.value
 
             # Evaluate model for this dataset
             eval_kw = {name: params_info[name]["value"] for name in base_names}
-            x_dense = np.linspace(x.min(), x.max(), 500)
+            x_dense = np.linspace(x.min(), x.max(), N_DENSE)
             y_fit_data = self._model.eval(x=x, **eval_kw)
             y_fit_dense = self._model.eval(x=x_dense, **eval_kw)
 
-            gof = {
-                "chi-squared": mini_result.chisqr,
-                "reduced chi-squared": mini_result.redchi,
-                "R-squared": 1 - np.sum((y - y_fit_data) ** 2) / np.sum((y - y.mean()) ** 2),
-                "AIC": mini_result.aic,
-                "BIC": mini_result.bic,
-            }
+            gof = make_gof(
+                chisqr=mini_result.chisqr,
+                redchi=mini_result.redchi,
+                rsquared=1 - np.sum((y - y_fit_data) ** 2) / np.sum((y - y.mean()) ** 2),
+                aic=mini_result.aic,
+                bic=mini_result.bic,
+            )
 
             # Generate a report string
             lines = [f"Global Fit — Dataset {i + 1}/{n}"]
@@ -673,7 +961,7 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         xerr: np.ndarray | None = None,
-        n_dense: int = 500,
+        n_dense: int = N_DENSE,
         band_sigma: int = 1,
     ) -> FitResult:
         """Run orthogonal distance regression using the odrpack package.
@@ -692,6 +980,9 @@ class FitManager:
 
         if self._has_spline:
             self._rebuild_model_with_data(x)
+
+        # Reset to the remembered start so repeated ODR fits are reproducible.
+        self._reset_to_start_values()
 
         # Snapshot initial parameter values
         init_values = {name: par.value for name, par in self._params.items()}
@@ -778,10 +1069,7 @@ class FitManager:
         # Component curves
         component_curves = {}
         if len(self.components) > 1:
-            comps = model.eval(x=x_dense, **best_kw)  # full eval
-            # Try to get individual components
             try:
-                from lmfit.model import CompositeModel
                 if isinstance(model, CompositeModel):
                     for comp in model.components:
                         comp_kw = {n: best_kw[n] for n in comp.param_names if n in best_kw}
@@ -792,14 +1080,12 @@ class FitManager:
         # Build params info
         params_info = {}
         for i, name in enumerate(param_names):
-            params_info[name] = {
-                "value": result.beta[i],
-                "stderr": result.sd_beta[i] if vary_mask[i] else None,
-                "min": self._params[name].min,
-                "max": self._params[name].max,
-                "vary": vary_mask[i],
-                "expr": "",
-            }
+            params_info[name] = param_info(
+                result.beta[i],
+                result.sd_beta[i] if vary_mask[i] else None,
+                self._params[name].min, self._params[name].max,
+                vary_mask[i],
+            )
 
         # GOF
         n_data = len(x)
@@ -810,11 +1096,7 @@ class FitManager:
         ss_tot = np.sum((y - y.mean()) ** 2)
         r_squared = 1 - np.sum((y - y_fit_data) ** 2) / ss_tot if ss_tot > 0 else 0
 
-        gof = {
-            "chi-squared": chisqr,
-            "reduced chi-squared": redchi,
-            "R-squared": r_squared,
-        }
+        gof = make_gof(chisqr=chisqr, redchi=redchi, rsquared=r_squared)
 
         # Report
         lines = ["Orthogonal Distance Regression (odrpack)"]
@@ -850,9 +1132,9 @@ class FitManager:
         y: np.ndarray,
         yerr: np.ndarray | None = None,
         n_boot: int = 200,
-        method: str = "least_squares",
+        method: str = DEFAULT_FIT_METHOD,
         boot_type: str = "residual",
-        weight_mode: str = "1/yerr (default)",
+        weight_mode: str = DEFAULT_WEIGHT_MODE,
     ) -> tuple[dict[str, np.ndarray], int]:
         """Run bootstrap resampling and return parameter distributions.
 

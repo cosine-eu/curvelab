@@ -6,6 +6,211 @@ import unittest
 import numpy as np
 
 
+class ResultBuilderTests(unittest.TestCase):
+    """make_gof and param_info are the single definition of the result
+    dict shapes that run_fit, run_global_fit, and run_odr all produce."""
+
+    def test_gof_keeps_canonical_order(self):
+        from curvelab.fit_manager import make_gof
+        gof = make_gof(chisqr=1.0, redchi=0.5, rsquared=0.99, aic=3.0, bic=4.0)
+        self.assertEqual(
+            list(gof),
+            ["chi-squared", "reduced chi-squared", "R-squared", "AIC", "BIC"],
+        )
+
+    def test_gof_omits_missing_statistics(self):
+        from curvelab.fit_manager import make_gof
+        # ODR reports no AIC/BIC; absent beats None, which can't be formatted.
+        gof = make_gof(chisqr=1.0, redchi=0.5, rsquared=0.99)
+        self.assertEqual(list(gof), ["chi-squared", "reduced chi-squared", "R-squared"])
+
+    def test_param_info_defaults(self):
+        from curvelab.fit_manager import param_info
+        info = param_info(2.0)
+        self.assertEqual(info["value"], 2.0)
+        self.assertIsNone(info["stderr"])
+        self.assertEqual(info["min"], -np.inf)
+        self.assertEqual(info["max"], np.inf)
+        self.assertTrue(info["vary"])
+        self.assertEqual(info["expr"], "")
+
+
+class MethodCapabilityTests(unittest.TestCase):
+    """METHOD_CAPS + objective helpers constrain the Method/Objective menus
+    so no inert or invalid combination can be chosen."""
+
+    def test_every_method_has_capabilities(self):
+        from curvelab.fit_manager import FIT_METHODS, METHOD_CAPS
+        self.assertEqual(set(METHOD_CAPS), set(FIT_METHODS))
+
+    def test_objective_choices_match_kind(self):
+        from curvelab.fit_manager import objective_choices
+        # least_squares offers robust losses...
+        self.assertEqual(objective_choices("least_squares")[0], "Least squares")
+        self.assertIn("Cauchy", objective_choices("least_squares"))
+        # ...scalar methods offer the reduce functions...
+        self.assertIn("Neg. entropy", objective_choices("nelder"))
+        # ...and fixed-objective methods offer exactly one label.
+        self.assertEqual(objective_choices("leastsq"), ["Least squares"])
+        self.assertEqual(objective_choices("emcee"), ["Log-posterior"])
+        self.assertEqual(objective_choices("odr"), ["Orthogonal distance"])
+
+    def test_loss_kwargs_carry_f_scale_only_for_robust(self):
+        from curvelab.fit_manager import objective_kwargs
+        self.assertEqual(objective_kwargs("least_squares", "Least squares"),
+                         {"loss": "linear"})
+        self.assertEqual(objective_kwargs("least_squares", "Cauchy", f_scale=2.5),
+                         {"loss": "cauchy", "f_scale": 2.5})
+
+    def test_scalar_kwargs_map_to_reduce_fcn(self):
+        from curvelab.fit_manager import objective_kwargs, _reduce_negentropy
+        self.assertEqual(objective_kwargs("nelder", "Neg. entropy"),
+                         {"reduce_fcn": _reduce_negentropy})
+        # The default (Chi-square) means "no reduce_fcn", not None-injected.
+        self.assertEqual(objective_kwargs("nelder", "Chi-square (default)"), {})
+
+    def test_fixed_objective_methods_add_nothing(self):
+        from curvelab.fit_manager import objective_kwargs
+        self.assertEqual(objective_kwargs("leastsq", "Least squares"), {})
+        self.assertEqual(objective_kwargs("emcee", "Log-posterior"), {})
+
+    def test_stale_label_falls_back_to_default(self):
+        from curvelab.fit_manager import objective_kwargs
+        # A label left over from another method must not inject a bad arg.
+        self.assertEqual(objective_kwargs("least_squares", "Neg. entropy"),
+                         {"loss": "linear"})
+        self.assertEqual(objective_kwargs("nelder", "Cauchy"), {})
+
+    def test_bounds_and_package_flags(self):
+        from curvelab.fit_manager import METHOD_CAPS
+        for m in ("differential_evolution", "dual_annealing", "shgo", "brute"):
+            self.assertTrue(METHOD_CAPS[m].needs_bounds, m)
+        self.assertFalse(METHOD_CAPS["least_squares"].needs_bounds)
+        self.assertEqual(METHOD_CAPS["odr"].requires, ("odrpack",))
+        caps = METHOD_CAPS["odr"]
+        self.assertFalse(caps.honors_weights)
+        self.assertFalse(caps.honors_scale_covar)
+
+
+class ObjectiveKwargsRunFitTests(unittest.TestCase):
+    """run_fit threads objective_kws to the right place: a scipy robust loss
+    for least_squares, a reduce_fcn for scalar methods."""
+
+    def _line_with_outlier(self):
+        x = np.linspace(0, 10, 41)
+        y = 2.0 * x + 1.0
+        # Off-center so the outlier actually biases the slope (a point at the
+        # x-mean has zero leverage on it).
+        y[35] += 60.0
+        return x, y
+
+    def _fit_line(self, x, y, **run_kw):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        return fm.run_fit(x, y, weight_mode="No weights", **run_kw)
+
+    def test_robust_loss_resists_outlier(self):
+        from curvelab.fit_manager import objective_kwargs
+        x, y = self._line_with_outlier()
+
+        linear = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Least squares"))
+        cauchy = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Cauchy"))
+
+        true_slope = 2.0
+        lin_err = abs(linear.params["slope"]["value"] - true_slope)
+        cau_err = abs(cauchy.params["slope"]["value"] - true_slope)
+        # The robust loss must recover the true slope markedly better.
+        self.assertLess(cau_err, lin_err)
+        self.assertLess(cau_err, 0.1)
+
+    def test_f_scale_changes_robust_fit(self):
+        from curvelab.fit_manager import objective_kwargs
+        x, y = self._line_with_outlier()
+        tight = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Cauchy", f_scale=0.5))
+        loose = self._fit_line(
+            x, y, objective_kws=objective_kwargs("least_squares", "Cauchy", f_scale=50.0))
+        # A large f_scale barely down-weights the outlier, so its slope drifts
+        # further from truth than the tight one.
+        self.assertNotAlmostEqual(
+            tight.params["slope"]["value"], loose.params["slope"]["value"], places=3)
+
+    def test_scalar_reduce_fcn_is_applied(self):
+        from curvelab.fit_manager import objective_kwargs
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        # A scalar method with a reduce_fcn must still complete and fit well.
+        res = self._fit_line(
+            x, y, method="nelder",
+            objective_kws=objective_kwargs("nelder", "Neg. entropy"))
+        self.assertAlmostEqual(res.params["slope"]["value"], 2.0, delta=0.1)
+
+
+class ValidateFitSetupTests(unittest.TestCase):
+    """validate_fit_setup blocks configurations that can't run and warns
+    about ones that run differently than configured."""
+
+    def _params(self, bounded=True):
+        from lmfit import Parameters
+        p = Parameters()
+        p.add("a", value=1.0,
+              min=0.0 if bounded else -np.inf,
+              max=10.0 if bounded else np.inf)
+        p.add("b", value=2.0, min=0.0, max=10.0)
+        return p
+
+    def test_clean_least_squares_has_no_issues(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, warnings = validate_fit_setup(
+            "least_squares", self._params(), has_xerr=False,
+            weight_mode="1/yerr (default)")
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, [])
+
+    def test_bounds_required_method_flags_unbounded_param(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, _ = validate_fit_setup(
+            "differential_evolution", self._params(bounded=False),
+            has_xerr=False, weight_mode="No weights")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("finite", errors[0])
+        self.assertIn("a", errors[0])
+
+    def test_bounds_required_method_ok_when_bounded(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, _ = validate_fit_setup(
+            "differential_evolution", self._params(bounded=True),
+            has_xerr=False, weight_mode="No weights")
+        self.assertEqual(errors, [])
+
+    def test_effective_variance_without_xerr_warns(self):
+        from curvelab.fit_manager import validate_fit_setup
+        errors, warnings = validate_fit_setup(
+            "least_squares", self._params(), has_xerr=False,
+            weight_mode="Effective variance")
+        self.assertEqual(errors, [])
+        self.assertEqual(len(warnings), 1)
+        # With x-errors present it's silent.
+        _, warnings2 = validate_fit_setup(
+            "least_squares", self._params(), has_xerr=True,
+            weight_mode="Effective variance")
+        self.assertEqual(warnings2, [])
+
+    def test_missing_package_is_an_error(self):
+        from unittest import mock
+        from curvelab.fit_manager import validate_fit_setup
+        # ODR needs odrpack; simulate it being absent.
+        with mock.patch("importlib.util.find_spec", return_value=None):
+            errors, _ = validate_fit_setup(
+                "odr", self._params(), has_xerr=True, weight_mode="No weights")
+        self.assertEqual(len(errors), 1)
+        self.assertIn("odrpack", errors[0])
+
+
 class FitManagerRunFitTests(unittest.TestCase):
     """Gap 1: Test that run_fit recovers known parameters."""
 

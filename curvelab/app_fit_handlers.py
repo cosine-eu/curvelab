@@ -9,15 +9,17 @@ state (_fit_thread, _fit_abort, _FIT_POLL_INTERVAL_MS) held on CurveLabApp.
 import threading
 from tkinter import messagebox
 
-from .fit_manager import FitManager, REDUCE_FUNCTIONS
-from .ui_dialogs_analysis import ModelComparisonDialog, GlobalFitDialog
+from .fit_manager import (
+    DEFAULT_F_SCALE, FitManager, SLOW_METHODS,
+    objective_kwargs, validate_fit_setup,
+)
+from .ui_dialogs_analysis import (
+    GlobalFitDialog, ModelComparisonDialog, comparison_row,
+)
 
 
 class FitHandlersMixin:
     """Fit execution: single/ODR/async runs, auto-guess, global and batch fit."""
-
-    _SLOW_METHODS = {"emcee", "brute", "differential_evolution", "basinhopping",
-                      "dual_annealing", "shgo", "ampgo"}
 
     def _on_auto_guess(self):
         sess = self._require_session()
@@ -52,17 +54,19 @@ class FitHandlersMixin:
 
         method = self.fit_panel.method_var.get()
 
-        # Brute validation: all varied params need finite bounds
-        if method == "brute":
-            if fm.params is not None:
-                for name, par in fm.params.items():
-                    if par.vary and (par.min == float("-inf") or par.max == float("inf")):
-                        messagebox.showwarning(
-                            "Brute Requires Bounds",
-                            f"Parameter '{name}' needs finite min and max bounds "
-                            f"for brute-force search.",
-                        )
-                        return
+        # Reject configurations the method can't run (missing backend package,
+        # or a bounds-requiring method with an unbounded parameter); warn about
+        # ones that will run but not as configured.
+        errors, warnings = validate_fit_setup(
+            method, fm.params,
+            has_xerr=rec.xerr is not None,
+            weight_mode=self.fit_panel.weight_var.get(),
+        )
+        if errors:
+            messagebox.showwarning("Cannot Fit", "\n".join(errors))
+            return
+        if warnings:
+            messagebox.showinfo("Fit Warning", "\n".join(warnings))
 
         # Capture the series id now, since an async fit can outlive the
         # user's current selection (e.g. they switch to another series
@@ -71,30 +75,36 @@ class FitHandlersMixin:
 
         if method == "odr":
             self._run_fit_odr(rec, sess, sid)
-        elif method in self._SLOW_METHODS:
+        elif method in SLOW_METHODS:
             self._run_fit_async(rec, sess, method, sid)
         else:
             self._run_fit_sync(rec, sess, method, sid)
 
     def _get_fit_options(self):
-        """Read reduce function, weight mode, max_nfev, band_sigma, scale_covar from UI."""
-        reduce_fcn = REDUCE_FUNCTIONS.get(self.fit_panel.reduce_var.get())
+        """Read objective, weight mode, max_nfev, band_sigma, scale_covar from UI."""
+        method = self.fit_panel.method_var.get()
+        try:
+            f_scale = float(self.fit_panel.f_scale_var.get())
+        except ValueError:
+            f_scale = DEFAULT_F_SCALE
+        objective_kws = objective_kwargs(
+            method, self.fit_panel.objective_var.get(), f_scale)
         weight_mode = self.fit_panel.weight_var.get()
         max_nfev_str = self.fit_panel.max_nfev_var.get().strip()
         max_nfev = int(max_nfev_str) if max_nfev_str else None
         band_sigma = int(self.plot_controls.band_sigma_var.get())
         scale_covar = self.fit_panel.scale_covar_var.get()
-        return reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar
+        return objective_kws, weight_mode, max_nfev, band_sigma, scale_covar
 
     def _run_fit_sync(self, rec, sess, method, sid):
         """Run fit synchronously (fast methods)."""
         fm = sess.fit_manager
         try:
             x, y, yerr, xerr = self._get_fit_data(rec)
-            reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+            objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
             result = fm.run_fit(
                 x, y, yerr=yerr, xerr=xerr, method=method,
-                reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                objective_kws=objective_kws, weight_mode=weight_mode,
                 max_nfev=max_nfev, band_sigma=band_sigma,
                 scale_covar=scale_covar,
             )
@@ -154,7 +164,7 @@ class FitHandlersMixin:
         if method == "emcee":
             fit_kws["is_weighted"] = yerr is not None
 
-        reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
 
         # Container for result/error from the thread
         container = {"result": None, "error": None}
@@ -164,7 +174,7 @@ class FitHandlersMixin:
                 result = fm.run_fit(
                     x, y, yerr=yerr, xerr=xerr, method=method,
                     iter_cb=iter_cb, fit_kws=fit_kws,
-                    reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                    objective_kws=objective_kws, weight_mode=weight_mode,
                     max_nfev=max_nfev, band_sigma=band_sigma,
                     scale_covar=scale_covar,
                 )
@@ -221,6 +231,18 @@ class FitHandlersMixin:
                 result.params, gof=result.gof, session_key=skey
             )
 
+        if not result.errorbars:
+            messagebox.showwarning(
+                "No Uncertainties",
+                "The fit did not produce parameter uncertainties (the StdErr "
+                "column is empty).\n\nThis usually means the parameters are "
+                "not all identifiable from the data — for example an over-"
+                "parameterized model, or a parameter the data can't constrain. "
+                "The curve may look good while individual parameter values are "
+                "unreliable. Consider fixing or removing a parameter, or using "
+                "a simpler model.",
+            )
+
     def _on_global_fit(self):
         """Open Global Fit dialog for simultaneous fitting across series."""
         sess = self._require_session()
@@ -242,11 +264,13 @@ class FitHandlersMixin:
         def on_fit(selected_ids, shared):
             datasets = []
             selected_recs = []
+            data_warnings: list[str] = []
             for sid in selected_ids:
                 r = self._series_records[sid]
-                x, y, yerr, xerr = self._get_fit_data(r)
+                x, y, yerr, xerr = self._get_fit_data(r, warnings_out=data_warnings)
                 datasets.append((x, y, yerr, xerr))
                 selected_recs.append((sid, r))
+            self._report_collected_warnings("Data Warnings", data_warnings)
 
             _, weight_mode, max_nfev, _, _ = self._get_fit_options()
             method = self.fit_panel.method_var.get()
@@ -280,7 +304,9 @@ class FitHandlersMixin:
 
         session_name = sess.name
         summary_rows = []
-        reduce_fcn, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+        data_warnings: list[str] = []
+        fit_errors: list[str] = []
+        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
 
         for sid, target_rec in self._series_records.items():
             target_sess = target_rec.ensure_session(session_name)
@@ -290,12 +316,14 @@ class FitHandlersMixin:
             source_fm.clone_components_to(target_fm)
 
             try:
-                x, y, yerr, xerr = self._get_fit_data(target_rec)
+                x, y, yerr, xerr = self._get_fit_data(
+                    target_rec, warnings_out=data_warnings
+                )
                 target_fm.auto_guess(x, y)
                 method = self.fit_panel.method_var.get()
                 result = target_fm.run_fit(
                     x, y, yerr=yerr, xerr=xerr, method=method,
-                    reduce_fcn=reduce_fcn, weight_mode=weight_mode,
+                    objective_kws=objective_kws, weight_mode=weight_mode,
                     max_nfev=max_nfev, band_sigma=band_sigma,
                     scale_covar=scale_covar,
                 )
@@ -303,35 +331,22 @@ class FitHandlersMixin:
                 self._show_fit_on_plot(sid, target_sess, target_rec)
 
                 series_label = target_rec.style.get("label", sid)
-                model_desc = target_fm.model_description()
-                gof = result.gof
-                summary_rows.append({
-                    "session": f"{series_label} / {session_name}",
-                    "model": model_desc,
-                    "n_params": len(result.params),
-                    "chisqr": gof.get("chi-squared"),
-                    "redchi": gof.get("reduced chi-squared"),
-                    "aic": gof.get("AIC"),
-                    "bic": gof.get("BIC"),
-                })
+                summary_rows.append(comparison_row(
+                    f"{series_label} / {session_name}",
+                    target_fm.model_description(), result,
+                ))
             except Exception as e:
                 series_label = target_rec.style.get("label", sid)
-                summary_rows.append({
-                    "session": f"{series_label} / {session_name}",
-                    "model": "ERROR",
-                    "n_params": 0,
-                    "chisqr": None,
-                    "redchi": None,
-                    "aic": None,
-                    "bic": None,
-                })
-                messagebox.showwarning(
-                    "Batch Fit Warning",
-                    f"Fit failed for {series_label}: {e}",
-                )
+                summary_rows.append(comparison_row(
+                    f"{series_label} / {session_name}", "ERROR",
+                ))
+                fit_errors.append(f"{series_label}: {e}")
 
         # Sync UI to the currently active session
         self._refresh_session_ui()
+
+        self._report_collected_warnings("Data Warnings", data_warnings)
+        self._report_collected_warnings("Batch Fit Warnings", fit_errors)
 
         if summary_rows:
             ModelComparisonDialog(self, summary_rows)

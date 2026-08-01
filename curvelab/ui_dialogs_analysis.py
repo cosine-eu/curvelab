@@ -1,11 +1,13 @@
 """Analysis and statistics dialog classes for CurveLab."""
 
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk
 import tkinter.font as tkfont
 
 from .analysis_tools import compute_diagnostic_stats
-from .ui_common import BaseDialog, set_readonly_text
+from .ui_common import (
+    BaseDialog, configure_row_tags, row_tag, set_readonly_text,
+)
 
 
 def build_scrollable_text_viewer(dialog, content: str, font=("Courier", 10)) -> tk.Text:
@@ -89,6 +91,20 @@ class FontDialog(BaseDialog):
         self.destroy()
 
 
+def comparison_row(label: str, model_desc: str, result=None) -> dict:
+    """One ModelComparisonDialog row. result=None marks a failed fit."""
+    gof = result.gof if result is not None else {}
+    return {
+        "session": label,
+        "model": model_desc,
+        "n_params": len(result.params) if result is not None else 0,
+        "chisqr": gof.get("chi-squared"),
+        "redchi": gof.get("reduced chi-squared"),
+        "aic": gof.get("AIC"),
+        "bic": gof.get("BIC"),
+    }
+
+
 class ModelComparisonDialog(BaseDialog):
     """Side-by-side comparison of fit sessions: AIC, BIC, reduced chi-squared."""
 
@@ -113,20 +129,15 @@ class ModelComparisonDialog(BaseDialog):
         tree.heading("bic", text="BIC")
         tree.column("bic", width=90)
 
-        tree.tag_configure("best_aic", background="#d4edda")
-        tree.tag_configure("even", background="#f0f0f0")
-        tree.tag_configure("odd", background="#ffffff")
+        configure_row_tags(tree)
 
         # Find best AIC for highlighting
         aic_vals = [r["aic"] for r in rows if r["aic"] is not None]
         best_aic = min(aic_vals) if aic_vals else None
 
         for i, r in enumerate(rows):
-            tags = []
-            if best_aic is not None and r["aic"] == best_aic:
-                tags.append("best_aic")
-            else:
-                tags.append("even" if i % 2 == 0 else "odd")
+            best = best_aic is not None and r["aic"] == best_aic
+            tags = ["best" if best else row_tag(i)]
             tree.insert(
                 "", tk.END, text=r["session"],
                 values=(
@@ -224,16 +235,16 @@ class FTestDialog(BaseDialog):
         lines = [
             f"Reduced model: {r_name}",
             f"  Parameters: {p1},  \u03c7\u00b2 = {chi1:.6g}",
-            f"",
+            "",
             f"Full model: {f_name}",
             f"  Parameters: {p2},  \u03c7\u00b2 = {chi2:.6g}",
-            f"",
+            "",
             f"Extra parameters: {df1}",
             f"Residual DOF:     {df2}",
-            f"",
+            "",
             f"F-statistic: {f_stat:.4f}",
             f"p-value:     {p_value:.6g}",
-            f"",
+            "",
         ]
         if p_value < 0.01:
             lines.append("The extra parameters significantly improve the fit (p < 0.01).")
@@ -254,8 +265,6 @@ class CovarianceMatrixDialog(BaseDialog):
 
     def __init__(self, parent, param_names: list[str], cov_matrix):
         super().__init__(parent, "Covariance Matrix", size="700x400")
-
-        import numpy as np
 
         n = len(param_names)
         # Format matrix as aligned text
@@ -306,8 +315,7 @@ class CorrelationMatrixDialog(BaseDialog):
             tree.heading(p, text=p)
             tree.column(p, width=80)
 
-        tree.tag_configure("even", background="#f0f0f0")
-        tree.tag_configure("odd", background="#ffffff")
+        configure_row_tags(tree)
 
         for i, name in enumerate(all_params):
             vals = []
@@ -318,8 +326,8 @@ class CorrelationMatrixDialog(BaseDialog):
                     vals.append(f"{correlations[name][other]:.3f}")
                 else:
                     vals.append("")
-            tag = "even" if i % 2 == 0 else "odd"
-            tree.insert("", tk.END, text=name, values=tuple(vals), tags=(tag,))
+            tree.insert("", tk.END, text=name, values=tuple(vals),
+                        tags=(row_tag(i),))
 
         scroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scroll.set)
@@ -358,15 +366,13 @@ class BruteCandidatesDialog(BaseDialog):
             self._tree.heading(p, text=p)
             self._tree.column(p, width=90)
 
-        self._tree.tag_configure("even", background="#f0f0f0")
-        self._tree.tag_configure("odd", background="#ffffff")
-        self._tree.tag_configure("best", background="#d4edda")
+        configure_row_tags(self._tree)
 
         for i, cand in enumerate(candidates):
             vals = [f"{cand['score']:.6g}"]
             for p in param_names:
                 vals.append(f"{cand['params'][p]:.6g}")
-            tag = "best" if i == 0 else ("even" if i % 2 == 0 else "odd")
+            tag = "best" if i == 0 else row_tag(i)
             self._tree.insert("", tk.END, values=tuple(vals), tags=(tag,))
 
         scroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL, command=self._tree.yview)
@@ -700,7 +706,6 @@ class ProfileLikelihoodDialog(BaseDialog):
                  best_chi2: float):
         super().__init__(parent, "Profile Likelihood", size="900x600")
 
-        import numpy as np
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         from matplotlib.figure import Figure
 

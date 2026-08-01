@@ -3,7 +3,7 @@
 import threading
 import tkinter as tk
 import warnings
-from tkinter import ttk, messagebox, filedialog
+from tkinter import ttk, messagebox
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +28,20 @@ from .app_series import SeriesSessionMixin
 from .app_plotting import PlottingMixin
 
 
+# Editable parameter-table fields: how to read the current value off an
+# lmfit Parameter, and how to parse the text typed into the cell.
+_PARAM_FIELD_EDITORS = {
+    "vary": (lambda par: par.vary,
+             lambda text: text.lower() in ("yes", "true", "1")),
+    "value": (lambda par: par.value, float),
+    "min": (lambda par: par.min,
+            lambda text: float("-inf") if text in ("-inf", "") else float(text)),
+    "max": (lambda par: par.max,
+            lambda text: float("inf") if text in ("inf", "") else float(text)),
+    "expr": (lambda par: par.expr or "", lambda text: text.strip()),
+}
+
+
 class CurveLabApp(
     MenuMixin, SeriesSessionMixin, PlottingMixin, AnalysisHandlersMixin,
     DataToolsMixin, WorkspaceMixin, FitHandlersMixin, ttk.Frame,
@@ -38,6 +52,8 @@ class CurveLabApp(
     _CLICK_HIT_RADIUS_PX = 10
     # Poll interval (ms) for checking on a background fit thread.
     _FIT_POLL_INTERVAL_MS = 100
+    # How long the splash screen stays up before the main window appears.
+    _SPLASH_DURATION_MS = 1500
 
     def __init__(self, parent, **kwargs):
         super().__init__(parent, **kwargs)
@@ -49,7 +65,6 @@ class CurveLabApp(
         # Multi-series / multi-session state
         self._series_records: dict[str, SeriesRecord] = {}
         self._active_series_id: str | None = None
-        self._session_counter: int = 0
         self._simulated_counter: int = 0
 
         # Font state
@@ -148,12 +163,19 @@ class CurveLabApp(
 
     # --- Shared fit-data preparation (used by fit, analysis, and data tools) ---
 
-    def _get_fit_data(self, rec: SeriesRecord):
-        """Return (x, y, yerr, xerr) cleaned and optionally masked to fit range."""
+    def _get_fit_data(self, rec: SeriesRecord, warnings_out: list[str] | None = None):
+        """Return (x, y, yerr, xerr) cleaned and optionally masked to fit range.
+
+        Preparation warnings pop up as dialogs. Callers that prepare many
+        series in a loop (batch and global fit) pass warnings_out instead:
+        messages are labelled by series and appended there, so the caller
+        can report them once rather than one dialog per series.
+        """
         from .preprocessing import prepare_fit_data
 
         # Determine x range from UI
         x_range = None
+        range_warning = None
         xmin_str = self.plot_controls.fit_xmin_var.get().strip()
         xmax_str = self.plot_controls.fit_xmax_var.get().strip()
         if xmin_str or xmax_str:
@@ -162,24 +184,36 @@ class CurveLabApp(
                 xmax = float(xmax_str) if xmax_str else np.inf
                 x_range = (xmin, xmax)
             except ValueError:
-                messagebox.showwarning(
-                    "Invalid Fit Range",
+                range_warning = (
                     f"Could not parse fit range ('{xmin_str}', '{xmax_str}') "
-                    "as numbers. Fitting the full data range instead.",
+                    "as numbers. Fitting the full data range instead."
                 )
         elif self.plot_controls.fit_visible_var.get():
             x_range = self.plot_mgr.ax.get_xlim()
 
         x, y, yerr, xerr, warnings = prepare_fit_data(rec, x_range=x_range)
 
-        # Show warnings via UI
-        for w in warnings:
-            if "NaN" in w:
-                messagebox.showinfo("Data Cleaned", w)
-            else:
-                messagebox.showwarning("Duplicate X Values", w)
+        if warnings_out is not None:
+            label = rec.style.get("label") or ""
+            messages = ([range_warning] if range_warning else []) + warnings
+            warnings_out.extend(f"{label}: {m}" if label else m for m in messages)
+        else:
+            if range_warning:
+                messagebox.showwarning("Invalid Fit Range", range_warning)
+            for w in warnings:
+                if "NaN" in w:
+                    messagebox.showinfo("Data Cleaned", w)
+                else:
+                    messagebox.showwarning("Duplicate X Values", w)
 
         return x, y, yerr, xerr
+
+    def _report_collected_warnings(self, title: str, messages: list[str]):
+        """Show messages collected over a multi-series run as one dialog."""
+        if not messages:
+            return
+        unique = list(dict.fromkeys(messages))
+        messagebox.showwarning(title, "\n".join(unique))
 
     # --- Layout ---
 
@@ -198,12 +232,12 @@ class CurveLabApp(
         self.data_panel = DataPanel(
             left_pane,
             on_load=self._on_load_file,
-            on_add_series=None,
             on_plot=self._on_plot,
             on_dataset_selected=self._on_dataset_selected,
             on_remove_dataset=self._on_remove_dataset,
             on_toggle_series_visible=self._on_toggle_series_visible,
             on_column_calc=self._on_column_calc,
+            on_confirm_remove_series=self._confirm_remove_series,
         )
         left_pane.add(self.data_panel, weight=1)
 
@@ -271,7 +305,8 @@ class CurveLabApp(
 
         # Fit results panel
         self.fit_results = FitResultsPanel(
-            right_frame, on_param_edited=self._on_param_edited
+            right_frame, on_param_edited=self._on_param_edited,
+            on_use_as_start=self._on_use_result_as_start,
         )
         self.fit_results.grid(row=2, column=0, sticky="nsew")
         right_frame.rowconfigure(2, weight=1)
@@ -440,45 +475,60 @@ class CurveLabApp(
             return
         if param_name not in fm.params:
             return
+        editor = _PARAM_FIELD_EDITORS.get(field)
+        if editor is None:
+            return
+        read_current, parse = editor
+        old_value = read_current(fm.params[param_name])
         try:
-            par = fm.params[param_name]
-            if field == "vary":
-                old_value = par.vary
-                new_value = value.lower() in ("yes", "true", "1")
-                fm.set_param(param_name, vary=new_value)
-                fm.set_param_hint(param_name, vary=new_value)
-            elif field == "value":
-                old_value = par.value
-                new_value = float(value)
-                fm.set_param(param_name, value=new_value)
-                fm.set_param_hint(param_name, value=new_value)
-            elif field == "min":
-                old_value = par.min
-                new_value = float("-inf") if value in ("-inf", "") else float(value)
-                fm.set_param(param_name, min=new_value)
-                fm.set_param_hint(param_name, min=new_value)
-            elif field == "max":
-                old_value = par.max
-                new_value = float("inf") if value in ("inf", "") else float(value)
-                fm.set_param(param_name, max=new_value)
-                fm.set_param_hint(param_name, max=new_value)
-            elif field == "expr":
-                old_value = par.expr or ""
-                new_value = value.strip()
-                if new_value:
-                    fm.set_param(param_name, expr=new_value)
-                    fm.set_param_hint(param_name, expr=new_value)
-                else:
-                    fm.set_param(param_name, expr="", vary=True)
-                    fm.set_param_hint(param_name, expr="", vary=True)
-            else:
-                return
-            edit = ParamEdit(param_name=param_name, field=field,
-                             old_value=old_value, new_value=new_value)
-            sess.undo_stack.append(edit)
-            sess.redo_stack.clear()
+            new_value = parse(value)
+            kwargs = self._param_field_kwargs(field, new_value)
+            fm.set_param(param_name, **kwargs)
+            fm.set_param_hint(param_name, **kwargs)
         except ValueError:
             self._refresh_param_display()
+            return
+        # A manually edited value becomes the fit's new starting point, so
+        # the reset-to-guess in run_fit doesn't discard it.
+        if field == "value":
+            fm.set_start_value(param_name, new_value)
+        sess.undo_stack.append(ParamEdit(
+            param_name=param_name, field=field,
+            old_value=old_value, new_value=new_value,
+        ))
+        sess.redo_stack.clear()
+
+    @staticmethod
+    def _param_field_kwargs(field: str, value) -> dict:
+        """Parameter attributes to write for one edited field.
+
+        Clearing an expression also restores vary: lmfit forces vary=False
+        when an expression is set and never restores it when the expression
+        is removed, so an undone expression edit would leave the parameter
+        frozen."""
+        if field == "expr" and not value:
+            return {"expr": "", "vary": True}
+        return {field: value}
+
+    def _on_use_result_as_start(self):
+        """Adopt the last fit's parameters as the starting point for the next
+        fit. Fits otherwise restart from the guess each time; this is the
+        opt-in way to chain a refinement."""
+        sess = self._require_fit_result()
+        if sess is None:
+            return
+        fm = sess.fit_manager
+        if fm.params is None:
+            return
+        fm.capture_start_values()
+        # Reflect the adopted start in the Initial column as feedback.
+        params_display = {}
+        for name, info in sess.result.params.items():
+            entry = dict(info)
+            if name in fm.params:
+                entry["init_value"] = fm.params[name].value
+            params_display[name] = entry
+        self.fit_results.set_params(params_display)
 
     def _refresh_param_display(self):
         """Refresh the parameter table from the live FitManager params."""
@@ -493,7 +543,11 @@ class CurveLabApp(
         if sess is None or fm is None or not sess.undo_stack:
             return
         edit = sess.undo_stack.pop()
-        fm.set_param_hint(edit.param_name, **{edit.field: edit.old_value})
+        fm.set_param_hint(
+            edit.param_name, **self._param_field_kwargs(edit.field, edit.old_value)
+        )
+        if edit.field == "value":
+            fm.set_start_value(edit.param_name, edit.old_value)
         sess.redo_stack.append(edit)
         self._refresh_param_display()
 
@@ -503,7 +557,11 @@ class CurveLabApp(
         if sess is None or fm is None or not sess.redo_stack:
             return
         edit = sess.redo_stack.pop()
-        fm.set_param_hint(edit.param_name, **{edit.field: edit.new_value})
+        fm.set_param_hint(
+            edit.param_name, **self._param_field_kwargs(edit.field, edit.new_value)
+        )
+        if edit.field == "value":
+            fm.set_start_value(edit.param_name, edit.new_value)
         sess.undo_stack.append(edit)
         self._refresh_param_display()
 
@@ -538,7 +596,8 @@ class CurveLabApp(
 
         # Close splash and show main window
         if splash is not None:
-            root.after(1500, lambda: (splash.destroy(), root.deiconify()))
+            root.after(cls._SPLASH_DURATION_MS,
+                       lambda: (splash.destroy(), root.deiconify()))
         else:
             root.deiconify()
 

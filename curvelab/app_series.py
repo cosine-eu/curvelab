@@ -59,8 +59,7 @@ class SeriesSessionMixin:
             if rec.dataset_name == name
         ]
         n_sessions = sum(
-            len(rec.fit_sessions) for sid in to_remove
-            for rec in [self._series_records[sid]]
+            len(self._series_records[sid].fit_sessions) for sid in to_remove
         )
         if n_sessions > 0:
             ok = messagebox.askyesno(
@@ -91,6 +90,39 @@ class SeriesSessionMixin:
 
         self._refresh_all_ui()
 
+    def _register_series_dataframe(self, name: str, df, linestyle: str = "None",
+                                   yerr: str = "", xerr: str = "") -> tuple[str, dict]:
+        """Register a DataFrame as a dataset and add a matching x/y series
+        entry to the DataPanel. Returns (dataset_name, series_info)."""
+        ds_name, columns = self.data_mgr.add_dataframe(name, df)
+        self.data_panel.set_datasets(self.data_mgr.dataset_names, select=ds_name)
+        self.data_panel.set_columns(columns)
+        series_info = {
+            "dataset": ds_name,
+            "x": "x", "y": "y", "yerr": yerr, "xerr": xerr,
+            "marker": "o", "linestyle": linestyle, "color": "",
+            "label": ds_name,
+        }
+        self.data_panel.add_series_entry(series_info)
+        return ds_name, series_info
+
+    def _confirm_remove_series(self, series_info: dict) -> bool:
+        """Ask before removing a plotted series that carries fit sessions;
+        removing it discards them, as removing a dataset does."""
+        sid = _make_series_id(
+            series_info.get("dataset", ""), series_info.get("x", ""),
+            series_info.get("y", ""),
+        )
+        rec = self._series_records.get(sid)
+        if rec is None or not rec.fit_sessions:
+            return True
+        label = rec.style.get("label", sid)
+        return messagebox.askyesno(
+            "Confirm Remove",
+            f"Series '{label}' has {len(rec.fit_sessions)} fit session(s).\n\n"
+            "Remove series and discard all fit sessions?",
+        )
+
     # --- Series / Session callbacks ---
 
     def _on_series_selected(self, series_id: str):
@@ -111,22 +143,10 @@ class SeriesSessionMixin:
         if self._active_series_id is not None:
             return
         self._simulated_counter += 1
-        n = self._simulated_counter
         df = pd.DataFrame({"x": pd.Series(dtype=float), "y": pd.Series(dtype=float)})
-        ds_name, columns = self.data_mgr.add_dataframe(f"Simulated {n}", df)
-
-        self.data_panel.set_datasets(
-            self.data_mgr.dataset_names, select=ds_name
+        ds_name, series_info = self._register_series_dataframe(
+            f"Simulated {self._simulated_counter}", df
         )
-        self.data_panel.set_columns(columns)
-
-        series_info = {
-            "dataset": ds_name,
-            "x": "x", "y": "y", "yerr": "", "xerr": "",
-            "marker": "o", "linestyle": "None", "color": "",
-            "label": ds_name,
-        }
-        self.data_panel.add_series_entry(series_info)
 
         # Create the series record so it becomes the active series
         sid = _make_series_id(ds_name, "x", "y")
@@ -147,7 +167,6 @@ class SeriesSessionMixin:
             messagebox.showwarning("Duplicate", f"Session '{name}' already exists.")
             return
 
-        self._session_counter += 1
         rec.ensure_session(name)
         rec.active_session_name = name
         self._refresh_session_ui()

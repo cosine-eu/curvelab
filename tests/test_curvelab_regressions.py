@@ -46,11 +46,11 @@ class WorkspaceContractTests(unittest.TestCase):
         source = ws_path.read_text(encoding="utf-8")
 
         # Save path
-        self.assertRegex(source, r'"reduce_fcn"')
+        self.assertRegex(source, r'"objective"')
         self.assertRegex(source, r'"weight_mode"')
 
         # Load path
-        self.assertRegex(source, r'self\.fit_panel\.reduce_var\.set\(')
+        self.assertRegex(source, r'self\.fit_panel\.set_objective\(')
         self.assertRegex(source, r'self\.fit_panel\.weight_var\.set\(')
 
     def test_diagnostic_plots_dialog_is_wired(self):

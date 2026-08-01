@@ -182,6 +182,25 @@ class CloneComponentsHintsTests(unittest.TestCase):
         self.assertEqual(target.params["intercept"].max, 5.0)
 
 
+class CloneComponentsSelfTests(unittest.TestCase):
+    """Batch fit clones the source model onto every series, the source
+    included. Cloning onto itself used to clear the component list it was
+    about to copy, wiping the model and failing every later series."""
+
+    def test_self_clone_preserves_model(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.add_component("Gaussian")
+        fm.set_param_hint("linear1_slope", value=2.0, vary=False)
+
+        fm.clone_components_to(fm)
+
+        self.assertEqual([c.name for c in fm.components], ["Linear", "Gaussian"])
+        self.assertIsNotNone(fm.model)
+        self.assertFalse(fm.params["linear1_slope"].vary)
+
+
 class ParamHintPersistenceTests(unittest.TestCase):
     """69a37b0 (core mechanism): set_param_hint must survive a model rebuild.
 
@@ -205,6 +224,154 @@ class ParamHintPersistenceTests(unittest.TestCase):
         # Adding a third component rebuilds the model; the hint must persist.
         fm.add_component("Gaussian")
         self.assertEqual(fm.params["linear1_slope"].min, -5.0)
+
+
+class RemoveComponentHintsTests(unittest.TestCase):
+    """Parameter hints are keyed by prefixed name, so removing a component
+    must drop its hints and re-key a lone survivor's when it loses its
+    prefix -- otherwise fixed values and bounds are silently lost."""
+
+    def test_survivor_hints_follow_prefix_reset(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.add_component("Linear")
+        fm.set_param_hint("gaussian1_center", value=5.0, min=0.0)
+
+        fm.remove_component(1)   # Linear; Gaussian loses its prefix
+
+        self.assertEqual(fm.components[0].prefix, "")
+        self.assertEqual(fm.params["center"].value, 5.0)
+        self.assertEqual(fm.params["center"].min, 0.0)
+
+    def test_removed_component_hints_are_dropped(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.add_component("Linear")
+        fm.add_component("Constant")
+        fm.set_param_hint("linear1_slope", value=3.0, vary=False)
+        fm.set_param_hint("gaussian1_center", value=5.0)
+
+        fm.remove_component(1)   # Linear
+
+        self.assertNotIn("linear1_slope", fm._param_hints)
+        # Prefixes of the survivors are unchanged, so their hints still apply.
+        self.assertEqual(fm.params["gaussian1_center"].value, 5.0)
+
+    def test_similar_prefixes_are_not_confused(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        for _ in range(11):
+            fm.add_component("Gaussian")
+        fm.set_param_hint("gaussian11_center", value=7.0)
+
+        fm.remove_component(0)   # gaussian1_, not gaussian11_
+
+        self.assertEqual(fm.params["gaussian11_center"].value, 7.0)
+
+
+class RefitFromGuessTests(unittest.TestCase):
+    """Each fit starts from the remembered guess/user values, not the
+    previous result, so repeated fits are reproducible and don't drift
+    along a degenerate direction."""
+
+    def _fit_setup(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 80)
+        y = 3 * np.exp(-(x - 5) ** 2 / (2 * 1.0 ** 2)) + rng.normal(0, 0.02, x.size)
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        return fm, x, y
+
+    def test_repeated_fits_start_from_same_values(self):
+        fm, x, y = self._fit_setup()
+        r1 = fm.run_fit(x, y, weight_mode="No weights")
+        r2 = fm.run_fit(x, y, weight_mode="No weights")
+        # Both fits start from the guess, so their init snapshots match
+        # (under the old chaining, r2 would have started from r1's result).
+        self.assertEqual(r1.init_params, r2.init_params)
+        for name in r1.params:
+            self.assertAlmostEqual(r1.params[name]["value"],
+                                   r2.params[name]["value"], places=8)
+
+    def test_manual_start_value_is_honored(self):
+        fm, x, y = self._fit_setup()
+        fm.run_fit(x, y, weight_mode="No weights")   # move _params off the guess
+        fm.set_start_value("center", 7.5)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], 7.5)
+
+    def test_fixed_parameter_is_not_reset(self):
+        # A pinned (vary=False) value must survive the reset-to-start, not be
+        # clobbered by a stale guess.
+        fm, x, y = self._fit_setup()
+        fm.set_param_hint("center", value=4.0, vary=False)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.params["center"]["value"], 4.0, places=6)
+
+    def test_first_fit_without_guess_is_reproducible(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        # No auto_guess: the first fit records its own starting values.
+        r1 = fm.run_fit(x, y, weight_mode="No weights")
+        r2 = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertEqual(r1.init_params, r2.init_params)
+
+
+class CaptureStartValuesTests(unittest.TestCase):
+    """capture_start_values adopts the current (fitted) values as the next
+    fit's start -- the 'Use as Start' action -- restoring opt-in chaining."""
+
+    def test_capture_makes_next_fit_start_from_result(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 80)
+        y = 3 * np.exp(-(x - 5) ** 2 / (2 * 0.8 ** 2)) + rng.normal(0, 0.02, x.size)
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        guess_center = fm.params["center"].value
+
+        fm.run_fit(x, y, weight_mode="No weights")
+        fitted_center = fm.params["center"].value
+
+        fm.capture_start_values()
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        # Now the fit starts from the fitted values, not the original guess.
+        self.assertAlmostEqual(r.init_params["center"], fitted_center)
+        self.assertNotAlmostEqual(r.init_params["center"], guess_center, places=6)
+
+
+class FitErrorbarsFlagTests(unittest.TestCase):
+    """FitResult.errorbars reports whether the fit could estimate
+    uncertainties -- False signals unidentifiable parameters."""
+
+    def test_good_fit_has_errorbars(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 60)
+        y = 3 * np.exp(-(x - 5) ** 2 / (2 * 0.8 ** 2)) + rng.normal(0, 0.02, x.size)
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        self.assertTrue(fm.run_fit(x, y, weight_mode="No weights").errorbars)
+
+    def test_degenerate_fit_reports_no_errorbars(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(2)
+        x = np.linspace(0, 10, 50)
+        y = 5.0 + rng.normal(0, 0.05, x.size)
+        fm = FitManager()
+        fm.add_component("Constant")   # two constants -> perfectly degenerate
+        fm.add_component("Constant")
+        fm.auto_guess(x, y)
+        self.assertFalse(fm.run_fit(x, y, weight_mode="No weights").errorbars)
 
 
 class OdsEngineTests(unittest.TestCase):

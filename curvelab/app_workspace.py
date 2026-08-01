@@ -12,6 +12,7 @@ import pandas as pd
 from tkinter import messagebox, filedialog
 
 from .data_manager import DataManager
+from .fit_manager import DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE
 from .workspace import (
     WorkspaceEncoder, decode_workspace,
     serialize_series_records, deserialize_series_record,
@@ -158,9 +159,14 @@ class WorkspaceMixin:
                 "fit_xmin": self.plot_controls.fit_xmin_var.get(),
                 "fit_xmax": self.plot_controls.fit_xmax_var.get(),
                 "residuals": self.plot_controls.residuals_var.get(),
+                "weighted_resid": self.plot_controls.weighted_resid_var.get(),
                 "confidence_band": self.plot_controls.confidence_band_var.get(),
+                "band_sigma": self.plot_controls.band_sigma_var.get(),
+                "data": self.plot_controls.data_var.get(),
+                "scale_covar": self.fit_panel.scale_covar_var.get(),
                 "fit_method": self.fit_panel.method_var.get(),
-                "reduce_fcn": self.fit_panel.reduce_var.get(),
+                "objective": self.fit_panel.objective_var.get(),
+                "f_scale": self.fit_panel.f_scale_var.get(),
                 "weight_mode": self.fit_panel.weight_var.get(),
                 "max_nfev": self.fit_panel.max_nfev_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
@@ -225,6 +231,13 @@ class WorkspaceMixin:
         # Replot everything and sync UI
         self._refresh_all_ui()
 
+    def _sqlite_dataset_index(self) -> dict[tuple[str, str], str]:
+        """(filepath, table name) -> dataset name, for loaded SQLite tables."""
+        return {
+            (str(self.data_mgr.filepaths.get(ds_name)), table): ds_name
+            for ds_name, table in self.data_mgr.table_names.items()
+        }
+
     def _load_workspace_datasets(self, ws) -> dict:
         """Reload datasets from saved filepaths; return {old name -> new name}."""
         self.data_mgr = DataManager()
@@ -234,26 +247,16 @@ class WorkspaceMixin:
         for name, fpath in ws.get("data_filepaths", {}).items():
             try:
                 fpath_str = str(fpath)
-                ext = Path(fpath).suffix.lower()
-                if ext in (".sqlite", ".db"):
-                    if fpath_str in loaded_sqlite_files:
-                        # Already loaded — find the matching dataset by table name
-                        table = saved_table_names.get(name, "")
-                        for ds_name, tbl in self.data_mgr.table_names.items():
-                            if tbl == table and str(self.data_mgr.filepaths.get(ds_name)) == fpath_str:
-                                dataset_name_map[name] = ds_name
-                                break
-                        continue
-                    loaded_sqlite_files.add(fpath_str)
-                    self.data_mgr.load(fpath)
-                    # Map all old names for this file to their new dataset names
-                    for old_name, old_fpath in ws.get("data_filepaths", {}).items():
-                        if str(old_fpath) == fpath_str:
-                            table = saved_table_names.get(old_name, "")
-                            for ds_name, tbl in self.data_mgr.table_names.items():
-                                if tbl == table and str(self.data_mgr.filepaths.get(ds_name)) == fpath_str:
-                                    dataset_name_map[old_name] = ds_name
-                                    break
+                if Path(fpath).suffix.lower() in (".sqlite", ".db"):
+                    # One load brings in every table of the file as its own
+                    # dataset, so match this entry by (file, table).
+                    if fpath_str not in loaded_sqlite_files:
+                        loaded_sqlite_files.add(fpath_str)
+                        self.data_mgr.load(fpath)
+                    table = saved_table_names.get(name, "")
+                    ds_name = self._sqlite_dataset_index().get((fpath_str, table))
+                    if ds_name is not None:
+                        dataset_name_map[name] = ds_name
                 else:
                     new_name, columns = self.data_mgr.load(fpath)
                     dataset_name_map[name] = new_name
@@ -308,11 +311,19 @@ class WorkspaceMixin:
         self.plot_controls.fit_xmin_var.set(pc.get("fit_xmin", ""))
         self.plot_controls.fit_xmax_var.set(pc.get("fit_xmax", ""))
         self.plot_controls.residuals_var.set(pc.get("residuals", False))
+        self.plot_controls.weighted_resid_var.set(pc.get("weighted_resid", True))
         self.plot_controls.confidence_band_var.set(pc.get("confidence_band", False))
-        self.fit_panel.method_var.set(pc.get("fit_method", "least_squares"))
-        self.fit_panel.reduce_var.set(pc.get("reduce_fcn", "Chi-square (default)"))
-        self.fit_panel.weight_var.set(pc.get("weight_mode", "1/yerr (default)"))
+        self.plot_controls.band_sigma_var.set(pc.get("band_sigma", "1"))
+        self.plot_controls.data_var.set(pc.get("data", True))
+        self.fit_panel.scale_covar_var.set(pc.get("scale_covar", True))
+        self.fit_panel.method_var.set(pc.get("fit_method", DEFAULT_FIT_METHOD))
+        self.fit_panel.weight_var.set(pc.get("weight_mode", DEFAULT_WEIGHT_MODE))
         self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))
+        # Objective replaces the old reduce_fcn key; fall back to it for
+        # workspaces written before the change. set_objective must run after
+        # method_var is set, since the valid objectives depend on the method.
+        self.fit_panel.set_objective(
+            pc.get("objective", pc.get("reduce_fcn")), pc.get("f_scale"))
         self.plot_controls.xlabel_var.set(pc.get("xlabel", ""))
         self.plot_controls.ylabel_var.set(pc.get("ylabel", ""))
 

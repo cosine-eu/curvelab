@@ -11,6 +11,7 @@ The whole module skips cleanly when no display / Tk is available, so a headless
 run without Xvfb doesn't fail.
 """
 
+import os
 import unittest
 from unittest import mock
 
@@ -185,6 +186,489 @@ class ParamEditorGuardTests(GuiTestBase):
         self.assertTrue(panel._editing_done)
 
 
+class ParamUndoRedoTests(GuiTestBase):
+    """lmfit forces vary=False when an expression is set and never restores
+    it, so undoing an expression edit must restore vary explicitly -- else
+    the parameter stays frozen with no visible cause."""
+
+    def test_undo_expression_edit_restores_vary(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+
+        self.app._on_param_edited("slope", "expr", "intercept*2")
+        self.assertEqual(fm.params["slope"].expr, "intercept*2")
+        self.assertFalse(fm.params["slope"].vary)
+
+        self.app._undo_param_edit()
+
+        self.assertIn(fm.params["slope"].expr, (None, ""))
+        self.assertTrue(fm.params["slope"].vary)
+
+    def test_redo_reapplies_expression(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+
+        self.app._on_param_edited("slope", "expr", "intercept*2")
+        self.app._undo_param_edit()
+        self.app._redo_param_edit()
+
+        self.assertEqual(fm.params["slope"].expr, "intercept*2")
+        self.assertFalse(fm.params["slope"].vary)
+
+    def test_field_parsing_and_rejection(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+
+        self.app._on_param_edited("slope", "min", "")        # empty means -inf
+        self.app._on_param_edited("slope", "max", "inf")
+        self.app._on_param_edited("slope", "vary", "No")
+        self.assertEqual(fm.params["slope"].min, float("-inf"))
+        self.assertEqual(fm.params["slope"].max, float("inf"))
+        self.assertFalse(fm.params["slope"].vary)
+
+        n_undo = len(sess.undo_stack)
+        self.app._on_param_edited("slope", "value", "banana")
+        self.assertEqual(len(sess.undo_stack), n_undo)       # nothing recorded
+        self.app._on_param_edited("slope", "nonsense", "1")
+        self.assertEqual(len(sess.undo_stack), n_undo)
+
+    def test_undo_value_edit_unchanged(self):
+        rec, sess = self._add_fitted_series()
+        fm = sess.fit_manager
+        original = fm.params["slope"].value
+
+        self.app._on_param_edited("slope", "value", "42.0")
+        self.assertEqual(fm.params["slope"].value, 42.0)
+
+        self.app._undo_param_edit()
+
+        self.assertAlmostEqual(fm.params["slope"].value, original)
+
+
+class ExclusionRenderTests(GuiTestBase):
+    """Excluded points are dimmed on every drawing path. _on_plot used to
+    ignore the mask, so pressing Plot showed all points as included while
+    fits still used the reduced set."""
+
+    def _series_with_exclusion(self):
+        rec, sess = self._add_fitted_series(run=False)
+        rec.mask = np.ones(len(rec.x), dtype=bool)
+        rec.mask[0] = False
+        self.app.data_panel.add_series_entry(rec.style)
+        return rec
+
+    def test_plot_dims_excluded_points(self):
+        rec = self._series_with_exclusion()
+        self.app._on_plot(self.app.data_panel.series_list)
+
+        lines = self.app.plot_mgr._series_lines
+        self.assertEqual(len(lines), 2)                    # included + excluded
+        self.assertIn("gray", [ln.get_color() for ln in lines])
+        self.assertEqual(len(lines[1].get_xdata()), 1)     # the one excluded point
+
+    def test_replot_matches_plot(self):
+        rec = self._series_with_exclusion()
+        self.app._on_plot(self.app.data_panel.series_list)
+        n_after_plot = len(self.app.plot_mgr._series_lines)
+
+        self.app._replot_all_series()
+
+        self.assertEqual(len(self.app.plot_mgr._series_lines), n_after_plot)
+
+    def test_stale_mask_dropped_when_column_length_changes(self):
+        import pandas as pd
+        rec = self._series_with_exclusion()
+        # Reload the dataset with fewer rows, as a re-import would.
+        self.app.data_mgr.datasets["ds"] = pd.DataFrame(
+            {"x": np.linspace(0, 10, 5), "y": np.linspace(0, 10, 5)}
+        )
+
+        self.app._on_plot(self.app.data_panel.series_list)
+
+        self.assertIsNone(rec.mask)
+
+
+class RemoveSeriesConfirmTests(GuiTestBase):
+    """Removing a series from the DataPanel discards its fit sessions, so it
+    asks first -- as removing a dataset already did."""
+
+    def _series_with_session(self):
+        rec, sess = self._add_fitted_series()
+        self.app.data_panel.add_series_entry(rec.style)
+        self.app.data_panel.series_listbox.selection_set(0)
+        return rec
+
+    def test_declining_keeps_series_and_sessions(self):
+        rec = self._series_with_session()
+        with mock.patch("curvelab.app_series.messagebox.askyesno",
+                        return_value=False) as ask:
+            self.app.data_panel._remove_series()
+
+        ask.assert_called_once()
+        self.assertIn("ds::x::y", self.app._series_records)
+        self.assertEqual(len(self.app.data_panel.series_list), 1)
+
+    def test_accepting_removes_series(self):
+        self._series_with_session()
+        with mock.patch("curvelab.app_series.messagebox.askyesno",
+                        return_value=True):
+            self.app.data_panel._remove_series()
+
+        self.assertNotIn("ds::x::y", self.app._series_records)
+        self.assertEqual(len(self.app.data_panel.series_list), 0)
+
+    def test_series_without_sessions_removed_without_asking(self):
+        rec, sess = self._add_fitted_series(run=False)
+        rec.fit_sessions.clear()
+        rec.active_session_name = None
+        self.app.data_panel.add_series_entry(rec.style)
+        self.app.data_panel.series_listbox.selection_set(0)
+
+        with mock.patch("curvelab.app_series.messagebox.askyesno") as ask:
+            self.app.data_panel._remove_series()
+
+        ask.assert_not_called()
+        self.assertEqual(len(self.app.data_panel.series_list), 0)
+
+
+class BatchFitWarningTests(GuiTestBase):
+    """Batch fit prepares every series in a loop; data warnings and failures
+    are collected and reported once instead of one modal dialog per series."""
+
+    def _add_series_with_nans(self, n_series=3):
+        import pandas as pd
+        from curvelab.session import SeriesRecord, FitSession
+        for i in range(n_series):
+            x = np.linspace(0, 10, 20)
+            y = 2.0 * x + 1.0
+            y[i] = np.nan                       # one bad point per series
+            ds = f"ds{i}"
+            self.app.data_mgr.add_dataframe(ds, pd.DataFrame({"x": x, "y": y}))
+            sid = f"{ds}::x::y"
+            rec = SeriesRecord(
+                x=x, y=y, dataset_name=ds,
+                style={"dataset": ds, "x": "x", "y": "y", "label": f"s{i}"},
+            )
+            self.app._series_records[sid] = rec
+            sess = FitSession(name="Fit 1", color="C0")
+            rec.fit_sessions["Fit 1"] = sess
+            rec.active_session_name = "Fit 1"
+            sess.fit_manager.add_component("Linear")
+            if i == 0:
+                self.app._active_series_id = sid
+
+    def test_batch_fit_reports_data_warnings_once(self):
+        self._add_series_with_nans()
+        with mock.patch("curvelab.app.messagebox") as app_mb, \
+             mock.patch("curvelab.app_fit_handlers.ModelComparisonDialog"):
+            self.app._on_batch_fit()
+
+        self.assertEqual(app_mb.showinfo.call_count, 0)      # no per-series info
+        self.assertEqual(app_mb.showwarning.call_count, 1)   # one summary
+        body = app_mb.showwarning.call_args[0][1]
+        for label in ("s0", "s1", "s2"):
+            self.assertIn(label, body)
+
+    def test_single_fit_still_shows_dialog(self):
+        self._add_series_with_nans(n_series=1)
+        rec = self.app._series_records["ds0::x::y"]
+        with mock.patch("curvelab.app.messagebox") as app_mb:
+            self.app._get_fit_data(rec)
+
+        self.assertEqual(app_mb.showinfo.call_count, 1)
+
+    def test_collected_warnings_are_labelled_and_deduplicated(self):
+        self._add_series_with_nans(n_series=1)
+        rec = self.app._series_records["ds0::x::y"]
+        collected = []
+        with mock.patch("curvelab.app.messagebox") as app_mb:
+            self.app._get_fit_data(rec, warnings_out=collected)
+            self.app._get_fit_data(rec, warnings_out=collected)
+            app_mb.showinfo.assert_not_called()
+            self.app._report_collected_warnings("Data Warnings", collected)
+
+        self.assertEqual(len(collected), 2)
+        self.assertTrue(all(m.startswith("s0: ") for m in collected))
+        # Identical messages collapse into one line in the dialog.
+        self.assertEqual(app_mb.showwarning.call_args[0][1].count("\n"), 0)
+
+
+class PlotControlPersistenceTests(GuiTestBase):
+    """Controls that change what is plotted or computed must survive a save
+    and load; several were written to the widget but never to the file."""
+
+    NON_DEFAULTS = {
+        "weighted_resid_var": False,
+        "data_var": False,
+        "band_sigma_var": "3",
+        "residuals_var": True,
+        "confidence_band_var": True,
+    }
+
+    def test_plot_controls_round_trip(self):
+        for name, value in self.NON_DEFAULTS.items():
+            getattr(self.app.plot_controls, name).set(value)
+        self.app.fit_panel.scale_covar_var.set(False)
+
+        ws = self.app._serialize_workspace()
+
+        # A fresh app starts at the defaults, then restores from the dict.
+        import tkinter as tk
+        from curvelab.app import CurveLabApp
+        root2 = tk.Tk()
+        try:
+            app2 = CurveLabApp(root2)
+            app2._load_workspace_plot_controls(ws)
+            for name, value in self.NON_DEFAULTS.items():
+                self.assertEqual(getattr(app2.plot_controls, name).get(), value, name)
+            self.assertFalse(app2.fit_panel.scale_covar_var.get())
+        finally:
+            root2.destroy()
+
+    def test_missing_keys_fall_back_to_defaults(self):
+        self.app._load_workspace_plot_controls({"plot_controls": {}})
+
+        self.assertTrue(self.app.plot_controls.weighted_resid_var.get())
+        self.assertTrue(self.app.plot_controls.data_var.get())
+        self.assertEqual(self.app.plot_controls.band_sigma_var.get(), "1")
+        self.assertTrue(self.app.fit_panel.scale_covar_var.get())
+
+
+class SimulatedSeriesTests(GuiTestBase):
+    """Generated series (simulate, export smoothed, placeholder) all register
+    through one helper: dataset, column combos, and panel entry together."""
+
+    def test_simulated_data_registers_dataset_and_series(self):
+        rec, sess = self._add_fitted_series(run=False)
+        self.app.data_panel.add_series_entry(rec.style)
+
+        self.app._generate_simulated_data(
+            0.0, 10.0, 50, {"gaussian": True, "gaussian_sigma": 0.1}
+        )
+
+        self.assertIn("Simulated 1", self.app.data_mgr.datasets)
+        sid = "Simulated 1::x::y"
+        self.assertIn(sid, self.app._series_records)
+        self.assertEqual(len(self.app._series_records[sid].x), 50)
+        # Noise produced a yerr column, and the series entry points at it.
+        entry = [s for s in self.app.data_panel.series_list
+                 if s["dataset"] == "Simulated 1"][0]
+        self.assertEqual(entry["yerr"], "yerr")
+
+    def test_exported_smooth_series_is_registered(self):
+        rec, sess = self._add_fitted_series(run=False)
+        self.app.data_panel.add_series_entry(rec.style)
+
+        self.app._export_smooth_series(rec.x, rec.y, "Smoothed")
+
+        name = f"{rec.dataset_name} (Smoothed)"
+        self.assertIn(name, self.app.data_mgr.datasets)
+        entry = [s for s in self.app.data_panel.series_list
+                 if s["dataset"] == name][0]
+        self.assertEqual(entry["linestyle"], "-")
+
+
+class SqliteWorkspaceReloadTests(GuiTestBase):
+    """A SQLite file loads all its tables as separate datasets, so a
+    workspace reload has to map each saved name back by (file, table)."""
+
+    def _make_db(self):
+        import os, sqlite3, tempfile
+        path = os.path.join(tempfile.mkdtemp(), "meas.sqlite")
+        conn = sqlite3.connect(path)
+        for table in ("run1", "run2"):
+            conn.execute(f"CREATE TABLE {table} (x REAL, y REAL)")
+            conn.executemany(f"INSERT INTO {table} VALUES (?, ?)",
+                             [(float(i), 2.0 * i) for i in range(5)])
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_both_tables_map_back_to_their_datasets(self):
+        path = self._make_db()
+        name = os.path.basename(path)
+        ws = {
+            "data_filepaths": {f"{name}::run1": path, f"{name}::run2": path},
+            "table_names": {f"{name}::run1": "run1", f"{name}::run2": "run2"},
+        }
+
+        mapping = self.app._load_workspace_datasets(ws)
+
+        self.assertEqual(mapping[f"{name}::run1"], f"{name}::run1")
+        self.assertEqual(mapping[f"{name}::run2"], f"{name}::run2")
+        # The file is opened once, not once per saved dataset.
+        self.assertEqual(len(self.app.data_mgr.datasets), 2)
+
+
+class ObjectiveControlTests(GuiTestBase):
+    """The Objective control follows the method, f_scale enables only for
+    robust losses, and the app turns the selection into fit_kws."""
+
+    def _state(self, w):
+        return str(w.cget("state"))
+
+    def test_objective_choices_and_control_states_follow_method(self):
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        self.assertIn("Cauchy", fp._objective_combo["values"])
+        self.assertEqual(self._state(fp._f_scale_entry), "disabled")  # linear
+
+        fp.objective_var.set("Cauchy"); fp._on_objective_changed()
+        self.assertEqual(self._state(fp._f_scale_entry), "normal")
+
+        fp.method_var.set("odr"); fp._on_method_changed()
+        self.assertEqual(fp._objective_combo["values"], ("Orthogonal distance",))
+        self.assertEqual(self._state(fp._weight_combo), "disabled")
+        self.assertEqual(self._state(fp._scale_covar_check), "disabled")
+
+        # Remembered loss restored when returning to least_squares.
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        self.assertEqual(fp.objective_var.get(), "Cauchy")
+        self.assertEqual(self._state(fp._weight_combo), "readonly")
+
+    def test_get_fit_options_builds_objective_kws(self):
+        self._add_fitted_series(run=False)
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        fp.objective_var.set("Cauchy"); fp._on_objective_changed()
+        fp.f_scale_var.set("3.0")
+
+        objective_kws, *_ = self.app._get_fit_options()
+        self.assertEqual(objective_kws, {"loss": "cauchy", "f_scale": 3.0})
+
+        fp.method_var.set("nelder"); fp._on_method_changed()
+        fp.objective_var.set("Neg. entropy"); fp._on_objective_changed()
+        objective_kws, *_ = self.app._get_fit_options()
+        self.assertIn("reduce_fcn", objective_kws)
+
+    def test_bad_f_scale_falls_back_to_default(self):
+        self._add_fitted_series(run=False)
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        fp.objective_var.set("Cauchy"); fp._on_objective_changed()
+        fp.f_scale_var.set("not a number")
+        objective_kws, *_ = self.app._get_fit_options()
+        self.assertEqual(objective_kws["f_scale"], 1.0)
+
+
+class ObjectiveWorkspaceTests(GuiTestBase):
+    """The objective survives a workspace round trip, and an old reduce_fcn
+    key still loads."""
+
+    def test_objective_round_trip(self):
+        fp = self.app.fit_panel
+        fp.method_var.set("least_squares"); fp._on_method_changed()
+        fp.objective_var.set("Huber"); fp._on_objective_changed()
+        fp.f_scale_var.set("2.5")
+        ws = self.app._serialize_workspace()
+
+        import tkinter as tk
+        from curvelab.app import CurveLabApp
+        root2 = tk.Tk()
+        try:
+            app2 = CurveLabApp(root2)
+            app2._load_workspace_plot_controls(ws)
+            self.assertEqual(app2.fit_panel.method_var.get(), "least_squares")
+            self.assertEqual(app2.fit_panel.objective_var.get(), "Huber")
+            self.assertEqual(app2.fit_panel.f_scale_var.get(), "2.5")
+        finally:
+            root2.destroy()
+
+    def test_legacy_reduce_fcn_key_still_loads(self):
+        # A pre-objective workspace: scalar method + reduce label.
+        ws = {"plot_controls": {"fit_method": "nelder",
+                                "reduce_fcn": "Neg. entropy"}}
+        self.app._load_workspace_plot_controls(ws)
+        self.assertEqual(self.app.fit_panel.method_var.get(), "nelder")
+        self.assertEqual(self.app.fit_panel.objective_var.get(), "Neg. entropy")
+
+
+class UseResultAsStartTests(GuiTestBase):
+    """The 'Use as Start' button seeds the next fit from the current result,
+    the opt-in way to chain a refinement now that fits restart from the guess."""
+
+    def test_button_transfers_result_into_start_values(self):
+        rec, sess = self._add_fitted_series(run=True)
+        fm = sess.fit_manager
+        # Move the live params off the fitted result, as a stray edit might.
+        fitted = fm.params["slope"].value
+        fm.set_param("slope", value=999.0)
+
+        self.app._on_use_result_as_start()
+
+        # capture_start_values grabbed the current params; the next fit starts
+        # from them. Here we assert the start now reflects the captured values.
+        self.assertEqual(fm._start_values["slope"], 999.0)
+
+    def test_button_needs_a_result(self):
+        rec, sess = self._add_fitted_series(run=False)  # no result yet
+        with mock.patch("curvelab.app.messagebox.showwarning") as warn:
+            self.app._on_use_result_as_start()
+        warn.assert_called_once()
+
+
+class NoUncertaintyWarningTests(GuiTestBase):
+    """A fit that produced no uncertainties (singular covariance) warns the
+    user, since the curve can look good while parameters are meaningless."""
+
+    def test_warns_when_errorbars_missing(self):
+        rec, sess = self._add_fitted_series(run=False)
+        sess.fit_manager.run_fit  # ensure a fit manager exists
+        # Fabricate a completed result flagged as having no uncertainties.
+        x = np.linspace(0, 1, 10)
+        from curvelab.session import FitResult
+        sess.result = FitResult(
+            x_dense=x, y_fit_dense=x, x_data=x, y_data=x, y_fit_data=x,
+            yerr_data=None, params={}, report="", errorbars=False)
+
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn:
+            self.app._post_fit_update(sess, rec, "ds::x::y")
+
+        warn.assert_called_once()
+        self.assertIn("uncertaint", warn.call_args[0][1].lower())
+
+    def test_no_warning_for_normal_fit(self):
+        rec, sess = self._add_fitted_series(run=True)  # ordinary Linear fit
+        self.assertTrue(sess.result.errorbars)
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn:
+            self.app._post_fit_update(sess, rec, "ds::x::y")
+        warn.assert_not_called()
+
+
+class FitValidationTests(GuiTestBase):
+    """_on_fit refuses a method whose requirements aren't met, and doesn't
+    launch a fit in that case."""
+
+    def test_bounds_required_method_blocks_fit(self):
+        rec, sess = self._add_fitted_series(run=False)
+        # Linear params default to unbounded, and DE needs finite bounds.
+        self.app.fit_panel.method_var.set("differential_evolution")
+
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn, \
+             mock.patch.object(self.app, "_run_fit_sync") as sync, \
+             mock.patch.object(self.app, "_run_fit_async") as async_:
+            self.app._on_fit()
+
+        warn.assert_called_once()
+        self.assertIn("finite", warn.call_args[0][1])
+        sync.assert_not_called()
+        async_.assert_not_called()
+
+    def test_bounded_params_allow_fit(self):
+        rec, sess = self._add_fitted_series(run=False)
+        fm = sess.fit_manager
+        for name in fm.params:
+            fm.set_param(name, min=-100.0, max=100.0)
+        self.app.fit_panel.method_var.set("differential_evolution")
+
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn, \
+             mock.patch.object(self.app, "_run_fit_async") as async_:
+            self.app._on_fit()
+
+        warn.assert_not_called()
+        async_.assert_called_once()   # DE is a slow method -> async path
+
+
 class ScaleRoundTripTests(GuiTestBase):
     """matplotlib 3.6 keeps a line's log-transformed path cache across a
     scale change once a draw happened in log scale, rendering lines at log
@@ -250,6 +734,18 @@ class TitleAndAxisLimitTests(GuiTestBase):
         self.app._on_axis_limits("", "", "", "")
         self.assertLess(ax.get_xlim()[0], 1.0)
         self.assertGreater(ax.get_xlim()[1], 9.0)
+
+    def test_pinned_limits_survive_equal_aspect_toggle(self):
+        self._add_fitted_series()
+        self.app._replot_all_series()
+        ax = self.app.plot_mgr.ax
+        self.app._on_axis_limits("1", "5", "-2", "8")
+
+        self.app.plot_mgr.set_equal_aspect(True)
+        self.app.plot_mgr.set_equal_aspect(False)
+
+        self.assertEqual(ax.get_xlim(), (1.0, 5.0))
+        self.assertEqual(ax.get_ylim(), (-2.0, 8.0))
 
     def test_bad_limit_warns_and_keeps_previous(self):
         self._add_fitted_series()

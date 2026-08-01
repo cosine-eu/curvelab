@@ -7,9 +7,9 @@ fit_panel), so they are not usable standalone.
 
 from tkinter import messagebox, filedialog
 
-from .fit_manager import FitManager
+from .fit_manager import FitManager, make_gof
 from .ui_dialogs_analysis import (
-    ModelComparisonDialog, FTestDialog,
+    ModelComparisonDialog, FTestDialog, comparison_row,
     ConfidenceIntervalDialog, CorrelationMatrixDialog, CovarianceMatrixDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog, ProfileLikelihoodDialog,
     BootstrapDialog, BruteCandidatesDialog, EmceeSummaryDialog,
@@ -35,17 +35,9 @@ class AnalysisHandlersMixin:
         for sess_name, sess in rec.fit_sessions.items():
             if sess.result is None:
                 continue
-            model_desc = sess.fit_manager.model_description()
-            gof = sess.result.gof
-            rows.append({
-                "session": sess_name,
-                "model": model_desc,
-                "n_params": len(sess.result.params),
-                "chisqr": gof.get("chi-squared"),
-                "redchi": gof.get("reduced chi-squared"),
-                "aic": gof.get("AIC"),
-                "bic": gof.get("BIC"),
-            })
+            rows.append(comparison_row(
+                sess_name, sess.fit_manager.model_description(), sess.result
+            ))
         if not rows:
             messagebox.showinfo("No Fits", "No completed fits to compare.")
             return
@@ -185,6 +177,7 @@ class AnalysisHandlersMixin:
             fm = sess.fit_manager
             for name, val in params_dict.items():
                 fm.set_param(name, value=val)
+                fm.set_start_value(name, val)  # loaded values become the start
             self._refresh_param_display()
 
         dlg = BruteCandidatesDialog(self, sess.result.candidates, on_select=on_select)
@@ -251,13 +244,13 @@ class AnalysisHandlersMixin:
 
             # Display params and report in the results panel
             self.fit_results.set_params(FitManager.params_to_info(loaded.params))
-            gof = {
-                "chi-squared": getattr(loaded, "chisqr", None),
-                "reduced chi-squared": getattr(loaded, "redchi", None),
-                "R-squared": getattr(loaded, "rsquared", None),
-                "AIC": getattr(loaded, "aic", None),
-                "BIC": getattr(loaded, "bic", None),
-            }
+            gof = make_gof(
+                chisqr=getattr(loaded, "chisqr", None),
+                redchi=getattr(loaded, "redchi", None),
+                rsquared=getattr(loaded, "rsquared", None),
+                aic=getattr(loaded, "aic", None),
+                bic=getattr(loaded, "bic", None),
+            )
             self.fit_results.set_gof(gof)
             self.fit_results.set_report(loaded.fit_report())
         except Exception as e:

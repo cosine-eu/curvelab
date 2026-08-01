@@ -1,4 +1,15 @@
+# Core runtime dependencies (mirrors [project].dependencies in pyproject.toml).
 numpy
 pandas
 matplotlib
+scipy
 lmfit
+# Imported directly by CurveLab (also lmfit core deps, listed for clarity).
+asteval
+uncertainties
+# Fitting stack: numdifftools gives uncertainties for scalar/global methods,
+# emcee provides the MCMC method, tqdm its progress bars. These are optional
+# extras of lmfit, so they are required explicitly here.
+numdifftools
+emcee
+tqdm
