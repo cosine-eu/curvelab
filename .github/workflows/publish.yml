@@ -65,8 +65,18 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install with test extras
-        run: python -m pip install -e .[test]
+      - name: Install with every optional group
+        # All extras, so the suite exercises the optional file formats and
+        # the ODR fit method instead of skipping them. odrpack is installed
+        # separately and tolerantly: it ships Fortran-built wheels that are
+        # not available for every platform, and a missing one must skip the
+        # ODR tests, not fail the job.
+        run: |
+          python -m pip install -e ".[notebook,excel,ods,hdf5,parquet,test]"
+          python -m pip install xlrd
+      - name: Install ODR backend (optional)
+        continue-on-error: true
+        run: python -m pip install -e ".[odr]"
       - name: Run tests
         # A virtual display lets the headless GUI integration tests run
         # instead of self-skipping; they fall back to skipping if Tk is
