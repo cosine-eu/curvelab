@@ -4,16 +4,16 @@ Interactive curve fitting application for 1D experimental data, built on [lmfit]
 
 CurveLab provides a desktop GUI (Tkinter) and a Jupyter notebook widget for loading data, building composite models, fitting curves, and analyzing results -- all without writing code.
 
-![curvelab](docs/curvelab.png "Curvelab GUI")
+![curvelab](https://raw.githubusercontent.com/cosine-eu/curvelab/main/docs/curvelab.png "Curvelab GUI")
 
 This project is also [an experiment in AI-assisted coding](docs/ai_assisted_coding_experiment.md).
 
 ## Features
 
-- **34+ built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, Bose, Fermi, and more. Custom expressions supported.
+- **34 built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, and more, plus Bose and Fermi when lmfit >= 1.3 is installed. Custom expressions supported.
 - **Composite models** -- combine components with `+`, `*`, `-`, `/` operators
 - **14 fitting methods** -- Trust Region Reflective (default), Levenberg-Marquardt, Nelder-Mead, differential evolution, basin-hopping, MCMC (emcee), brute-force grid search, ODR, and more
-- **10 file formats** -- CSV, TSV, TXT/DAT, Excel, ODS, JSON, Parquet, HDF5, SQLite, plus clipboard paste
+- **9 file formats** -- CSV, TSV, TXT/DAT, Excel, ODS, JSON, Parquet, HDF5, SQLite, plus clipboard paste
 - **Multi-series / multi-session** -- plot multiple datasets, run multiple fit sessions per series, batch fit across all series
 - **Statistical analysis** -- confidence intervals, correlation/covariance matrices, diagnostic plots, bootstrap CI, profile likelihood, F-test, model comparison (AIC/BIC), uncertainty propagation, 2D confidence contours
 - **Data tools** -- auto peak detection, derivative/integral, Savitzky-Golay smoothing, outlier detection (MAD-based sigma-clipping), point exclusion, column calculator, data simulation
@@ -22,6 +22,13 @@ This project is also [an experiment in AI-assisted coding](docs/ai_assisted_codi
 - **Jupyter support** -- full-featured `CurveLabWidget` with ipywidgets
 
 ## Quick Start
+
+```bash
+pip install curvelab
+curvelab
+```
+
+Or from a clone, for development:
 
 ```bash
 git clone https://github.com/cosine-eu/curvelab.git
@@ -55,26 +62,48 @@ DataManager --> SeriesRecord --> PlotManager (display)
 
 Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.py` for Jupyter) coordinate between the core modules. See the [User Manual](docs/user_manual.md) for details.
 
+**GUI-agnostic core:**
+
 | Module | Role |
 |--------|------|
-| `app.py` | Main Tkinter application, central coordinator |
-| `notebook.py` | Jupyter notebook widget (ipywidgets) |
 | `fit_manager.py` | Composite model building, auto-guess, fitting, GOF metrics |
 | `data_manager.py` | Tabular data loading with auto-detection |
-| `models.py` | Registry of 34+ built-in lmfit models |
-| `plot_manager.py` | Matplotlib figure management (dual-axis, error bars, bands) |
-| `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, sort) |
+| `models.py` | Registry of the built-in lmfit models |
 | `session.py` | Dataclasses: SeriesRecord, FitSession, FitResult |
+| `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, sort) |
+| `analysis_tools.py` | Dialog numerics (peaks, smoothing, outliers, F-test) |
 | `workspace.py` | JSON serialization for save/load |
+| `plot_manager.py` | Matplotlib figure management (dual-axis, error bars, bands) |
+
+**Desktop application** -- `CurveLabApp` is composed from mixins, one per
+area of responsibility:
+
+| Module | Role |
+|--------|------|
+| `app.py` | `CurveLabApp` itself: composition, layout, parameter table |
+| `app_menu.py` | Menu bar construction |
+| `app_series.py` | Dataset/series/session lifecycle |
+| `app_plotting.py` | Drawing series, fits, and residuals |
+| `app_fit_handlers.py` | Fit, batch fit, abort, pre-fit validation |
+| `app_analysis_handlers.py` | Analysis-menu dialog wiring |
+| `app_data_tools.py` | Data-tool dialog wiring |
+| `app_workspace.py` | Save/load workspace, exports |
+
+**User interface and notebook:**
+
+| Module | Role |
+|--------|------|
 | `ui_panels.py` | Tkinter UI panels (data, fit, plot controls, results) |
 | `ui_dialogs_analysis.py` | Statistical analysis dialogs (CI, contours, bootstrap, etc.) |
 | `ui_dialogs_data.py` | Data tool dialogs (peaks, smooth, derivative, simulate) |
+| `ui_common.py` | Shared widget helpers (BaseDialog, table row tints) |
+| `notebook.py` | Jupyter notebook widget (ipywidgets) |
 
 ## Dependencies
 
-**Core:** numpy, pandas, matplotlib, lmfit
+**Core:** numpy, pandas, matplotlib, scipy, lmfit, asteval, uncertainties, numdifftools, emcee, tqdm
 
-**Optional:** ipywidgets/ipympl (notebook), openpyxl (Excel), odfpy (ODS), tables (HDF5), odrpack (ODR)
+**Optional:** ipywidgets/ipympl (notebook), openpyxl (Excel), odfpy (ODS), tables (HDF5), pyarrow (Parquet), odrpack (ODR), pytest/pytest-cov (test)
 
 See the [Installation Guide](docs/installation.md) for how to install optional dependency groups.
 

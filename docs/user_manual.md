@@ -102,11 +102,14 @@ See [docs/installation.md](installation.md) for installation instructions.
 
 ### Example data
 
-CurveLab ships with test data files in the `test-data/` directory. These
-include CSV files for all 34+ built-in models (e.g.,
+The source repository carries test data files in the `test-data/`
+directory. These include CSV files for all built-in models (e.g.,
 `model_gaussian.csv`, `model_voigt.csv`, `model_exponential.csv`) as well
-as multi-peak and composite model examples. These files are useful for
-learning how each model behaves and for testing your fitting workflow.
+as multi-peak and composite model examples. They are useful for learning
+how each model behaves and for testing your fitting workflow. They are not
+part of the installed package -- clone the repository to get them, or use
+**Analysis > Simulate Data** to generate equivalent data from any model
+(see [Section 26](#26-simulate-data)).
 
 ### The interface at a glance
 
@@ -120,17 +123,18 @@ The window is divided into three regions:
 | **Right pane (middle)** | Plot controls -- scales, toggles, axis labels, fit range |
 | **Right pane (bottom)** | Fit results -- GOF summary, parameter table, and fit report |
 
-Three menus are available in the menu bar:
+Four menus are available in the menu bar:
 
 | Menu | Items |
 |------|-------|
-| **File** | Save/Load Workspace, Paste Data, Export Parameters/Report/Curve Data/Plot, Export/Import Model Result |
+| **File** | Save/Load Workspace, Paste Data, Export Parameters/Report/Curve Data, Export/Import Model Result, Save Plot, Quit |
 | **Analysis** | Confidence Intervals, Correlation/Covariance Matrix, Diagnostic Plots, 2D Contours, Profile Likelihood, Bootstrap CI, Global Fit, Uncertainty Propagation, Model Comparison, F-Test, Simulate Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier Detection, Clear Exclusions (Active Series), Clear Exclusions (All Series) |
 | **Settings** | Fonts, Show numeric warnings |
+| **Help** | About CurveLab |
 
 ### A minimal workflow
 
-1. Click **Load File** and select a data file (CSV, Excel, etc.).
+1. Click **Load File...** and select a data file (CSV, Excel, etc.).
 2. Select X and Y columns, and optionally Y-error and X-error columns.
 3. Click **Add Series**, then **Plot**.
 4. In the Fit panel, click **New** to create a fit session ("Fit 1").
@@ -154,7 +158,7 @@ Three menus are available in the menu bar:
 | Excel | `.xlsx`, `.xls` | openpyxl (`pip install -e ".[excel]"`) |
 | OpenDocument | `.ods` | odfpy (`pip install -e ".[ods]"`) |
 | JSON | `.json` | (built-in) |
-| Parquet | `.parquet` | (built-in via pandas) |
+| Parquet | `.parquet` | pyarrow (`pip install -e ".[parquet]"`) |
 | HDF5 | `.h5`, `.hdf5`, `.hdf` | tables (`pip install -e ".[hdf5]"`) |
 | SQLite | `.sqlite`, `.db` | (built-in) |
 
@@ -198,7 +202,7 @@ Each series has style controls:
 |----------|---------|
 | **Marker** | o, s, ^, v, D, x, +, ., *, h |
 | **Line style** | None, solid (-), dashed (--), dash-dot (-.), dotted (:) |
-| **Color** | 15 preset xkcd colors, or auto-assigned |
+| **Color** | 14 preset xkcd colors, or auto-assigned (the blank entry) |
 | **Label** | Free-text label for the legend |
 
 To modify the style of an existing series, select it in the series listbox,
@@ -590,10 +594,9 @@ vector to a single number the optimizer minimizes:
 (least squares, the log-posterior, and orthogonal distance respectively), so
 the selector shows one entry and is disabled.
 
-> Robust fitting on the default method used to be impossible: the old
-> Reduce menu was ignored by `least_squares`. The Objective control now maps
-> to scipy's `loss` there, so Cauchy/Huber robustness works with the default
-> method.
+> Robust fitting works with the default method: the Objective control maps
+> to scipy's `loss` parameter for `least_squares`, so Cauchy and Huber
+> down-weighting is available without switching to a scalar minimizer.
 
 See:
 - Huber, P.J. (1981), *Robust Statistics*, Wiley.
@@ -631,8 +634,8 @@ After a fit, the results panel shows three sections:
 | Chi-squared | chi2 | Sum of squared weighted residuals. |
 | Reduced chi-squared | chi2/nu | chi2 divided by degrees of freedom (N_data - N_params). Should be approximately 1 for a good fit with correct error bars. |
 | R-squared | R2 | Coefficient of determination. Measures the fraction of variance explained by the model. |
-| AIC | AIC | Akaike Information Criterion: `chi2 + 2k`. Lower is better. |
-| BIC | BIC | Bayesian Information Criterion: `chi2 + k * ln(N)`. Penalizes complexity more heavily than AIC for large N. |
+| AIC | AIC | Akaike Information Criterion: `N * ln(chi2/N) + 2k`. Lower is better. |
+| BIC | BIC | Bayesian Information Criterion: `N * ln(chi2/N) + k * ln(N)`. Penalizes complexity more heavily than AIC for large N. |
 
 **Interpreting reduced chi-squared**:
 - chi2/nu >> 1: the model does not describe the data, or the error bars are
@@ -702,9 +705,11 @@ are cleared when the fit session is cleared.
 
 ## 9. Confidence Intervals and Bands
 
-**Note**: All analysis dialog title bars display the session name (and for
-Model Comparison and F-Test, the series label) to help you track which
-session's results you are viewing.
+**Note**: The statistics dialogs display the session name in their title
+bars (and for Model Comparison and F-Test, the series label) to help you
+track which session's results you are viewing. The data tools (Simulate
+Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier
+Detection) use a plain title.
 
 ### Profile likelihood confidence intervals
 
@@ -943,6 +948,12 @@ The dialog displays:
   percentiles)
 - Vertical lines marking the mean and confidence bounds
 
+The status line reports how many resamples converged and how many failed,
+for example `Done (193/200 resamples converged, 7 failed)`. Failed
+resamples are discarded. A large failure count means the intervals rest on
+fewer samples than requested and the model is probably poorly constrained
+by parts of the data -- treat the result with caution.
+
 See:
 - Efron, B. & Tibshirani, R.J. (1993), *An Introduction to the Bootstrap*,
   Chapman & Hall/CRC.
@@ -1055,11 +1066,13 @@ The session with the lowest AIC is highlighted in green.
 #### AIC (Akaike Information Criterion)
 
 ```
-AIC = chi2 + 2k
+AIC = N * ln(chi2/N) + 2k
 ```
 
-where `k` is the number of free parameters. Lower AIC indicates a better
-model.
+where `k` is the number of free parameters and `N` the number of data
+points. Lower AIC indicates a better model. This is lmfit's definition,
+based on the Gaussian log-likelihood; only differences between AIC values
+are meaningful, not the absolute number.
 
 **Delta-AIC interpretation** (Burnham & Anderson, 2002):
 - Delta < 2: Models are essentially equivalent
@@ -1072,7 +1085,7 @@ identification*, IEEE Trans. Automatic Control 19(6).
 #### BIC (Bayesian Information Criterion)
 
 ```
-BIC = chi2 + k * ln(N)
+BIC = N * ln(chi2/N) + k * ln(N)
 ```
 
 where `N` is the number of data points. BIC penalizes model complexity more
@@ -1122,6 +1135,12 @@ models, and N is the number of data points.
 
 A low p-value (typically < 0.05) indicates that the extra parameters
 significantly improve the fit and the more complex model is justified.
+
+The test is only meaningful for genuinely nested models, so CurveLab
+refuses the comparison and explains why if the "reduced" model does not
+have fewer parameters than the full one, if the full model's chi-squared
+is not lower, or if there are too few data points to leave any residual
+degrees of freedom.
 
 See: Bevington, P.R. & Robinson, D.K. (2003), *Data Reduction and Error
 Analysis*, Chapter 11.
@@ -1197,7 +1216,7 @@ expressions using the fitted parameters and their uncertainties.
 
 ### How it works
 
-CurveLab uses the [uncertainties](https://pythonhosted.org/uncertainties/)
+CurveLab uses the [uncertainties](https://uncertainties.readthedocs.io/)
 package, which implements automatic differentiation for error propagation.
 Each fitted parameter is represented as a `ufloat` (a number with an
 associated uncertainty), and arithmetic operations on ufloats automatically
@@ -1258,7 +1277,9 @@ components for each detected peak.
    - **Model**: Peak model to add (Gaussian, Lorentzian, Voigt, or
      PseudoVoigt)
 4. Click **Detect** to find peaks. A table shows the center, amplitude,
-   and estimated width of each detected peak.
+   and estimated width of each detected peak. The dialog runs one detection
+   automatically when it opens, so the table is already populated with the
+   default settings; use **Detect** after changing them.
 5. Click **Add to Model** to add one component per detected peak to the
    active session's model.
 
@@ -1353,6 +1374,8 @@ points from the fit without deleting them from the dataset.
    its exclusion status.
 3. Excluded points appear as small gray markers on the plot.
 4. Excluded points are not used in subsequent fits.
+5. The window title shows a running count of excluded points, so you can
+   tell at a glance that a series is not being fitted in full.
 
 ### Bulk exclusion via outlier detection
 
@@ -1430,15 +1453,15 @@ results in a table.
 
 ### Output
 
-A two-column table showing x and y values, displayed in monospace font. The
-**Copy** button copies the results to the clipboard.
+Click **Evaluate** to compute the values. A two-column table shows x and y,
+displayed in monospace font; the **Copy** button copies it to the
+clipboard.
 
 ---
 
 ## 28. Column Calculator
 
-**Access**: The **Column Calc** button in the Data panel, or via the
-Analysis menu.
+**Access**: The **Column Calc...** button in the Data panel.
 
 Creates new columns in the active dataset from mathematical expressions
 operating on existing columns.
@@ -1701,18 +1724,33 @@ w
 
 ### Features
 
-The notebook widget provides the same core functionality as the desktop
-application:
+The notebook widget covers the core fitting workflow:
 
 - Data loading (via file upload button or programmatic DataFrame loading)
 - Column selection and series management
-- Model building with the same 34+ built-in models
-- All 14 fitting methods
+- Model building with the same built-in models
 - Parameter table with inline editing
 - Plot with residuals and confidence bands
 - Workspace save/load
 - Numeric warning suppression by default (controllable via the
   `show_warnings` constructor argument)
+
+### Differences from the desktop application
+
+The widget has not yet been reworked to match the current desktop app, so
+it lags behind in these respects:
+
+- 13 fitting methods -- **ODR is not available** in the notebook.
+- The old **Reduce** dropdown is still present instead of the method-aware
+  **Objective** control and its `f_scale` entry, so scipy's robust loss
+  functions cannot be selected (see [Section 6](#6-weighting-and-objective-functions)).
+- No **Use as Start** button, and no warning when a fit reports no
+  uncertainties.
+- Of the analysis tools only **Model Comparison** is available; confidence
+  intervals, contours, bootstrap, profile likelihood, F-test, global fit,
+  uncertainty propagation and the data tools are desktop-only.
+
+Use the desktop application when you need any of these.
 
 The widget layout uses ipywidgets `VBox`, `HBox`, `Tab`, and accordion
 containers to organize the controls in a notebook-friendly layout.
@@ -1770,6 +1808,7 @@ w = CurveLabWidget(show_warnings=True)  # show all warnings
 | **Ctrl+V** | Paste data from clipboard |
 | **Ctrl+Z** | Undo parameter edit |
 | **Ctrl+Shift+Z** | Redo parameter edit |
+| **Ctrl+Q** | Quit |
 
 ---
 
@@ -1870,7 +1909,7 @@ w = CurveLabWidget(show_warnings=True)  # show all warnings
 
 - **uncertainties**: Lebigot, E.O., *Uncertainties: a Python package for
   calculations with uncertainties*.
-  <https://pythonhosted.org/uncertainties/>
+  <https://uncertainties.readthedocs.io/>
 
 - **scipy**: Virtanen, P. et al. (2020), *SciPy 1.0: Fundamental Algorithms
   for Scientific Computing in Python*, Nature Methods 17, 261--272.
@@ -1929,9 +1968,6 @@ w = CurveLabWidget(show_warnings=True)  # show all warnings
 
 - Doniach, S. & Sunjic, M. (1970), *Many-electron singularity in X-ray
   photoemission and X-ray line spectra from metals*, J. Physics C 3(2), 285.
-
-- Efron, B. & Tibshirani, R.J. (1993), *An Introduction to the Bootstrap*,
-  Chapman & Hall/CRC.
 
 - Foreman-Mackey, D. et al. (2013), *emcee: The MCMC Hammer*, PASP
   125(925), 306--312.
