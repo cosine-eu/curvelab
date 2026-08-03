@@ -173,7 +173,9 @@ python -m curvelab
 
 Both commands open the main application window.
 
-### Using CurveLab in Jupyter
+---
+
+## Using CurveLab in Jupyter
 
 To use CurveLab as an interactive widget inside a Jupyter notebook, you must
 first install the notebook optional dependencies and then configure the

@@ -1216,7 +1216,7 @@ expressions using the fitted parameters and their uncertainties.
 
 ### How it works
 
-CurveLab uses the [uncertainties](https://pythonhosted.org/uncertainties/)
+CurveLab uses the [uncertainties](https://uncertainties.readthedocs.io/)
 package, which implements automatic differentiation for error propagation.
 Each fitted parameter is represented as a `ufloat` (a number with an
 associated uncertainty), and arithmetic operations on ufloats automatically
