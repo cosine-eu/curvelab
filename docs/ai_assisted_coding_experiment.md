@@ -240,9 +240,11 @@ requirements but to serve as the application's first real user.
 
 ### Quantitative observations
 
-- The project grew to ~5000 lines of application code, ~1800 lines of
-    documentation, and ~700 lines of tests across approximately 60
-    commits.
+- By August 2026 the project had grown to ~9900 lines of application code,
+    ~2800 lines of documentation, and ~2700 lines of tests across
+    approximately 200 commits. (At the time this note was first written, in
+    May 2026, those figures were ~5000, ~1800 and ~700 across some 60
+    commits — the shape of the growth is as interesting as the totals.)
 
 - The ratio of "agent writes code" to "user tests and reports issue"
     was roughly 3:1 in time but each cycle was short (minutes, not

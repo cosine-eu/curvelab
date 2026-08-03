@@ -62,20 +62,42 @@ DataManager --> SeriesRecord --> PlotManager (display)
 
 Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.py` for Jupyter) coordinate between the core modules. See the [User Manual](docs/user_manual.md) for details.
 
+**GUI-agnostic core:**
+
 | Module | Role |
 |--------|------|
-| `app.py` | Main Tkinter application, central coordinator |
-| `notebook.py` | Jupyter notebook widget (ipywidgets) |
 | `fit_manager.py` | Composite model building, auto-guess, fitting, GOF metrics |
 | `data_manager.py` | Tabular data loading with auto-detection |
-| `models.py` | Registry of 34+ built-in lmfit models |
-| `plot_manager.py` | Matplotlib figure management (dual-axis, error bars, bands) |
-| `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, sort) |
+| `models.py` | Registry of the built-in lmfit models |
 | `session.py` | Dataclasses: SeriesRecord, FitSession, FitResult |
+| `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, sort) |
+| `analysis_tools.py` | Dialog numerics (peaks, smoothing, outliers, F-test) |
 | `workspace.py` | JSON serialization for save/load |
+| `plot_manager.py` | Matplotlib figure management (dual-axis, error bars, bands) |
+
+**Desktop application** -- `CurveLabApp` is composed from mixins, one per
+area of responsibility:
+
+| Module | Role |
+|--------|------|
+| `app.py` | `CurveLabApp` itself: composition, layout, parameter table |
+| `app_menu.py` | Menu bar construction |
+| `app_series.py` | Dataset/series/session lifecycle |
+| `app_plotting.py` | Drawing series, fits, and residuals |
+| `app_fit_handlers.py` | Fit, batch fit, abort, pre-fit validation |
+| `app_analysis_handlers.py` | Analysis-menu dialog wiring |
+| `app_data_tools.py` | Data-tool dialog wiring |
+| `app_workspace.py` | Save/load workspace, exports |
+
+**User interface and notebook:**
+
+| Module | Role |
+|--------|------|
 | `ui_panels.py` | Tkinter UI panels (data, fit, plot controls, results) |
 | `ui_dialogs_analysis.py` | Statistical analysis dialogs (CI, contours, bootstrap, etc.) |
 | `ui_dialogs_data.py` | Data tool dialogs (peaks, smooth, derivative, simulate) |
+| `ui_common.py` | Shared widget helpers (BaseDialog, table row tints) |
+| `notebook.py` | Jupyter notebook widget (ipywidgets) |
 
 ## Dependencies
 
