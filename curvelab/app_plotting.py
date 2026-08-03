@@ -117,14 +117,20 @@ class PlottingMixin:
 
     # --- Plot callback ---
 
-    def _on_plot(self, series_list: list[dict]):
+    def _on_plot(self, series_list: list[dict], warn_if_empty: bool = True):
+        """Redraw every series in series_list.
+
+        warn_if_empty is False when the empty list is the expected outcome of
+        what the user just did -- removing the last series clears the plot on
+        purpose and should not be answered with a warning.
+        """
         if not self.data_mgr.is_loaded:
             messagebox.showwarning("No Data", "Load a data file first.")
             return
 
         self.plot_mgr.clear_all()
 
-        if not series_list:
+        if not series_list and warn_if_empty:
             messagebox.showwarning("No Series", "Add at least one series.")
 
         new_records: dict[str, SeriesRecord] = {}

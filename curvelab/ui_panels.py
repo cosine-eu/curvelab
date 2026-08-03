@@ -324,7 +324,8 @@ class DataPanel(ttk.LabelFrame):
         self.series_listbox.delete(idx)
         self._series_items.pop(idx)
         if self._on_plot:
-            self._on_plot(self._series_items)
+            # Emptying the list here is deliberate, so no "No Series" warning.
+            self._on_plot(self._series_items, warn_if_empty=False)
 
     def _plot(self):
         if self._on_plot:

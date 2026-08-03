@@ -140,12 +140,9 @@ class RemoveSeriesReplotTests(GuiTestBase):
         self.assertEqual(len(self.app._series_records), 1)
 
         # Removing the last one leaves a clean, empty state (no crash).
-        # Replotting with nothing left warns "No Series"; patch it, or the
-        # modal blocks forever where no one can dismiss it.
         dp.series_listbox.selection_clear(0, "end")
         dp.series_listbox.selection_set(0)
-        with mock.patch("curvelab.app_plotting.messagebox.showwarning"):
-            dp._remove_series()
+        dp._remove_series()
         self.root.update()
         self.assertEqual(len(self.app._series_records), 0)
         self.assertIsNone(self.app._active_series_id)
@@ -295,6 +292,37 @@ class ExclusionRenderTests(GuiTestBase):
         self.assertIsNone(rec.mask)
 
 
+class EmptyPlotWarningTests(GuiTestBase):
+    """Clearing the plot by removing the last series is deliberate, so it must
+    not warn; pressing Plot with nothing to draw still should."""
+
+    def _one_series(self):
+        dp = self.app.data_panel
+        self.app.data_mgr.add_dataframe(
+            "ds", pd.DataFrame({"x": np.linspace(0, 10, 20),
+                                "y": np.linspace(0, 10, 20) * 2}))
+        dp.dataset_var.set("ds")
+        dp.x_var.set("x"); dp.y_var.set("y"); dp.label_var.set("s1")
+        dp._add_series()
+        return dp
+
+    def test_removing_last_series_does_not_warn(self):
+        dp = self._one_series()
+        dp.series_listbox.selection_set(0)
+        with mock.patch("curvelab.app_plotting.messagebox.showwarning") as warn:
+            dp._remove_series()
+        warn.assert_not_called()
+        self.assertEqual(len(self.app._series_records), 0)
+
+    def test_plot_button_still_warns_with_no_series(self):
+        self._one_series()
+        self.app.data_panel._series_items.clear()
+        with mock.patch("curvelab.app_plotting.messagebox.showwarning") as warn:
+            self.app.data_panel._plot()
+        warn.assert_called_once()
+        self.assertEqual(warn.call_args[0][0], "No Series")
+
+
 class RemoveSeriesConfirmTests(GuiTestBase):
     """Removing a series from the DataPanel discards its fit sessions, so it
     asks first -- as removing a dataset already did."""
@@ -318,8 +346,7 @@ class RemoveSeriesConfirmTests(GuiTestBase):
     def test_accepting_removes_series(self):
         self._series_with_session()
         with mock.patch("curvelab.app_series.messagebox.askyesno",
-                        return_value=True), \
-             mock.patch("curvelab.app_plotting.messagebox.showwarning"):
+                        return_value=True):
             self.app.data_panel._remove_series()
 
         self.assertNotIn("ds::x::y", self.app._series_records)
@@ -332,8 +359,7 @@ class RemoveSeriesConfirmTests(GuiTestBase):
         self.app.data_panel.add_series_entry(rec.style)
         self.app.data_panel.series_listbox.selection_set(0)
 
-        with mock.patch("curvelab.app_series.messagebox.askyesno") as ask, \
-             mock.patch("curvelab.app_plotting.messagebox.showwarning"):
+        with mock.patch("curvelab.app_series.messagebox.askyesno") as ask:
             self.app.data_panel._remove_series()
 
         ask.assert_not_called()
