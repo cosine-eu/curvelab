@@ -3,7 +3,7 @@
 from .app import CurveLabApp
 
 __all__ = ["CurveLabApp"]
-__version__ = "0.11.1"
+__version__ = "0.11.2"
 
 
 def notebook_widget(**kwargs):
