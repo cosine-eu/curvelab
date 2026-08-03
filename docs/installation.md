@@ -3,13 +3,14 @@
 ## Table of Contents
 
 1. [Prerequisites](#prerequisites)
-2. [Cloning the Repository](#cloning-the-repository)
-3. [Installing in Development Mode](#installing-in-development-mode)
-4. [Optional Dependencies](#optional-dependencies)
-5. [Running CurveLab](#running-curvelab)
-6. [Using CurveLab in Jupyter](#using-curvelab-in-jupyter)
-7. [Verifying the Installation](#verifying-the-installation)
-8. [Troubleshooting](#troubleshooting)
+2. [Installing from PyPI](#installing-from-pypi)
+3. [Cloning the Repository](#cloning-the-repository)
+4. [Installing in Development Mode](#installing-in-development-mode)
+5. [Optional Dependencies](#optional-dependencies)
+6. [Running CurveLab](#running-curvelab)
+7. [Using CurveLab in Jupyter](#using-curvelab-in-jupyter)
+8. [Verifying the Installation](#verifying-the-installation)
+9. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -42,12 +43,30 @@ brew install python-tk
 
 ---
 
-## Cloning the Repository
+## Installing from PyPI
 
-Clone the CurveLab repository and change into its directory:
+For normal use, install the released package:
 
 ```bash
-git clone <repository-url> curvelab
+pip install curvelab
+```
+
+Optional dependency groups use the same names as below, quoted so the shell
+does not interpret the brackets:
+
+```bash
+pip install "curvelab[excel]"
+```
+
+---
+
+## Cloning the Repository
+
+To work on CurveLab itself, clone the repository and change into its
+directory:
+
+```bash
+git clone https://github.com/cosine-eu/curvelab.git
 cd curvelab
 ```
 
@@ -64,12 +83,20 @@ pip install -e .
 
 This installs the core dependencies automatically:
 
-| Package      | Purpose                                |
-|-------------|----------------------------------------|
-| numpy        | Numerical arrays and computation       |
-| pandas       | Tabular data loading and manipulation  |
-| matplotlib   | Plotting (uses the TkAgg backend)      |
-| lmfit        | Non-linear least-squares curve fitting |
+| Package       | Purpose                                            |
+|--------------|----------------------------------------------------|
+| numpy         | Numerical arrays and computation                   |
+| pandas        | Tabular data loading and manipulation              |
+| matplotlib    | Plotting (uses the TkAgg backend)                  |
+| scipy         | Optimizers, smoothing filters, statistical tests   |
+| lmfit         | Non-linear least-squares curve fitting             |
+| asteval       | Sandboxed expression evaluation                    |
+| uncertainties | Uncertainty propagation                            |
+| numdifftools  | Uncertainties for the scalar and global minimizers |
+| emcee         | MCMC sampling (the `emcee` fitting method)         |
+| tqdm          | Progress bars for MCMC sampling                    |
+
+The same list is mirrored in `requirements.txt` at the repository root.
 
 ---
 
@@ -93,14 +120,20 @@ pip install -e ".[ods]"
 # HDF5 file support (.h5, .hdf5, .hdf)
 pip install -e ".[hdf5]"
 
+# Parquet file support (.parquet)
+pip install -e ".[parquet]"
+
 # Orthogonal Distance Regression (ODR) fitting method
 pip install -e ".[odr]"
+
+# Test runner (needed to run the test suite)
+pip install -e ".[test]"
 ```
 
 ### All optional dependencies at once
 
 ```bash
-pip install -e ".[notebook,excel,ods,hdf5,odr]"
+pip install -e ".[notebook,excel,ods,hdf5,parquet,odr,test]"
 ```
 
 ### Summary of optional groups
@@ -108,28 +141,18 @@ pip install -e ".[notebook,excel,ods,hdf5,odr]"
 | Group      | Packages              | Enables                                |
 |------------|----------------------|----------------------------------------|
 | `notebook` | ipywidgets, ipympl   | `CurveLabWidget` for Jupyter notebooks |
-| `excel`    | openpyxl             | Loading .xlsx and .xls files           |
+| `excel`    | openpyxl             | Loading .xlsx files                    |
 | `ods`      | odfpy                | Loading .ods (LibreOffice) files       |
 | `hdf5`     | tables (PyTables)    | Loading .h5, .hdf5, .hdf files         |
+| `parquet`  | pyarrow              | Loading .parquet files                 |
 | `odr`      | odrpack              | ODR fitting method for errors in X and Y |
+| `test`     | pytest, pytest-cov   | Running the test suite                 |
 
-### Additional optional packages
-
-Some analysis features use packages that are not listed as formal
-dependencies but will be used if available:
-
-| Package        | Feature                                          |
-|---------------|--------------------------------------------------|
-| scipy          | Smoothing filters, peak detection, statistical tests, integration |
-| emcee          | MCMC sampling (the `emcee` fitting method)       |
-| uncertainties  | Uncertainty propagation dialog                   |
-| asteval        | Expression evaluation in Column Calculator and Uncertainty Propagation |
-
-These are typically installed as dependencies of lmfit or can be installed
-separately:
+Legacy `.xls` workbooks are offered in the file dialog but need the `xlrd`
+package, which no group installs; add it yourself if you have such files:
 
 ```bash
-pip install scipy emcee uncertainties asteval
+pip install xlrd
 ```
 
 ---
@@ -205,7 +228,7 @@ except ImportError:
     print('Excel support: not installed (pip install -e \".[excel]\")')
 
 try:
-    import odfpy
+    import odf
     print('ODS support: OK')
 except ImportError:
     print('ODS support: not installed (pip install -e \".[ods]\")')
@@ -215,6 +238,12 @@ try:
     print('HDF5 support: OK')
 except ImportError:
     print('HDF5 support: not installed (pip install -e \".[hdf5]\")')
+
+try:
+    import pyarrow
+    print('Parquet support: OK')
+except ImportError:
+    print('Parquet support: not installed (pip install -e \".[parquet]\")')
 
 try:
     import odrpack
@@ -232,7 +261,10 @@ except ImportError:
 
 ### Run the test suite
 
+The suite runs under coverage by default, so install the `test` group first:
+
 ```bash
+pip install -e ".[test]"
 python -m pytest tests/
 ```
 
@@ -288,14 +320,18 @@ export GDK_BACKEND=x11
 curvelab
 ```
 
-### Import errors for scipy, emcee, or uncertainties
+### "No module named pytest_cov" when running the tests
 
-These packages are used by specific analysis features. Install them
-as needed:
+`pyproject.toml` enables coverage for every test run, so pytest-cov must be
+present. Install the `test` group:
 
 ```bash
-pip install scipy emcee uncertainties asteval
+pip install -e ".[test]"
 ```
 
-CurveLab will show an informative error message if a feature requires a
-package that is not installed.
+### A feature reports a missing package
+
+Only the optional groups above are ever missing -- scipy, emcee,
+uncertainties, numdifftools, asteval, and tqdm are installed as core
+dependencies. CurveLab shows an informative error message naming the
+package if a feature requires one that is not installed.

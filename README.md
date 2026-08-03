@@ -4,16 +4,16 @@ Interactive curve fitting application for 1D experimental data, built on [lmfit]
 
 CurveLab provides a desktop GUI (Tkinter) and a Jupyter notebook widget for loading data, building composite models, fitting curves, and analyzing results -- all without writing code.
 
-![curvelab](docs/curvelab.png "Curvelab GUI")
+![curvelab](https://raw.githubusercontent.com/cosine-eu/curvelab/main/docs/curvelab.png "Curvelab GUI")
 
 This project is also [an experiment in AI-assisted coding](docs/ai_assisted_coding_experiment.md).
 
 ## Features
 
-- **34+ built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, Bose, Fermi, and more. Custom expressions supported.
+- **34 built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, and more, plus Bose and Fermi when lmfit >= 1.3 is installed. Custom expressions supported.
 - **Composite models** -- combine components with `+`, `*`, `-`, `/` operators
 - **14 fitting methods** -- Trust Region Reflective (default), Levenberg-Marquardt, Nelder-Mead, differential evolution, basin-hopping, MCMC (emcee), brute-force grid search, ODR, and more
-- **10 file formats** -- CSV, TSV, TXT/DAT, Excel, ODS, JSON, Parquet, HDF5, SQLite, plus clipboard paste
+- **9 file formats** -- CSV, TSV, TXT/DAT, Excel, ODS, JSON, Parquet, HDF5, SQLite, plus clipboard paste
 - **Multi-series / multi-session** -- plot multiple datasets, run multiple fit sessions per series, batch fit across all series
 - **Statistical analysis** -- confidence intervals, correlation/covariance matrices, diagnostic plots, bootstrap CI, profile likelihood, F-test, model comparison (AIC/BIC), uncertainty propagation, 2D confidence contours
 - **Data tools** -- auto peak detection, derivative/integral, Savitzky-Golay smoothing, outlier detection (MAD-based sigma-clipping), point exclusion, column calculator, data simulation
@@ -22,6 +22,13 @@ This project is also [an experiment in AI-assisted coding](docs/ai_assisted_codi
 - **Jupyter support** -- full-featured `CurveLabWidget` with ipywidgets
 
 ## Quick Start
+
+```bash
+pip install curvelab
+curvelab
+```
+
+Or from a clone, for development:
 
 ```bash
 git clone https://github.com/cosine-eu/curvelab.git
@@ -72,9 +79,9 @@ Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.p
 
 ## Dependencies
 
-**Core:** numpy, pandas, matplotlib, lmfit
+**Core:** numpy, pandas, matplotlib, scipy, lmfit, asteval, uncertainties, numdifftools, emcee, tqdm
 
-**Optional:** ipywidgets/ipympl (notebook), openpyxl (Excel), odfpy (ODS), tables (HDF5), odrpack (ODR)
+**Optional:** ipywidgets/ipympl (notebook), openpyxl (Excel), odfpy (ODS), tables (HDF5), pyarrow (Parquet), odrpack (ODR), pytest/pytest-cov (test)
 
 See the [Installation Guide](docs/installation.md) for how to install optional dependency groups.
 
