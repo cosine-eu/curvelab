@@ -140,9 +140,12 @@ class RemoveSeriesReplotTests(GuiTestBase):
         self.assertEqual(len(self.app._series_records), 1)
 
         # Removing the last one leaves a clean, empty state (no crash).
+        # Replotting with nothing left warns "No Series"; patch it, or the
+        # modal blocks forever where no one can dismiss it.
         dp.series_listbox.selection_clear(0, "end")
         dp.series_listbox.selection_set(0)
-        dp._remove_series()
+        with mock.patch("curvelab.app_plotting.messagebox.showwarning"):
+            dp._remove_series()
         self.root.update()
         self.assertEqual(len(self.app._series_records), 0)
         self.assertIsNone(self.app._active_series_id)
@@ -315,7 +318,8 @@ class RemoveSeriesConfirmTests(GuiTestBase):
     def test_accepting_removes_series(self):
         self._series_with_session()
         with mock.patch("curvelab.app_series.messagebox.askyesno",
-                        return_value=True):
+                        return_value=True), \
+             mock.patch("curvelab.app_plotting.messagebox.showwarning"):
             self.app.data_panel._remove_series()
 
         self.assertNotIn("ds::x::y", self.app._series_records)
@@ -328,7 +332,8 @@ class RemoveSeriesConfirmTests(GuiTestBase):
         self.app.data_panel.add_series_entry(rec.style)
         self.app.data_panel.series_listbox.selection_set(0)
 
-        with mock.patch("curvelab.app_series.messagebox.askyesno") as ask:
+        with mock.patch("curvelab.app_series.messagebox.askyesno") as ask, \
+             mock.patch("curvelab.app_plotting.messagebox.showwarning"):
             self.app.data_panel._remove_series()
 
         ask.assert_not_called()
