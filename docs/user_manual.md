@@ -134,7 +134,7 @@ Four menus are available in the menu bar:
 
 ### A minimal workflow
 
-1. Click **Load File** and select a data file (CSV, Excel, etc.).
+1. Click **Load File...** and select a data file (CSV, Excel, etc.).
 2. Select X and Y columns, and optionally Y-error and X-error columns.
 3. Click **Add Series**, then **Plot**.
 4. In the Fit panel, click **New** to create a fit session ("Fit 1").
@@ -594,10 +594,9 @@ vector to a single number the optimizer minimizes:
 (least squares, the log-posterior, and orthogonal distance respectively), so
 the selector shows one entry and is disabled.
 
-> Robust fitting on the default method used to be impossible: the old
-> Reduce menu was ignored by `least_squares`. The Objective control now maps
-> to scipy's `loss` there, so Cauchy/Huber robustness works with the default
-> method.
+> Robust fitting works with the default method: the Objective control maps
+> to scipy's `loss` parameter for `least_squares`, so Cauchy and Huber
+> down-weighting is available without switching to a scalar minimizer.
 
 See:
 - Huber, P.J. (1981), *Robust Statistics*, Wiley.
@@ -949,6 +948,12 @@ The dialog displays:
   percentiles)
 - Vertical lines marking the mean and confidence bounds
 
+The status line reports how many resamples converged and how many failed,
+for example `Done (193/200 resamples converged, 7 failed)`. Failed
+resamples are discarded. A large failure count means the intervals rest on
+fewer samples than requested and the model is probably poorly constrained
+by parts of the data -- treat the result with caution.
+
 See:
 - Efron, B. & Tibshirani, R.J. (1993), *An Introduction to the Bootstrap*,
   Chapman & Hall/CRC.
@@ -1131,6 +1136,12 @@ models, and N is the number of data points.
 A low p-value (typically < 0.05) indicates that the extra parameters
 significantly improve the fit and the more complex model is justified.
 
+The test is only meaningful for genuinely nested models, so CurveLab
+refuses the comparison and explains why if the "reduced" model does not
+have fewer parameters than the full one, if the full model's chi-squared
+is not lower, or if there are too few data points to leave any residual
+degrees of freedom.
+
 See: Bevington, P.R. & Robinson, D.K. (2003), *Data Reduction and Error
 Analysis*, Chapter 11.
 
@@ -1266,7 +1277,9 @@ components for each detected peak.
    - **Model**: Peak model to add (Gaussian, Lorentzian, Voigt, or
      PseudoVoigt)
 4. Click **Detect** to find peaks. A table shows the center, amplitude,
-   and estimated width of each detected peak.
+   and estimated width of each detected peak. The dialog runs one detection
+   automatically when it opens, so the table is already populated with the
+   default settings; use **Detect** after changing them.
 5. Click **Add to Model** to add one component per detected peak to the
    active session's model.
 
@@ -1361,6 +1374,8 @@ points from the fit without deleting them from the dataset.
    its exclusion status.
 3. Excluded points appear as small gray markers on the plot.
 4. Excluded points are not used in subsequent fits.
+5. The window title shows a running count of excluded points, so you can
+   tell at a glance that a series is not being fitted in full.
 
 ### Bulk exclusion via outlier detection
 
@@ -1438,8 +1453,9 @@ results in a table.
 
 ### Output
 
-A two-column table showing x and y values, displayed in monospace font. The
-**Copy** button copies the results to the clipboard.
+Click **Evaluate** to compute the values. A two-column table shows x and y,
+displayed in monospace font; the **Copy** button copies it to the
+clipboard.
 
 ---
 
@@ -1792,6 +1808,7 @@ w = CurveLabWidget(show_warnings=True)  # show all warnings
 | **Ctrl+V** | Paste data from clipboard |
 | **Ctrl+Z** | Undo parameter edit |
 | **Ctrl+Shift+Z** | Redo parameter edit |
+| **Ctrl+Q** | Quit |
 
 ---
 
@@ -1892,7 +1909,7 @@ w = CurveLabWidget(show_warnings=True)  # show all warnings
 
 - **uncertainties**: Lebigot, E.O., *Uncertainties: a Python package for
   calculations with uncertainties*.
-  <https://pythonhosted.org/uncertainties/>
+  <https://uncertainties.readthedocs.io/>
 
 - **scipy**: Virtanen, P. et al. (2020), *SciPy 1.0: Fundamental Algorithms
   for Scientific Computing in Python*, Nature Methods 17, 261--272.
@@ -1951,9 +1968,6 @@ w = CurveLabWidget(show_warnings=True)  # show all warnings
 
 - Doniach, S. & Sunjic, M. (1970), *Many-electron singularity in X-ray
   photoemission and X-ray line spectra from metals*, J. Physics C 3(2), 285.
-
-- Efron, B. & Tibshirani, R.J. (1993), *An Introduction to the Bootstrap*,
-  Chapman & Hall/CRC.
 
 - Foreman-Mackey, D. et al. (2013), *emcee: The MCMC Hammer*, PASP
   125(925), 306--312.
