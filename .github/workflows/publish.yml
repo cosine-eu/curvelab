@@ -70,8 +70,11 @@ jobs:
       - name: Run tests
         # A virtual display lets the headless GUI integration tests run
         # instead of self-skipping; they fall back to skipping if Tk is
-        # unavailable.
-        run: xvfb-run -a python -m pytest tests/
+        # unavailable. There is no window manager under Xvfb, so anything
+        # that waits on a window (a modal dialog with nobody to dismiss it)
+        # would hang forever: -v names the test that is running and
+        # --timeout turns a hang into a traceback pointing at the culprit.
+        run: xvfb-run -a python -m pytest tests/ -v --timeout=120 --timeout-method=thread
 
   publish-testpypi:
     name: Publish to TestPyPI (dry run)

@@ -54,7 +54,7 @@ parquet = ["pyarrow"]
 # aren't available on every platform, so it stays optional to keep installs
 # from failing where no wheel exists.
 odr = ["odrpack"]
-test = ["pytest", "pytest-cov"]
+test = ["pytest", "pytest-cov", "pytest-timeout"]
 
 [project.scripts]
 curvelab = "curvelab.app:CurveLabApp.launch"
