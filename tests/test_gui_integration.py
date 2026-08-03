@@ -82,7 +82,11 @@ class AsyncFitAttributionTests(GuiTestBase):
         self.app._active_series_id = "ds2::x::y"
 
         # Complete A's fit while B is active, threading A's captured sid through.
-        self.app._post_fit_update(sess_a, rec_a, "ds::x::y")
+        # messagebox is patched because _post_fit_update warns when a fit
+        # reports no uncertainties: a real modal dialog has nobody to dismiss
+        # it under a headless X server and would hang the run forever.
+        with mock.patch("curvelab.app_fit_handlers.messagebox"):
+            self.app._post_fit_update(sess_a, rec_a, "ds::x::y")
         self.root.update()
 
         self.assertIn("ds::x::y::Fit 1", self.app.plot_mgr._fit_lines)
