@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "curvelab"
-version = "0.11.3"
+version = "0.11.4"
 description = "Data Plotter & Curve Fitter: a GUI for lmfit"
 readme = "README.md"
 authors = [{ name = "Giuseppe Vacanti", email = "giuseppe@vacanti.org" }]

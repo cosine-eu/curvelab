@@ -1,6 +1,6 @@
 # CurveLab User Manual
 
-*Version 0.11.3 -- A comprehensive guide to interactive curve fitting and statistical analysis*
+*Version 0.11.4 -- A comprehensive guide to interactive curve fitting and statistical analysis*
 
 ---
 
