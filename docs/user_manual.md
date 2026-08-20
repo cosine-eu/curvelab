@@ -168,8 +168,9 @@ line before data looks like column headers (non-numeric tokens matching the
 column count), those are used as column names. Otherwise, columns are named
 `col_0`, `col_1`, etc.
 
-For SQLite files, all tables are loaded as separate datasets named
-`filename::table_name`.
+For SQLite files, every table and every view is loaded as a separate
+dataset named `filename::table_name`. Tables and views are listed
+alphabetically, as are the columns within each one.
 
 CurveLab auto-detects whether the first row is a header. If every value in
 the first row is numeric, default column names are assigned and the row is

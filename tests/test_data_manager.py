@@ -139,6 +139,44 @@ class SqliteLoaderTests(DataManagerTestBase):
         with self.assertRaises(ValueError):
             self.dm.load(p)
 
+    def test_views_are_loaded_like_tables(self):
+        p = self._make_db({"raw": pd.DataFrame({"x": [1, 2], "y": [3, 4]})})
+        conn = sqlite3.connect(p)
+        conn.execute("CREATE VIEW doubled AS SELECT x, y * 2 AS y FROM raw")
+        conn.commit()
+        conn.close()
+
+        first_name, first_cols = self.dm.load(p)
+        self.assertIn("d.sqlite::doubled", self.dm.dataset_names)
+        self.assertEqual(self.dm.table_names["d.sqlite::doubled"], "doubled")
+        # The view is queried, not just listed.
+        self.assertEqual(
+            list(self.dm.get_column("d.sqlite::doubled", "y")), [6.0, 8.0]
+        )
+        # "doubled" sorts before "raw", so it is what load() returns.
+        self.assertEqual(first_name, "d.sqlite::doubled")
+        self.assertEqual(first_cols, ["x", "y"])
+
+    def test_tables_and_columns_are_alphabetical(self):
+        p = self._make_db({
+            "zulu": pd.DataFrame({"beta": [1], "Alpha": [2], "gamma": [3]}),
+            "Mike": pd.DataFrame({"q": [1]}),
+            "alpha": pd.DataFrame({"z": [1], "a": [2]}),
+        })
+        first_name, first_cols = self.dm.load(p)
+        # Case-insensitive: alpha, Mike, zulu -- not alpha, zulu, Mike.
+        self.assertEqual(
+            self.dm.dataset_names,
+            ["d.sqlite::alpha", "d.sqlite::Mike", "d.sqlite::zulu"],
+        )
+        self.assertEqual(first_name, "d.sqlite::alpha")
+        self.assertEqual(first_cols, ["a", "z"])
+        self.assertEqual(
+            self.dm.column_names("d.sqlite::zulu"), ["Alpha", "beta", "gamma"]
+        )
+        # Sorting reorders the columns, it does not shuffle their values.
+        self.assertEqual(list(self.dm.get_column("d.sqlite::zulu", "Alpha")), [2.0])
+
 
 class LoadFromTextTests(DataManagerTestBase):
     def test_comma_delimited_with_header(self):

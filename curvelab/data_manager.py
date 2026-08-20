@@ -65,7 +65,7 @@ class DataManager:
     def __init__(self):
         self.datasets: dict[str, pd.DataFrame] = {}
         self.filepaths: dict[str, Path] = {}
-        self.table_names: dict[str, str] = {}  # dataset_name -> SQLite table name
+        self.table_names: dict[str, str] = {}  # dataset_name -> SQLite table/view name
 
     def _dedupe_name(self, base_name: str) -> str:
         """Return base_name, or 'base_name (2)', 'base_name (3)', ... if taken."""
@@ -82,8 +82,9 @@ class DataManager:
         Supported formats: CSV, TSV, Excel (.xlsx/.xls), JSON, Parquet,
         SQLite (.sqlite/.db).
 
-        For SQLite files, all tables are loaded as separate datasets named
-        ``filename::table_name``. The first table's info is returned.
+        For SQLite files, every table and view is loaded as a separate
+        dataset named ``filename::table_name``, in alphabetical order. The
+        first one's info is returned.
         """
         filepath = Path(filepath)
         ext = filepath.suffix.lower()
@@ -152,20 +153,35 @@ class DataManager:
         return df
 
     def _load_sqlite(self, filepath: Path) -> tuple[str, list[str]]:
-        """Load all tables from a SQLite database as separate datasets."""
+        """Load every table and view from a SQLite database as a dataset.
+
+        A view is queried exactly like a table, so both are offered as
+        sources. Names are listed alphabetically (case-insensitively), and
+        so are the columns within each one, since the storage order of a
+        database column carries no meaning for the user picking x and y.
+        """
         conn = sqlite3.connect(filepath)
         try:
             cursor = conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')"
             )
-            tables = [row[0] for row in cursor.fetchall()]
+            tables = sorted((row[0] for row in cursor.fetchall()), key=str.lower)
             if not tables:
-                raise ValueError(f"No tables found in '{filepath.name}'.")
+                raise ValueError(
+                    f"No tables or views found in '{filepath.name}'."
+                )
 
             first_name = None
             first_columns = None
             for table in tables:
                 df = pd.read_sql_query(f'SELECT * FROM "{table}"', conn)
+                # Reorder by position, not by label: a view is free to
+                # expose the same column name twice, and label-based
+                # selection would duplicate it instead of sorting.
+                order = sorted(
+                    range(df.shape[1]), key=lambda i: str(df.columns[i]).lower()
+                )
+                df = df.iloc[:, order]
                 name = self._dedupe_name(f"{filepath.name}::{table}")
                 self.datasets[name] = df
                 self.filepaths[name] = filepath
