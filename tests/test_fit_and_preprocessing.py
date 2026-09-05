@@ -494,6 +494,41 @@ class PreprocessingTests(unittest.TestCase):
         xo, yo, _, _, warnings = prepare_fit_data(rec)
         self.assertEqual(len(xo), 2)
 
+    def test_zero_or_negative_yerr_points_are_dropped_with_warning(self):
+        # A zero error is an infinite weight: the fit is forced through the
+        # point with a tiny, wrong stderr while chi2/nu looks fine. Such
+        # points are removed up front and reported.
+        from curvelab.preprocessing import prepare_fit_data
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        y = 2.0 * x
+        yerr = np.array([0.1, 0.0, 0.1, -0.2, 0.1])
+        xerr = np.full(5, 0.05)
+        rec = self._make_rec(x, y, yerr=yerr, xerr=xerr)
+
+        xo, yo, yeo, xeo, warnings = prepare_fit_data(rec)
+        np.testing.assert_array_equal(xo, [1.0, 3.0, 5.0])
+        self.assertTrue(np.all(yeo > 0))
+        self.assertEqual(len(xeo), 3)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("2 point(s) with zero or negative y error", warnings[0])
+
+    def test_zero_xerr_is_kept(self):
+        # x exact is a legitimate statement, not a degenerate weight.
+        from curvelab.preprocessing import prepare_fit_data
+        x = np.array([1.0, 2.0, 3.0])
+        rec = self._make_rec(x, 2 * x, yerr=np.full(3, 0.1), xerr=np.array([0.0, 0.1, 0.1]))
+        xo, _, _, _, warnings = prepare_fit_data(rec)
+        self.assertEqual(len(xo), 3)
+        self.assertEqual(warnings, [])
+
+    def test_inverse_y_weights_floor_zeros_at_smallest_magnitude(self):
+        from curvelab.fit_manager import FitManager, WEIGHT_INV_Y
+        y = np.array([0.0, 0.5, 2.0, -4.0])
+        w = FitManager._compute_weights(y, None, WEIGHT_INV_Y)
+        # The zero counts like the smallest measured |y|, not like 1e12.
+        np.testing.assert_allclose(w, [2.0, 2.0, 0.5, 0.25])
+        self.assertIsNone(FitManager._compute_weights(np.zeros(3), None, WEIGHT_INV_Y))
+
     def test_sorting_by_x(self):
         from curvelab.preprocessing import prepare_fit_data
         x = np.array([3.0, 1.0, 2.0])

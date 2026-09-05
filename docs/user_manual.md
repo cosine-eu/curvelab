@@ -540,10 +540,15 @@ The residual vector passed to the optimizer is element-wise
 |------|-------------|----------|
 | **1/yerr (default)** | `1 / sigma_i` | Standard weighted least squares when Y-errors represent 1-sigma uncertainties. Minimizes chi-squared. |
 | **1/yerr^2** | `1 / sigma_i^2` | Occasionally used in spectroscopic fitting conventions. |
-| **1/y** | `1 / y_i` | Relative-error weighting; useful for data spanning several orders of magnitude. |
+| **1/y** | `1 / |y_i|` | Relative-error weighting (sigma proportional to y); useful for data spanning several orders of magnitude. Points with `y = 0` are weighted like the smallest non-zero `|y|`. |
 | **No weights** | `1` | Unweighted (ordinary) least squares. All points contribute equally. |
 | **yerr as weights** | `sigma_i` | Passes errors directly as weights (for specialized cost functions). |
 | **Effective variance** | `1 / sqrt(sigma_y^2 + (df/dx * sigma_x)^2)` | Accounts for X-errors via error propagation. The model derivative df/dx is estimated numerically at each iteration. |
+
+Points whose Y-error is zero or negative are removed before fitting and
+reported in the data warnings. A zero error would mean an infinite weight,
+forcing the fit through that point and making the other points and the
+reported uncertainties meaningless.
 
 **Effective variance weighting** (Orear, 1982) is the correct approach when
 both X and Y have measurement errors and the model has significant slope.

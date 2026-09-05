@@ -673,7 +673,15 @@ class FitManager:
             safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
             return 1.0 / (safe_yerr * safe_yerr)
         if weight_mode == WEIGHT_INV_Y:
-            return 1.0 / np.maximum(np.abs(y), MIN_ERROR)
+            # sigma proportional to |y|. A zero y would get an infinite
+            # weight, so zeros are floored at the smallest non-zero |y|:
+            # they count like the smallest measured magnitude, not like an
+            # exact constraint.
+            abs_y = np.abs(y)
+            positive = abs_y[abs_y > 0]
+            if positive.size == 0:
+                return None
+            return 1.0 / np.maximum(abs_y, positive.min())
         if weight_mode == WEIGHT_YERR and yerr is not None:
             return yerr
         # Default: WEIGHT_INV_YERR
