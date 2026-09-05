@@ -116,8 +116,8 @@ class FitManagerReduceWeightTests(unittest.TestCase):
             raise unittest.SkipTest(f"curvelab unavailable: {exc}")
         self.assertIn("Chi-square (default)", REDUCE_FUNCTIONS)
         self.assertIsNone(REDUCE_FUNCTIONS["Chi-square (default)"])
-        self.assertIn("Neg. entropy", REDUCE_FUNCTIONS)
         self.assertIn("Cauchy log-pdf", REDUCE_FUNCTIONS)
+        self.assertNotIn("Neg. entropy", REDUCE_FUNCTIONS)  # removed: no minimum at r = 0
 
     def test_weight_modes_list(self):
         try:

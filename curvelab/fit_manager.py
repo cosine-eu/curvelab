@@ -13,19 +13,16 @@ from .models import create_expression_model, create_model, create_spline_model
 from .session import FitResult, MIN_ERROR
 
 
-def _reduce_negentropy(r):
-    """Neg-entropy reduce function for robust fitting."""
-    return -np.sum(r * np.log(np.maximum(np.abs(r), MIN_ERROR)))
-
-
 def _reduce_cauchylogpdf(r):
     """Cauchy log-pdf reduce function for outlier-tolerant fitting."""
     return np.sum(np.log1p(r * r))
 
 
+# Scalar objectives for the scalar minimizers. A "Neg. entropy" entry was
+# removed: neither the formula used here nor lmfit's own negentropy has its
+# minimum at zero residual, so it was not a usable fit objective.
 REDUCE_FUNCTIONS = {
     "Chi-square (default)": None,
-    "Neg. entropy": _reduce_negentropy,
     "Cauchy log-pdf": _reduce_cauchylogpdf,
 }
 

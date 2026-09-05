@@ -283,15 +283,6 @@ class ReduceFunctionTests(unittest.TestCase):
         fm.auto_guess(x, y)
         return fm, x, y
 
-    def test_negentropy_reduce_runs_and_fits(self):
-        from curvelab.fit_manager import REDUCE_FUNCTIONS
-        fm, x, y = self._linear_with_outlier()
-        result = fm.run_fit(
-            x, y, weight_mode="No weights",
-            reduce_fcn=REDUCE_FUNCTIONS["Neg. entropy"],
-        )
-        self.assertAlmostEqual(result.params["slope"]["value"], 2.0, delta=0.5)
-
     def test_cauchy_reduce_is_outlier_robust(self):
         from curvelab.fit_manager import REDUCE_FUNCTIONS
         fm, x, y = self._linear_with_outlier()

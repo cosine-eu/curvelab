@@ -49,7 +49,7 @@ class MethodCapabilityTests(unittest.TestCase):
         self.assertEqual(objective_choices("least_squares")[0], "Least squares")
         self.assertIn("Cauchy", objective_choices("least_squares"))
         # ...scalar methods offer the reduce functions...
-        self.assertIn("Neg. entropy", objective_choices("nelder"))
+        self.assertIn("Cauchy log-pdf", objective_choices("nelder"))
         # ...and fixed-objective methods offer exactly one label.
         self.assertEqual(objective_choices("leastsq"), ["Least squares"])
         self.assertEqual(objective_choices("emcee"), ["Log-posterior"])
@@ -63,9 +63,9 @@ class MethodCapabilityTests(unittest.TestCase):
                          {"loss": "cauchy", "f_scale": 2.5})
 
     def test_scalar_kwargs_map_to_reduce_fcn(self):
-        from curvelab.fit_manager import objective_kwargs, _reduce_negentropy
-        self.assertEqual(objective_kwargs("nelder", "Neg. entropy"),
-                         {"reduce_fcn": _reduce_negentropy})
+        from curvelab.fit_manager import objective_kwargs, _reduce_cauchylogpdf
+        self.assertEqual(objective_kwargs("nelder", "Cauchy log-pdf"),
+                         {"reduce_fcn": _reduce_cauchylogpdf})
         # The default (Chi-square) means "no reduce_fcn", not None-injected.
         self.assertEqual(objective_kwargs("nelder", "Chi-square (default)"), {})
 
@@ -77,7 +77,7 @@ class MethodCapabilityTests(unittest.TestCase):
     def test_stale_label_falls_back_to_default(self):
         from curvelab.fit_manager import objective_kwargs
         # A label left over from another method must not inject a bad arg.
-        self.assertEqual(objective_kwargs("least_squares", "Neg. entropy"),
+        self.assertEqual(objective_kwargs("least_squares", "Cauchy log-pdf"),
                          {"loss": "linear"})
         self.assertEqual(objective_kwargs("nelder", "Cauchy"), {})
 
@@ -146,7 +146,7 @@ class ObjectiveKwargsRunFitTests(unittest.TestCase):
         # A scalar method with a reduce_fcn must still complete and fit well.
         res = self._fit_line(
             x, y, method="nelder",
-            objective_kws=objective_kwargs("nelder", "Neg. entropy"))
+            objective_kws=objective_kwargs("nelder", "Cauchy log-pdf"))
         self.assertAlmostEqual(res.params["slope"]["value"], 2.0, delta=0.1)
 
 

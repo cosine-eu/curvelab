@@ -572,7 +572,7 @@ class ObjectiveControlTests(GuiTestBase):
         self.assertEqual(objective_kws, {"loss": "cauchy", "f_scale": 3.0})
 
         fp.method_var.set("nelder"); fp._on_method_changed()
-        fp.objective_var.set("Neg. entropy"); fp._on_objective_changed()
+        fp.objective_var.set("Cauchy log-pdf"); fp._on_objective_changed()
         objective_kws, *_ = self.app._get_fit_options()
         self.assertIn("reduce_fcn", objective_kws)
 
@@ -612,10 +612,18 @@ class ObjectiveWorkspaceTests(GuiTestBase):
     def test_legacy_reduce_fcn_key_still_loads(self):
         # A pre-objective workspace: scalar method + reduce label.
         ws = {"plot_controls": {"fit_method": "nelder",
-                                "reduce_fcn": "Neg. entropy"}}
+                                "reduce_fcn": "Cauchy log-pdf"}}
         self.app._load_workspace_plot_controls(ws)
         self.assertEqual(self.app.fit_panel.method_var.get(), "nelder")
-        self.assertEqual(self.app.fit_panel.objective_var.get(), "Neg. entropy")
+        self.assertEqual(self.app.fit_panel.objective_var.get(), "Cauchy log-pdf")
+
+    def test_removed_objective_label_falls_back_to_default(self):
+        # "Neg. entropy" no longer exists; a workspace that saved it must
+        # load with the default objective rather than fail.
+        ws = {"plot_controls": {"fit_method": "nelder",
+                                "objective": "Neg. entropy"}}
+        self.app._load_workspace_plot_controls(ws)
+        self.assertEqual(self.app.fit_panel.objective_var.get(), "Chi-square (default)")
 
 
 class UseResultAsStartTests(GuiTestBase):

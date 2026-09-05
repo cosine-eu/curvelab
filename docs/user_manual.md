@@ -588,7 +588,6 @@ vector to a single number the optimizer minimizes:
 | Objective | Formula | Properties |
 |-----------|---------|------------|
 | **Chi-square (default)** | `sum(r_i^2)` | Maximum likelihood for Gaussian errors. Sensitive to outliers. |
-| **Neg. entropy** | `-sum(r_i * log(|r_i|))` | Robust to outliers; encourages smooth residual distributions. |
 | **Cauchy log-pdf** | `sum(log(1 + r_i^2))` | Heavy-tailed loss. Strongly down-weights large residuals. |
 
 **`leastsq`, `emcee`, and `odr`** each have a single fixed objective
