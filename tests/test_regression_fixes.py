@@ -137,6 +137,40 @@ class EffectiveVarianceGuardTests(unittest.TestCase):
         self.assertTrue(math.isfinite(result.gof["reduced chi-squared"]))
 
 
+class EffectiveVarianceIterationTests(unittest.TestCase):
+    """The effective-variance weights depend on df/dx and were evaluated once
+    at the starting parameters, so the fitted slope and its stderr depended
+    on the initial guess. They are now iterated to self-consistency."""
+
+    def _fit_from(self, start_slope):
+        from curvelab.fit_manager import FitManager, WEIGHT_EFFECTIVE_VARIANCE
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 30)
+        xerr = np.full(30, 0.5)
+        yerr = np.full(30, 0.05)
+        y = 3.0 * (x + rng.normal(0, 0.5, 30)) + 1.0 + rng.normal(0, 0.05, 30)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.set_param_hint("slope", value=start_slope)
+        fm.set_param_hint("intercept", value=1.0)
+        return fm.run_fit(x, y, yerr=yerr, xerr=xerr, weight_mode=WEIGHT_EFFECTIVE_VARIANCE)
+
+    def test_result_does_not_depend_on_the_start(self):
+        a = self._fit_from(0.0)
+        b = self._fit_from(10.0)
+        self.assertAlmostEqual(a.params["slope"]["value"], b.params["slope"]["value"], places=5)
+        self.assertAlmostEqual(a.params["slope"]["stderr"], b.params["slope"]["stderr"], places=5)
+        self.assertAlmostEqual(a.gof["reduced chi-squared"], b.gof["reduced chi-squared"], places=5)
+
+    def test_weights_are_consistent_with_the_fit(self):
+        # With sigma_x = 0.5 on slope 3 the effective sigma is ~1.5, so the
+        # weighted chi2/nu must be of order 1, not the ~900 that sigma_y alone
+        # (the weights a start at slope 0 would give) implies.
+        r = self._fit_from(0.0)
+        self.assertLess(r.gof["reduced chi-squared"], 3.0)
+        self.assertGreater(r.gof["reduced chi-squared"], 0.2)
+
+
 class AutoGuessMultiPeakTests(unittest.TestCase):
     """e57e455: every component guessed against raw y, collapsing onto one peak."""
 

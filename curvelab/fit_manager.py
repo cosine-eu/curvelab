@@ -228,6 +228,11 @@ N_DENSE = 500
 # to |x|, with a floor so x == 0 still gets a usable step.
 DFDX_REL_STEP = 1e-8
 DFDX_MIN_STEP = 1e-10
+# Effective-variance weights are iterated to self-consistency: refit with
+# weights re-evaluated at the fitted parameters until no varying parameter
+# moves by more than this relative amount, or the round limit is hit.
+EFFECTIVE_VARIANCE_MAX_ROUNDS = 10
+EFFECTIVE_VARIANCE_RTOL = 1e-6
 # Central-difference step for the ODR band Jacobian (df/dbeta).
 ODR_JAC_REL_STEP = 1e-6
 ODR_JAC_MIN_STEP = 1e-10
@@ -739,11 +744,13 @@ class FitManager:
 
         weights = self._compute_weights(y, yerr, weight_mode)
 
+        iterate_weights = False
         if weight_mode == WEIGHT_EFFECTIVE_VARIANCE:
             if xerr is not None and yerr is not None:
                 weights = self._effective_variance_weights(
                     lambda xv: self._model.eval(self._params, x=xv), x, yerr, xerr
                 )
+                iterate_weights = True
             elif yerr is not None:
                 weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
             else:
@@ -767,6 +774,27 @@ class FitManager:
             y, self._params, x=x, weights=weights,
             **fit_kwargs,
         )
+
+        if iterate_weights:
+            # The effective-variance weights depend on df/dx, which was
+            # evaluated at the starting parameters. Left there, the answer
+            # depends on the initial guess. Re-evaluate at the fitted
+            # parameters and refit until the parameters stop moving (Orear's
+            # iterated scheme), so the weights and the fit are consistent.
+            for _ in range(EFFECTIVE_VARIANCE_MAX_ROUNDS):
+                prev = np.array([p.value for p in self._last_result.params.values() if p.vary])
+                fitted = self._last_result.params
+                weights = self._effective_variance_weights(
+                    lambda xv: self._model.eval(fitted, x=xv), x, yerr, xerr
+                )
+                self._last_result = self._model.fit(
+                    y, fitted, x=x, weights=weights, **fit_kwargs,
+                )
+                new = np.array([p.value for p in self._last_result.params.values() if p.vary])
+                scale = np.maximum(np.abs(new), np.abs(prev))
+                scale[scale == 0] = 1.0
+                if np.all(np.abs(new - prev) / scale < EFFECTIVE_VARIANCE_RTOL):
+                    break
 
         # Dense x-grid for smooth curve
         x_dense = np.linspace(x.min(), x.max(), n_dense)
