@@ -597,11 +597,22 @@ class FitManager:
             key=lambda pair: len(pair[0]),
             reverse=True,
         )
-        for name, hints in self._param_hints.items():
+        def remap(name):
             for old_prefix, new_prefix in prefix_pairs:
                 if name.startswith(old_prefix):
-                    target.set_param_hint(new_prefix + name[len(old_prefix):], **hints)
-                    break
+                    return new_prefix + name[len(old_prefix):]
+            return None
+
+        for name, hints in self._param_hints.items():
+            new_name = remap(name)
+            if new_name is not None:
+                target.set_param_hint(new_name, **hints)
+        # The start values travel too, so the clone's first fit begins where
+        # the source's would, not from the model defaults.
+        for name, value in self._start_values.items():
+            new_name = remap(name)
+            if new_name is not None and new_name in (target.params or {}):
+                target._start_values[new_name] = value
 
     def set_param_hint(self, name: str, **kwargs):
         """Store a parameter hint that survives model rebuilds.
@@ -1416,6 +1427,8 @@ class FitManager:
         }
         if self._param_hints:
             data["param_hints"] = self._param_hints
+        if self._start_values:
+            data["start_values"] = dict(self._start_values)
         return data
 
     @classmethod
@@ -1431,4 +1444,9 @@ class FitManager:
         # Restore parameter hints
         for name, hints in data.get("param_hints", {}).items():
             fm.set_param_hint(name, **hints)
+        # Restore the start values (after the hints, which also set starts).
+        # Workspaces from before this field simply have none recorded.
+        for name, value in data.get("start_values", {}).items():
+            if fm.params is not None and name in fm.params:
+                fm._start_values[name] = float(value)
         return fm

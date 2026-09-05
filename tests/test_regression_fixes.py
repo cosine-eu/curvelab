@@ -240,6 +240,43 @@ class CloneComponentsHintsTests(unittest.TestCase):
         self.assertEqual(target.params["intercept"].max, 5.0)
 
 
+class StartValuePersistenceTests(unittest.TestCase):
+    """The auto-guessed start values were neither serialized nor cloned, so
+    after a workspace load (or a batch-fit clone) the first fit began from
+    the model defaults and captured its own output as the 'guess'."""
+
+    def _guessed_source(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(-5, 5, 100)
+        y = 4.0 * np.exp(-(x - 1.0) ** 2 / (2 * 0.8 ** 2))
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        return fm, x, y
+
+    def test_start_values_survive_serialize_round_trip(self):
+        from curvelab.fit_manager import FitManager
+        source, x, y = self._guessed_source()
+        restored = FitManager.deserialize(source.serialize())
+        self.assertEqual(restored._start_values, source._start_values)
+        r = restored.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], source._start_values["center"])
+
+    def test_old_payload_without_start_values_still_loads(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager.deserialize({"components": [
+            {"name": "Linear", "prefix": "", "operator": "+", "expression": ""}]})
+        self.assertIsNotNone(fm.model)
+
+    def test_start_values_follow_clone(self):
+        from curvelab.fit_manager import FitManager
+        source, x, y = self._guessed_source()
+        target = FitManager()
+        source.clone_components_to(target)
+        self.assertEqual(target._start_values["center"], source._start_values["center"])
+        self.assertEqual(target._start_values["sigma"], source._start_values["sigma"])
+
+
 class CloneComponentsSelfTests(unittest.TestCase):
     """Batch fit clones the source model onto every series, the source
     included. Cloning onto itself used to clear the component list it was
