@@ -481,9 +481,13 @@ This helps avoid confusion when the fit curve appears without any data.
 ### Slow methods and threading
 
 Methods that tend to be slow (differential evolution, basin-hopping,
-dual annealing, shgo, ampgo, emcee, brute) run in a background thread so
-the UI remains responsive. The **Fit** button changes to an **Abort**
-button during the fit, allowing early termination.
+dual annealing, shgo, ampgo, emcee, brute), and every global fit, run in
+a background thread so the UI remains responsive. The **Fit** button
+changes to an **Abort** button during the fit, allowing early termination.
+While a fit runs, the controls that would change the model or its
+parameters are disabled, and menu items or shortcuts that would do the
+same (undo/redo, Global Fit, Load Workspace, Import Model Result) answer
+with a "Busy" notice.
 
 ### Max function evaluations
 

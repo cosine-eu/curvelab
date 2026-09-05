@@ -154,6 +154,66 @@ class ControlLockoutTests(GuiTestBase):
         self.assertEqual(fm.params["slope"].value, 9.0)
 
 
+class BackgroundRunnerTests(GuiTestBase):
+    """Slow single fits and global fits share one background runner: the
+    panel locks while the job runs, results land on the Tk thread, an
+    abort drops the result, and an exception becomes a dialog."""
+
+    def _pump_until_done(self, timeout_s=10.0):
+        import time
+        deadline = time.time() + timeout_s
+        while self.app._fit_thread is not None and time.time() < deadline:
+            self.root.update()
+            time.sleep(0.01)
+        self.root.update()
+        self.assertIsNone(self.app._fit_thread, "background job did not finish")
+
+    def test_job_result_is_delivered_and_panel_unlocked(self):
+        self._add_fitted_series(run=False)
+        seen = []
+        self.assertTrue(self.app._run_in_background(lambda: 42, seen.append))
+        self.assertEqual(self.app.fit_panel._fit_btn["text"], "Abort")
+        self._pump_until_done()
+        self.assertEqual(seen, [42])
+        self.assertEqual(self.app.fit_panel._fit_btn["text"], "Fit")
+
+    def test_job_error_is_shown_and_abort_is_silent(self):
+        self._add_fitted_series(run=False)
+
+        def boom():
+            raise RuntimeError("no good")
+        with mock.patch("curvelab.app_fit_handlers.messagebox") as mb:
+            self.app._run_in_background(boom, lambda r: None, error_title="Global Fit Error")
+            self._pump_until_done()
+        mb.showerror.assert_called_once()
+        self.assertEqual(mb.showerror.call_args[0][0], "Global Fit Error")
+
+        seen = []
+        with mock.patch("curvelab.app_fit_handlers.messagebox") as mb:
+            self.app._run_in_background(lambda: self.app._fit_abort.set() or 1, seen.append)
+            self._pump_until_done()
+        self.assertEqual(seen, [])                 # aborted: result dropped
+        mb.showerror.assert_not_called()
+
+    def test_global_fit_runs_on_the_background_thread(self):
+        rec_a, sess_a = self._add_fitted_series(sid="ds::x::y", label="A", dataset="ds", run=False)
+        rec_b, _ = self._add_fitted_series(sid="ds2::x::y", label="B", dataset="ds2", run=False)
+        self.app._active_series_id = "ds::x::y"
+        captured = {}
+        with mock.patch("curvelab.app_fit_handlers.GlobalFitDialog",
+                        side_effect=lambda *a, **kw: captured.update(kw)):
+            self.app._on_global_fit()
+        with mock.patch("curvelab.app_fit_handlers.messagebox"):
+            captured["on_fit"](["ds::x::y", "ds2::x::y"], {"slope"})
+            self.assertIsNotNone(self.app._fit_thread)       # ran in the background
+            self._pump_until_done()
+        self.assertIsNotNone(sess_a.result)
+        self.assertIsNotNone(rec_b.fit_sessions["Fit 1"].result)
+        self.assertEqual(sess_a.result.params["slope"]["value"],
+                         rec_b.fit_sessions["Fit 1"].result.params["slope"]["value"])
+        self.assertIn("ds::x::y::Fit 1", self.app.plot_mgr._fit_lines)
+
+
 class RemoveSeriesReplotTests(GuiTestBase):
     """ff1ddb4: removing a series from the panel replots immediately."""
 

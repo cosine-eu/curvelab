@@ -184,48 +184,29 @@ class FitHandlersMixin:
             "Busy", "A fit is running. Wait for it to finish, or abort it.")
         return True
 
-    def _run_fit_async(self, rec, sess, method, sid):
-        """Run fit in a background thread (slow methods)."""
-        if self._fit_thread is not None and self._fit_thread.is_alive():
-            messagebox.showwarning("Busy", "A fit is already running.")
-            return
-
-        self._fit_abort.clear()
-        self._set_fit_running(True)
-
-        fm = sess.fit_manager
-        try:
-            x, y, yerr, xerr = self._get_fit_data(rec)
-        except Exception as e:
-            messagebox.showerror("Fit Error", str(e))
-            self._set_fit_running(False)
-            return
-
-        # Build iter_cb that checks abort flag
+    def _abort_iter_cb(self):
+        """An lmfit iter_cb that stops the minimizer once Abort is pressed."""
         def iter_cb(params, iter, resid, *args, **kw):
             if self._fit_abort.is_set():
                 return True
+        return iter_cb
 
-        # Build fit_kws for emcee
-        fit_kws = {}
-        if method == "emcee":
-            fit_kws["is_weighted"] = yerr is not None
+    def _run_in_background(self, job, on_done, error_title="Fit Error") -> bool:
+        """Run job() on the fit thread with the panel locked, then call
+        on_done(result) on the Tk thread. An exception is shown as a dialog
+        (unless the user aborted, which is not an error), and an aborted job
+        is dropped. Returns False if a fit is already running."""
+        if self._fit_in_progress():
+            messagebox.showwarning("Busy", "A fit is already running.")
+            return False
 
-        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
-
-        # Container for result/error from the thread
+        self._fit_abort.clear()
+        self._set_fit_running(True)
         container = {"result": None, "error": None}
 
         def _run():
             try:
-                result = fm.run_fit(
-                    x, y, yerr=yerr, xerr=xerr, method=method,
-                    iter_cb=iter_cb, fit_kws=fit_kws,
-                    objective_kws=objective_kws, weight_mode=weight_mode,
-                    max_nfev=max_nfev, band_sigma=band_sigma,
-                    scale_covar=scale_covar,
-                )
-                container["result"] = result
+                container["result"] = job()
             except Exception as e:
                 container["error"] = e
 
@@ -238,24 +219,56 @@ class FitHandlersMixin:
                 return
             self._fit_thread = None
             self._set_fit_running(False)
-
-            if container["error"] is not None:
-                if not self._fit_abort.is_set():
-                    messagebox.showerror("Fit Error", str(container["error"]))
-                return
             if self._fit_abort.is_set():
                 return
+            if container["error"] is not None:
+                messagebox.showerror(error_title, str(container["error"]))
+                return
+            on_done(container["result"])
 
-            sess.result = container["result"]
+        self.after(self._FIT_POLL_INTERVAL_MS, _poll)
+        return True
+
+    def _run_fit_async(self, rec, sess, method, sid):
+        """Run fit in a background thread (slow methods)."""
+        if self._fit_in_progress():
+            messagebox.showwarning("Busy", "A fit is already running.")
+            return
+
+        fm = sess.fit_manager
+        try:
+            x, y, yerr, xerr = self._get_fit_data(rec)
+        except Exception as e:
+            messagebox.showerror("Fit Error", str(e))
+            return
+
+        # Build fit_kws for emcee
+        fit_kws = {}
+        if method == "emcee":
+            fit_kws["is_weighted"] = yerr is not None
+
+        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+        iter_cb = self._abort_iter_cb()
+
+        def job():
+            return fm.run_fit(
+                x, y, yerr=yerr, xerr=xerr, method=method,
+                iter_cb=iter_cb, fit_kws=fit_kws,
+                objective_kws=objective_kws, weight_mode=weight_mode,
+                max_nfev=max_nfev, band_sigma=band_sigma,
+                scale_covar=scale_covar,
+            )
+
+        def on_done(result):
+            sess.result = result
             self._post_fit_update(sess, rec, sid)
-
             # Auto-show special result dialogs
             if sess.result.candidates:
                 self._show_candidates_dialog(sess)
             if sess.result.flatchain is not None:
                 self._show_emcee_summary_dialog(sess)
 
-        self.after(self._FIT_POLL_INTERVAL_MS, _poll)
+        self._run_in_background(job, on_done)
 
     def _abort_fit(self):
         """Signal the background fit to stop."""
@@ -326,20 +339,28 @@ class FitHandlersMixin:
                 return
             objective_kws, weight_mode, max_nfev, _, scale_covar = options
             method = self.fit_panel.method_var.get()
-            results = fm.run_global_fit(
-                datasets, shared, method=method,
-                max_nfev=max_nfev, weight_mode=weight_mode,
-                objective_kws=objective_kws, scale_covar=scale_covar,
-            )
-
             session_name = sess.name
+            iter_cb = self._abort_iter_cb()
 
-            for (sid, r), result in zip(selected_recs, results):
-                target_sess = r.ensure_session(session_name)
-                target_sess.result = result
-                self._show_fit_on_plot(sid, target_sess, r)
+            # A global fit is several datasets' worth of work, so it runs on
+            # the fit thread like a slow single fit: the panel locks and the
+            # Fit button turns into Abort.
+            def job():
+                return fm.run_global_fit(
+                    datasets, shared, method=method,
+                    max_nfev=max_nfev, weight_mode=weight_mode,
+                    objective_kws=objective_kws, scale_covar=scale_covar,
+                    iter_cb=iter_cb,
+                )
 
-            self._refresh_session_ui()
+            def on_done(results):
+                for (sid, r), result in zip(selected_recs, results):
+                    target_sess = r.ensure_session(session_name)
+                    target_sess.result = result
+                    self._show_fit_on_plot(sid, target_sess, r)
+                self._refresh_session_ui()
+
+            self._run_in_background(job, on_done, error_title="Global Fit Error")
 
         GlobalFitDialog(self, series_info, base_param_names, on_fit=on_fit)
 
