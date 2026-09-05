@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 import tkinter.font as tkfont
 
-from .analysis_tools import compute_diagnostic_stats
+from .analysis_tools import autocorrelation, compute_diagnostic_stats, standardize_residuals
 from .ui_common import (
     BaseDialog, configure_row_tags, row_tag, set_readonly_text,
 )
@@ -493,14 +493,15 @@ class DiagnosticPlotsDialog(BaseDialog):
         import scipy.stats as stats
 
         r = fit_result
-        residuals = r.y_data - r.y_fit_data
+        # The diagnostics ask whether the residuals look like noise. For a
+        # weighted fit the noise model is sigma_i, so the question is about
+        # r_i / sigma_i: raw residuals would show heteroscedasticity that the
+        # weights already account for as if it were misfit.
+        weighted = r.is_weighted()
+        residuals = r.weighted_residuals() if weighted else r.residuals()
+        resid_label = "Weighted residuals (r\u00b7w)" if weighted else "Residuals"
         fitted = r.y_fit_data
-
-        # Standardize residuals
-        std_resid = residuals - residuals.mean()
-        s = residuals.std()
-        if s > 0:
-            std_resid = std_resid / s
+        std_resid = standardize_residuals(residuals)
 
         fig = Figure(figsize=(8, 6))
 
@@ -509,7 +510,7 @@ class DiagnosticPlotsDialog(BaseDialog):
         ax1.scatter(fitted, residuals, s=12, alpha=0.7)
         ax1.axhline(0, color="red", linestyle="--", linewidth=0.8)
         ax1.set_xlabel("Fitted values")
-        ax1.set_ylabel("Residuals")
+        ax1.set_ylabel(resid_label)
         ax1.set_title("Residuals vs Fitted")
 
         # 2. Normal Q-Q
@@ -527,17 +528,8 @@ class DiagnosticPlotsDialog(BaseDialog):
 
         # 4. Autocorrelation
         ax4 = fig.add_subplot(2, 2, 4)
-        n = len(residuals)
-        max_lag = min(20, n - 1)
-        mean_r = residuals.mean()
-        var_r = np.sum((residuals - mean_r) ** 2)
-        acf = []
-        for lag in range(max_lag + 1):
-            c = np.sum((residuals[:n - lag] - mean_r) * (residuals[lag:] - mean_r))
-            acf.append(c / var_r if var_r > 0 else 0.0)
-        lags = np.arange(max_lag + 1)
+        lags, acf, ci = autocorrelation(residuals)
         ax4.bar(lags, acf, width=0.4, color="steelblue")
-        ci = 1.96 / np.sqrt(n)
         ax4.axhline(ci, color="red", linestyle="--", linewidth=0.8)
         ax4.axhline(-ci, color="red", linestyle="--", linewidth=0.8)
         ax4.axhline(0, color="black", linewidth=0.5)
@@ -554,7 +546,8 @@ class DiagnosticPlotsDialog(BaseDialog):
         # --- Residual statistics summary ---
         stats_lines = compute_diagnostic_stats(residuals)
         if stats_lines:
-            stats_frame = ttk.LabelFrame(self, text="Residual Statistics", padding=5)
+            title = "Residual Statistics" + (" (weighted residuals)" if weighted else "")
+            stats_frame = ttk.LabelFrame(self, text=title, padding=5)
             stats_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
             for line in stats_lines:
                 ttk.Label(stats_frame, text=line, wraplength=750,

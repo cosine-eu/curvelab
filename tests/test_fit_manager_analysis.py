@@ -567,6 +567,61 @@ class NonChiSquareObjectiveGofTests(unittest.TestCase):
         self.assertNotIn("objective", r.gof)
 
 
+class WeightedResidualTests(unittest.TestCase):
+    """'Weighted residuals' divided by yerr whatever weight mode had been
+    used, and the diagnostics used raw residuals for weighted fits. The
+    result now records the weights the fit applied, and weighted residuals
+    are residual * weight for every mode."""
+
+    def setUp(self):
+        rng = np.random.default_rng(0)
+        self.x = np.linspace(1, 10, 40)
+        self.y = 5.0 * self.x + rng.normal(0, 0.05, 40) * self.x    # sigma ~ y
+        self.yerr = 0.05 * self.y
+
+    def _fm(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(self.x, self.y)
+        return fm
+
+    def test_default_mode_matches_residual_over_yerr(self):
+        r = self._fm().run_fit(self.x, self.y, yerr=self.yerr)
+        self.assertTrue(r.is_weighted())
+        np.testing.assert_allclose(r.weighted_residuals(), r.residuals() / self.yerr)
+
+    def test_inverse_y_mode_divides_by_y_not_yerr(self):
+        from curvelab.fit_manager import WEIGHT_INV_Y
+        r = self._fm().run_fit(self.x, self.y, yerr=self.yerr, weight_mode=WEIGHT_INV_Y)
+        np.testing.assert_allclose(r.weighted_residuals(), r.residuals() / np.abs(self.y))
+        # Not residual / yerr, which is what the old helper would have given.
+        self.assertFalse(np.allclose(r.weighted_residuals(), r.residuals() / self.yerr))
+
+    def test_unweighted_fit_is_not_weighted(self):
+        from curvelab.fit_manager import WEIGHT_NONE
+        r = self._fm().run_fit(self.x, self.y, yerr=self.yerr, weight_mode=WEIGHT_NONE)
+        self.assertFalse(r.is_weighted())
+        np.testing.assert_allclose(r.weighted_residuals(), r.residuals())
+
+    def test_weighted_residuals_are_homoscedastic(self):
+        # The point of the change: with sigma proportional to y, raw
+        # residuals grow with x while weighted ones do not.
+        r = self._fm().run_fit(self.x, self.y, yerr=self.yerr)
+        raw, w = np.abs(r.residuals()), np.abs(r.weighted_residuals())
+        half = len(self.x) // 2
+        self.assertGreater(raw[half:].mean(), 1.5 * raw[:half].mean())
+        self.assertLess(w[half:].mean(), 1.5 * w[:half].mean())
+
+    def test_old_result_without_weights_falls_back_to_yerr(self):
+        from curvelab.session import FitResult
+        x = np.linspace(0, 1, 5)
+        r = FitResult(x_dense=x, y_fit_dense=x, x_data=x, y_data=x + 0.1, y_fit_data=x,
+                      yerr_data=np.full(5, 0.5), params={}, report="")
+        self.assertTrue(r.is_weighted())
+        np.testing.assert_allclose(r.weighted_residuals(), 0.2)
+
+
 class WeightedRSquaredTests(unittest.TestCase):
     """lmfit 1.2.x computed R^2 from the weighted residuals over the
     unweighted total sum of squares, so a perfect fit with small sigma gave a

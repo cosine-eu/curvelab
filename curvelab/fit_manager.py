@@ -1009,6 +1009,7 @@ class FitManager:
             nfev=nfev,
             strong_correlations=correlated,
             xerr_data=xerr,
+            fit_weights=None if weights is None else np.asarray(weights, dtype=float),
             fit_options={
                 "method": method,
                 "weight_mode": weight_mode,
@@ -1273,6 +1274,9 @@ class FitManager:
                 success=bool(getattr(mini_result, "success", True)),
                 message=str(getattr(mini_result, "message", "") or ""),
                 nfev=getattr(mini_result, "nfev", None),
+                xerr_data=xerr,
+                fit_weights=(None if precomputed_weights[i] is None
+                             else np.asarray(precomputed_weights[i], dtype=float)),
             ))
 
         return results

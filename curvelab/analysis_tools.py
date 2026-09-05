@@ -173,6 +173,29 @@ def parse_x_spec(text: str) -> np.ndarray | None:
     return np.array([float(v) for v in text.split()])
 
 
+def standardize_residuals(residuals) -> np.ndarray:
+    """Residuals centered and divided by their standard deviation."""
+    residuals = np.asarray(residuals, dtype=float)
+    centered = residuals - residuals.mean()
+    s = residuals.std()
+    return centered / s if s > 0 else centered
+
+
+def autocorrelation(residuals, max_lag: int = 20) -> tuple[np.ndarray, np.ndarray, float]:
+    """Sample autocorrelation of residuals up to max_lag. Returns (lags, acf,
+    ci) with ci the 95% band for white noise, 1.96/sqrt(n)."""
+    residuals = np.asarray(residuals, dtype=float)
+    n = len(residuals)
+    max_lag = min(max_lag, n - 1)
+    mean_r = residuals.mean()
+    var_r = np.sum((residuals - mean_r) ** 2)
+    acf = []
+    for lag in range(max_lag + 1):
+        c = np.sum((residuals[:n - lag] - mean_r) * (residuals[lag:] - mean_r))
+        acf.append(c / var_r if var_r > 0 else 0.0)
+    return np.arange(max_lag + 1), np.asarray(acf), 1.96 / np.sqrt(n)
+
+
 def compute_diagnostic_stats(residuals) -> list[str]:
     """Residual-randomness statistics (Durbin-Watson, runs test) as display lines."""
     import scipy.stats as stats

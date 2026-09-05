@@ -108,6 +108,7 @@ def serialize_series_records(
                     "message": r.message,
                     "nfev": r.nfev,
                     "strong_correlations": r.strong_correlations,
+                    "fit_weights": r.fit_weights,
                 })
             fit_sessions[sess_name] = sess_data
 
@@ -191,6 +192,7 @@ def deserialize_series_record(
                 message=rdata.get("message", ""),
                 nfev=rdata.get("nfev"),
                 strong_correlations=list(rdata.get("strong_correlations") or []),
+                fit_weights=_to_array(rdata["fit_weights"]) if rdata.get("fit_weights") is not None else None,
             )
 
         rec.fit_sessions[sess_name] = sess

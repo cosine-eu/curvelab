@@ -11,12 +11,14 @@ import numpy as np
 
 from curvelab.analysis_tools import (
     SMOOTH_METHODS,
+    autocorrelation,
     derivative_and_integral,
     detect_outliers,
     f_test,
     find_peaks_with_widths,
     parse_x_spec,
     smooth_data,
+    standardize_residuals,
 )
 
 
@@ -149,6 +151,21 @@ class DerivativeIntegralTests(unittest.TestCase):
         _, _, total, areas = derivative_and_integral(x, x ** 2, None)
         self.assertAlmostEqual(total, 1.0 / 3.0, places=2)
         self.assertEqual(areas, {})
+
+
+class ResidualDiagnosticsTests(unittest.TestCase):
+    def test_standardize(self):
+        z = standardize_residuals([1.0, 2.0, 3.0, 4.0])
+        self.assertAlmostEqual(z.mean(), 0.0)
+        self.assertAlmostEqual(z.std(), 1.0)
+        np.testing.assert_allclose(standardize_residuals([2.0, 2.0]), 0.0)
+
+    def test_autocorrelation_of_alternating_signs(self):
+        lags, acf, ci = autocorrelation(np.array([1.0, -1.0] * 20), max_lag=3)
+        np.testing.assert_array_equal(lags, [0, 1, 2, 3])
+        self.assertAlmostEqual(acf[0], 1.0)
+        self.assertLess(acf[1], -0.9)
+        self.assertAlmostEqual(ci, 1.96 / np.sqrt(40))
 
 
 class ParseXSpecTests(unittest.TestCase):

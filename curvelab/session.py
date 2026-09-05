@@ -46,6 +46,10 @@ class FitResult:
     init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
     errorbars: bool = True  # False when the fit couldn't estimate uncertainties
     xerr_data: np.ndarray | None = None
+    # The weights w_i the fit actually multiplied the residuals by (None for
+    # an unweighted fit). This is what "weighted residuals" must divide by;
+    # yerr alone is wrong for the 1/y and effective-variance modes.
+    fit_weights: np.ndarray | None = None
     # How the minimizer ended. success is False when it stopped without
     # converging (max_nfev reached, abort, tolerance failure); message is the
     # minimizer's own description; nfev the number of function evaluations.
@@ -82,10 +86,20 @@ class FitResult:
         """Raw residuals (data minus fit) at the data points."""
         return self.y_data - self.y_fit_data
 
+    def is_weighted(self) -> bool:
+        """Whether the fit used weights, i.e. whether weighted_residuals()
+        differs from residuals()."""
+        return self.fit_weights is not None or (
+            self.fit_options is None and self.yerr_data is not None)
+
     def weighted_residuals(self) -> np.ndarray:
-        """Residuals divided by y errors, floored at MIN_ERROR so zero
-        errors can't divide by zero. Raw residuals when there are no y errors."""
-        if self.yerr_data is None:
+        """Residuals as the fit saw them: multiplied by the fit weights
+        (r_i / sigma_i for the default 1/yerr mode). Raw residuals for an
+        unweighted fit. Results saved before the weights were recorded fall
+        back to dividing by yerr, floored at MIN_ERROR."""
+        if self.fit_weights is not None:
+            return self.residuals() * np.asarray(self.fit_weights, dtype=float)
+        if self.fit_options is not None or self.yerr_data is None:
             return self.residuals()
         return self.residuals() / np.maximum(np.abs(self.yerr_data), MIN_ERROR)
 

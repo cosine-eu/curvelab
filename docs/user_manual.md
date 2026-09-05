@@ -859,9 +859,16 @@ After fitting, the Diagnostic Plots dialog opens a four-panel figure plus
 residual statistics. These plots are standard tools in regression analysis
 for assessing whether the assumptions underlying the fit are satisfied.
 
+For a weighted fit every panel and statistic uses the **weighted
+residuals** `w_i (y_i - f(x_i))` (`(y_i - f_i)/sigma_i` in the default
+mode), and the axis labels and the statistics box say so. The question the
+diagnostics answer is whether the residuals look like the noise the fit
+assumed, and the assumed noise is `sigma_i`; raw residuals would show the
+heteroscedasticity the weights already account for as if it were misfit.
+
 ### Panel 1: Residuals vs. Fitted Values
 
-Plots `y_i - f(x_i)` against `f(x_i)`.
+Plots the (weighted) residuals against `f(x_i)`.
 
 - **Random scatter around zero**: The model is adequate.
 - **Systematic patterns**: The model is missing a systematic effect.
@@ -1672,7 +1679,7 @@ fit sessions.
 | **Residuals** | Show residual subplot below the main plot |
 | **Conf. band** | Display confidence band around fit curves |
 | **n sigma** | Confidence band width: 1, 2, or 3 sigma |
-| **Wt. resid** | Show weighted residuals (divided by yerr) instead of raw residuals |
+| **Wt. resid** | Show weighted residuals, multiplied by the weights the fit used (divided by yerr in the default mode), instead of raw residuals |
 | **Exclude pts** | Enable click-to-exclude mode for data points |
 
 ### Title and axis labels
