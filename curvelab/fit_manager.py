@@ -303,6 +303,25 @@ def objective_value(residual: np.ndarray, fit_kws: dict) -> float | None:
     return None
 
 
+@dataclass(frozen=True)
+class FitOptions:
+    """The fit settings read from the Fit panel, in one object rather than a
+    positional tuple: the objective keywords (see objective_kwargs), the
+    weight mode, an optional evaluation cap, the confidence-band sigma, and
+    whether the covariance is scaled by reduced chi-square."""
+    objective_kws: dict
+    weight_mode: str = DEFAULT_WEIGHT_MODE
+    max_nfev: int | None = None
+    band_sigma: int = 1
+    scale_covar: bool = True
+
+    def run_fit_kwargs(self) -> dict:
+        """Keyword arguments for FitManager.run_fit."""
+        return dict(objective_kws=self.objective_kws, weight_mode=self.weight_mode,
+                    max_nfev=self.max_nfev, band_sigma=self.band_sigma,
+                    scale_covar=self.scale_covar)
+
+
 def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
                vary=True, expr="") -> dict:
     """One parameter's entry for FitResult.params.

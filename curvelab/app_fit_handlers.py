@@ -10,7 +10,7 @@ import threading
 from tkinter import messagebox
 
 from .fit_manager import (
-    DEFAULT_F_SCALE, FitManager, METHOD_CAPS, OBJ_SCALAR, SLOW_METHODS,
+    DEFAULT_F_SCALE, FitManager, FitOptions, METHOD_CAPS, OBJ_SCALAR, SLOW_METHODS,
     objective_kwargs, validate_fit_setup,
 )
 from .ui_dialogs_analysis import (
@@ -146,8 +146,8 @@ class FitHandlersMixin:
         else:
             self._run_fit_sync(rec, sess, method, sid)
 
-    def _get_fit_options(self):
-        """Read objective, weight mode, max_nfev, band_sigma, scale_covar from UI.
+    def _get_fit_options(self) -> FitOptions:
+        """Read the fit settings from the UI as a FitOptions.
 
         Raises ValueError with a user-readable message for a Max nfev that
         is not a positive whole number. Fit entry points must call
@@ -176,7 +176,7 @@ class FitHandlersMixin:
                 )
         band_sigma = int(self.plot_controls.band_sigma_var.get())
         scale_covar = self.fit_panel.scale_covar_var.get()
-        return objective_kws, weight_mode, max_nfev, band_sigma, scale_covar
+        return FitOptions(objective_kws, weight_mode, max_nfev, band_sigma, scale_covar)
 
     def _fit_options_or_warn(self):
         """_get_fit_options, reporting an invalid entry to the user and
@@ -192,13 +192,9 @@ class FitHandlersMixin:
         fm = sess.fit_manager
         try:
             x, y, yerr, xerr = self._get_fit_data(rec)
-            objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
-            result = fm.run_fit(
-                x, y, yerr=yerr, xerr=xerr, method=method,
-                objective_kws=objective_kws, weight_mode=weight_mode,
-                max_nfev=max_nfev, band_sigma=band_sigma,
-                scale_covar=scale_covar,
-            )
+            options = self._get_fit_options()
+            result = fm.run_fit(x, y, yerr=yerr, xerr=xerr, method=method,
+                                **options.run_fit_kwargs())
             sess.result = result
             self._post_fit_update(sess, rec, sid)
         except Exception as e:
@@ -209,9 +205,9 @@ class FitHandlersMixin:
         fm = sess.fit_manager
         try:
             x, y, yerr, xerr = self._get_fit_data(rec)
-            _, _, _, band_sigma, _ = self._get_fit_options()
             result = fm.run_odr(
-                x, y, yerr=yerr, xerr=xerr, band_sigma=band_sigma,
+                x, y, yerr=yerr, xerr=xerr,
+                band_sigma=self._get_fit_options().band_sigma,
             )
             sess.result = result
             self._post_fit_update(sess, rec, sid)
@@ -305,17 +301,13 @@ class FitHandlersMixin:
         # the weights actually used.
         fit_kws = dict(self._emcee_settings) if method == "emcee" else {}
 
-        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+        options = self._get_fit_options()
         iter_cb = self._abort_iter_cb()
 
         def job():
-            return fm.run_fit(
-                x, y, yerr=yerr, xerr=xerr, method=method,
-                iter_cb=iter_cb, fit_kws=fit_kws,
-                objective_kws=objective_kws, weight_mode=weight_mode,
-                max_nfev=max_nfev, band_sigma=band_sigma,
-                scale_covar=scale_covar,
-            )
+            return fm.run_fit(x, y, yerr=yerr, xerr=xerr, method=method,
+                              iter_cb=iter_cb, fit_kws=fit_kws,
+                              **options.run_fit_kwargs())
 
         def on_done(result):
             sess.result = result
@@ -387,7 +379,6 @@ class FitHandlersMixin:
             options = self._fit_options_or_warn()
             if options is None:
                 return
-            objective_kws, weight_mode, max_nfev, _, scale_covar = options
             method = self.fit_panel.method_var.get()
             session_name = sess.name
             iter_cb = self._abort_iter_cb()
@@ -398,9 +389,9 @@ class FitHandlersMixin:
             def job():
                 return fm.run_global_fit(
                     datasets, shared, method=method,
-                    max_nfev=max_nfev, weight_mode=weight_mode,
-                    objective_kws=objective_kws, scale_covar=scale_covar,
-                    iter_cb=iter_cb,
+                    max_nfev=options.max_nfev, weight_mode=options.weight_mode,
+                    objective_kws=options.objective_kws,
+                    scale_covar=options.scale_covar, iter_cb=iter_cb,
                 )
 
             def on_done(results):
@@ -433,7 +424,6 @@ class FitHandlersMixin:
         options = self._fit_options_or_warn()
         if options is None:
             return
-        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = options
 
         for sid, target_rec in self._series_records.items():
             target_sess = target_rec.ensure_session(session_name)
@@ -448,12 +438,8 @@ class FitHandlersMixin:
                 )
                 target_fm.auto_guess(x, y)
                 method = self.fit_panel.method_var.get()
-                result = target_fm.run_fit(
-                    x, y, yerr=yerr, xerr=xerr, method=method,
-                    objective_kws=objective_kws, weight_mode=weight_mode,
-                    max_nfev=max_nfev, band_sigma=band_sigma,
-                    scale_covar=scale_covar,
-                )
+                result = target_fm.run_fit(x, y, yerr=yerr, xerr=xerr, method=method,
+                                           **options.run_fit_kwargs())
                 target_sess.result = result
                 self._show_fit_on_plot(sid, target_sess, target_rec)
 

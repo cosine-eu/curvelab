@@ -708,12 +708,12 @@ class ObjectiveControlTests(GuiTestBase):
         fp.objective_var.set("Cauchy"); fp._on_objective_changed()
         fp.f_scale_var.set("3.0")
 
-        objective_kws, *_ = self.app._get_fit_options()
+        objective_kws = self.app._get_fit_options().objective_kws
         self.assertEqual(objective_kws, {"loss": "cauchy", "f_scale": 3.0})
 
         fp.method_var.set("nelder"); fp._on_method_changed()
         fp.objective_var.set("Cauchy log-pdf"); fp._on_objective_changed()
-        objective_kws, *_ = self.app._get_fit_options()
+        objective_kws = self.app._get_fit_options().objective_kws
         self.assertIn("reduce_fcn", objective_kws)
 
     def test_bad_f_scale_falls_back_to_default(self):
@@ -722,7 +722,7 @@ class ObjectiveControlTests(GuiTestBase):
         fp.method_var.set("least_squares"); fp._on_method_changed()
         fp.objective_var.set("Cauchy"); fp._on_objective_changed()
         fp.f_scale_var.set("not a number")
-        objective_kws, *_ = self.app._get_fit_options()
+        objective_kws = self.app._get_fit_options().objective_kws
         self.assertEqual(objective_kws["f_scale"], 1.0)
 
 
@@ -925,8 +925,7 @@ class BadMaxNfevTests(GuiTestBase):
         with self.assertRaises(ValueError):
             self.app._get_fit_options()
         self.app.fit_panel.max_nfev_var.set(" 250 ")
-        _, _, max_nfev, _, _ = self.app._get_fit_options()
-        self.assertEqual(max_nfev, 250)
+        self.assertEqual(self.app._get_fit_options().max_nfev, 250)
 
 
 class ObjectiveWorkspaceTests(GuiTestBase):
