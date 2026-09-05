@@ -415,17 +415,12 @@ class ReduceFunctionTests(unittest.TestCase):
 class WeightModeCoverageTests(unittest.TestCase):
     """The _compute_weights modes not covered by the existing tests."""
 
-    def test_one_over_yerr_squared(self):
-        from curvelab.fit_manager import FitManager
-        yerr = np.array([0.5, 0.25, 1.0])
-        w = FitManager._compute_weights(np.array([1.0, 2, 3]), yerr, "1/yerr²")
-        np.testing.assert_allclose(w, 1.0 / (yerr ** 2))
-
-    def test_yerr_as_weights(self):
-        from curvelab.fit_manager import FitManager
-        yerr = np.array([0.5, 0.25, 1.0])
-        w = FitManager._compute_weights(np.array([1.0, 2, 3]), yerr, "yerr as weights")
-        np.testing.assert_allclose(w, yerr)
+    def test_only_chi_square_consistent_modes_remain(self):
+        # "1/yerr^2" and "yerr as weights" minimized sum r^2/sigma^4 and
+        # sum (sigma r)^2; stderr, chi2 and AIC from them were meaningless.
+        from curvelab.fit_manager import WEIGHT_MODES
+        self.assertEqual(WEIGHT_MODES, ["1/yerr (default)", "1/y", "No weights",
+                                        "Effective variance"])
 
     def test_default_mode_without_yerr_returns_none(self):
         from curvelab.fit_manager import FitManager

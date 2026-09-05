@@ -12,7 +12,7 @@ import pandas as pd
 from tkinter import messagebox, filedialog
 
 from .data_manager import DataManager
-from .fit_manager import DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE
+from .fit_manager import DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, WEIGHT_MODES
 from .workspace import (
     WorkspaceEncoder, decode_workspace,
     serialize_series_records, deserialize_series_record,
@@ -317,7 +317,12 @@ class WorkspaceMixin:
         self.plot_controls.data_var.set(pc.get("data", True))
         self.fit_panel.scale_covar_var.set(pc.get("scale_covar", True))
         self.fit_panel.method_var.set(pc.get("fit_method", DEFAULT_FIT_METHOD))
-        self.fit_panel.weight_var.set(pc.get("weight_mode", DEFAULT_WEIGHT_MODE))
+        # A weight mode that no longer exists (e.g. the removed "1/yerr^2")
+        # falls back to the default rather than lingering as a stale label.
+        weight_mode = pc.get("weight_mode", DEFAULT_WEIGHT_MODE)
+        if weight_mode not in WEIGHT_MODES:
+            weight_mode = DEFAULT_WEIGHT_MODE
+        self.fit_panel.weight_var.set(weight_mode)
         self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))
         # Objective replaces the old reduce_fcn key; fall back to it for
         # workspaces written before the change. set_objective must run after

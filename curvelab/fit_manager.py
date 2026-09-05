@@ -28,27 +28,25 @@ REDUCE_FUNCTIONS = {
 }
 
 # Weight modes double as UI labels and dispatch keys, so they are named once.
+# lmfit multiplies the residual by the weight, so a weight of 1/sigma is
+# what makes the objective chi-square. Two former modes, "1/yerr^2" and
+# "yerr as weights", minimized sum r^2/sigma^4 and sum (sigma r)^2, for which
+# stderr, chi-square, AIC and BIC are all meaningless; they were removed.
 WEIGHT_INV_YERR = "1/yerr (default)"
-WEIGHT_INV_YERR2 = "1/yerr\u00b2"
 WEIGHT_INV_Y = "1/y"
 WEIGHT_NONE = "No weights"
-WEIGHT_YERR = "yerr as weights"
 WEIGHT_EFFECTIVE_VARIANCE = "Effective variance"
 
 WEIGHT_MODES = [
     WEIGHT_INV_YERR,
-    WEIGHT_INV_YERR2,
     WEIGHT_INV_Y,
     WEIGHT_NONE,
-    WEIGHT_YERR,
     WEIGHT_EFFECTIVE_VARIANCE,
 ]
 DEFAULT_WEIGHT_MODE = WEIGHT_INV_YERR
 # Modes whose weights come from yerr (and so silently fall back to unit
 # weights when a dataset has none).
-_YERR_WEIGHT_MODES = {
-    WEIGHT_INV_YERR, WEIGHT_INV_YERR2, WEIGHT_YERR, WEIGHT_EFFECTIVE_VARIANCE,
-}
+_YERR_WEIGHT_MODES = {WEIGHT_INV_YERR, WEIGHT_EFFECTIVE_VARIANCE}
 
 # Minimizers offered in the UI. The slow ones run on a background thread.
 FIT_METHODS = [
@@ -687,9 +685,6 @@ class FitManager:
         """
         if weight_mode == WEIGHT_NONE:
             return None
-        if weight_mode == WEIGHT_INV_YERR2 and yerr is not None:
-            safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
-            return 1.0 / (safe_yerr * safe_yerr)
         if weight_mode == WEIGHT_INV_Y:
             # sigma proportional to |y|. A zero y would get an infinite
             # weight, so zeros are floored at the smallest non-zero |y|:
@@ -700,8 +695,6 @@ class FitManager:
             if positive.size == 0:
                 return None
             return 1.0 / np.maximum(abs_y, positive.min())
-        if weight_mode == WEIGHT_YERR and yerr is not None:
-            return yerr
         # Default: WEIGHT_INV_YERR
         if yerr is not None:
             return 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)

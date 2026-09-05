@@ -1503,7 +1503,10 @@ class CurveLabWidget(widgets.VBox):
         self._fit_xmax.value = pc.get("fit_xmax", "")
         self._method_dd.value = pc.get("fit_method", "least_squares")
         self._reduce_dd.value = pc.get("reduce_fcn", "Chi-square (default)")
-        self._weight_dd.value = pc.get("weight_mode", "1/yerr (default)")
+        weight_mode = pc.get("weight_mode", "1/yerr (default)")
+        if weight_mode not in WEIGHT_MODES:      # removed mode in an old workspace
+            weight_mode = "1/yerr (default)"
+        self._weight_dd.value = weight_mode
         self._max_nfev_text.value = pc.get("max_nfev", "")
         self._xlabel.value = pc.get("xlabel", "")
         self._ylabel.value = pc.get("ylabel", "")
