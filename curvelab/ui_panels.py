@@ -1149,6 +1149,9 @@ class FitResultsPanel(ttk.LabelFrame):
             parts.append(f"AIC={gof['AIC']:.4g}")
         if "BIC" in gof and gof["BIC"] is not None:
             parts.append(f"BIC={gof['BIC']:.4g}")
+        if gof.get("objective") is not None:
+            # A robust loss or reduce function was minimized, not chi-square.
+            parts.append(f"objective={gof['objective']:.4g}")
         self.gof_var.set("  ".join(parts))
 
     def set_report(self, report: str):

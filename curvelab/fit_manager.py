@@ -241,11 +241,16 @@ ODR_JAC_REL_STEP = 1e-6
 ODR_JAC_MIN_STEP = 1e-10
 
 
-def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dict:
+def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None,
+             objective=None) -> dict:
     """Goodness-of-fit dict with the canonical key names and order.
 
     Statistics that a fit doesn't provide (ODR has no AIC/BIC) are left
-    out, so consumers never have to format a None.
+    out, so consumers never have to format a None. "objective" is the
+    minimized value when the objective was not chi-square (a robust loss
+    or a reduce function); chi-square is then still reported, as the
+    weighted sum of squares at the solution, but it is not what was
+    minimized.
     """
     values = {
         "chi-squared": chisqr,
@@ -253,8 +258,45 @@ def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dic
         "R-squared": rsquared,
         "AIC": aic,
         "BIC": bic,
+        "objective": objective,
     }
     return {k: v for k, v in values.items() if v is not None}
+
+
+# scipy.optimize.least_squares loss functions rho(z), z = (r/f_scale)^2; the
+# minimized cost is 0.5 * f_scale^2 * sum(rho(z)).
+_SCIPY_LOSSES = {
+    "linear": lambda z: z,
+    "soft_l1": lambda z: 2.0 * (np.sqrt(1.0 + z) - 1.0),
+    "huber": lambda z: np.where(z <= 1.0, z, 2.0 * np.sqrt(z) - 1.0),
+    "cauchy": lambda z: np.log1p(z),
+    "arctan": lambda z: np.arctan(z),
+}
+
+
+def objective_value(residual: np.ndarray, fit_kws: dict) -> float | None:
+    """The value the minimizer actually minimized, when it was not
+    chi-square: sum(reduce_fcn) for a scalar reduce function, or scipy's
+    robust cost for a least_squares loss. None when the objective was
+    chi-square, so callers can tell the two cases apart.
+
+    lmfit's chisqr/redchi/aic/bic are always the plain (weighted) sum of
+    squares, whatever the objective; after a robust fit they are not the
+    minimized quantity and AIC/BIC cannot rank models fitted with it.
+    """
+    fit_kws = fit_kws or {}
+    reduce_fcn = fit_kws.get("reduce_fcn")
+    if callable(reduce_fcn):
+        return float(reduce_fcn(np.asarray(residual, dtype=float)))
+    loss = fit_kws.get("loss", "linear")
+    if loss and loss != "linear":
+        rho = _SCIPY_LOSSES.get(loss)
+        if rho is None:
+            return None
+        f_scale = float(fit_kws.get("f_scale", 1.0))
+        z = (np.asarray(residual, dtype=float) / f_scale) ** 2
+        return float(0.5 * f_scale ** 2 * np.sum(rho(z)))
+    return None
 
 
 def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
@@ -889,12 +931,18 @@ class FitManager:
         # Update internal params with fitted values
         self._params = self._last_result.params
 
+        objective = objective_value(self._last_result.residual, kws)
         gof = make_gof(
             chisqr=self._last_result.chisqr,
             redchi=self._last_result.redchi,
             rsquared=self._last_result.rsquared,
-            aic=self._last_result.aic,
-            bic=self._last_result.bic,
+            # AIC/BIC are functions of chi-square, so after a robust or
+            # reduce-function fit they describe a quantity that was not
+            # minimized and would rank an outlier-dominated chi-square fit
+            # above the robust one. Left out in that case.
+            aic=self._last_result.aic if objective is None else None,
+            bic=self._last_result.bic if objective is None else None,
+            objective=objective,
         )
 
         # Capture brute-force candidates
@@ -1132,6 +1180,9 @@ class FitManager:
                                nan_policy="omit", scale_covar=scale_covar,
                                iter_cb=iter_cb, **kws)
 
+        # The combined objective, when it was not chi-square (see run_fit).
+        global_objective = objective_value(mini_result.residual, kws)
+
         # Build per-dataset FitResults
         results = []
         for i, (x, y, yerr, xerr) in enumerate(datasets):
@@ -1160,8 +1211,9 @@ class FitManager:
                 chisqr=mini_result.chisqr,
                 redchi=mini_result.redchi,
                 rsquared=1 - np.sum((y - y_fit_data) ** 2) / np.sum((y - y.mean()) ** 2),
-                aic=mini_result.aic,
-                bic=mini_result.bic,
+                aic=mini_result.aic if global_objective is None else None,
+                bic=mini_result.bic if global_objective is None else None,
+                objective=global_objective,
             )
 
             # Generate a report string

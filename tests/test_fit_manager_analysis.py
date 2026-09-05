@@ -443,6 +443,50 @@ class ReduceFunctionTests(unittest.TestCase):
         self.assertAlmostEqual(result.params["slope"]["value"], 2.0, delta=0.3)
 
 
+class NonChiSquareObjectiveGofTests(unittest.TestCase):
+    """lmfit's chisqr/aic/bic are the plain sum of squares whatever the
+    objective. After a robust or reduce-function fit they are not what was
+    minimized, and AIC/BIC would rank the outlier-dominated chi-square fit
+    above the robust one. AIC/BIC are left out and the minimized value is
+    reported as 'objective'."""
+
+    def setUp(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(1)
+        self.x = np.linspace(0, 10, 60)
+        self.y = 2.0 * self.x + 1.0 + rng.normal(0, 0.1, 60)
+        self.y[30] += 20.0
+        self.fm = FitManager()
+        self.fm.add_component("Linear")
+        self.fm.auto_guess(self.x, self.y)
+
+    def test_robust_loss_reports_objective_not_aic(self):
+        from scipy.optimize import least_squares
+        from curvelab.fit_manager import objective_kwargs, WEIGHT_NONE
+        r = self.fm.run_fit(self.x, self.y, weight_mode=WEIGHT_NONE, method="least_squares",
+                            objective_kws=objective_kwargs("least_squares", "Cauchy", 1.0))
+        self.assertNotIn("AIC", r.gof)
+        self.assertNotIn("BIC", r.gof)
+        self.assertIn("chi-squared", r.gof)          # descriptive, still shown
+        ref = least_squares(lambda b: b[0] * self.x + b[1] - self.y, [2.0, 1.0],
+                            loss="cauchy", f_scale=1.0)
+        self.assertAlmostEqual(r.gof["objective"], ref.cost, places=3)
+
+    def test_reduce_fcn_reports_its_value(self):
+        from curvelab.fit_manager import objective_kwargs, WEIGHT_NONE, _reduce_cauchylogpdf
+        r = self.fm.run_fit(self.x, self.y, weight_mode=WEIGHT_NONE, method="nelder",
+                            objective_kws=objective_kwargs("nelder", "Cauchy log-pdf"))
+        self.assertNotIn("AIC", r.gof)
+        resid = r.y_data - r.y_fit_data
+        self.assertAlmostEqual(r.gof["objective"], _reduce_cauchylogpdf(resid), places=6)
+
+    def test_chi_square_fit_keeps_aic_and_has_no_objective_key(self):
+        from curvelab.fit_manager import WEIGHT_NONE
+        r = self.fm.run_fit(self.x, self.y, weight_mode=WEIGHT_NONE)
+        self.assertIn("AIC", r.gof)
+        self.assertNotIn("objective", r.gof)
+
+
 class WeightedRSquaredTests(unittest.TestCase):
     """lmfit 1.2.x computed R^2 from the weighted residuals over the
     unweighted total sum of squares, so a perfect fit with small sigma gave a

@@ -660,18 +660,22 @@ After a fit, the results panel shows three sections:
 
 | Statistic | Symbol | Description |
 |-----------|--------|-------------|
-| Chi-squared | chi2 | Sum of squared weighted residuals. |
-| Reduced chi-squared | chi2/nu | chi2 divided by degrees of freedom (N_data - N_params). Should be approximately 1 for a good fit with correct error bars. |
-| R-squared | R2 | Coefficient of determination. Measures the fraction of variance explained by the model. |
+| Chi-squared | chi2 | Sum of squared weighted residuals, `sum((w_i (y_i - f_i))^2)`. |
+| Reduced chi-squared | chi2/nu | chi2 divided by the degrees of freedom `nu = N_data - N_varied` (fixed and derived parameters do not count). Approximately 1 for a good fit with correct error bars. |
+| R-squared | R2 | Coefficient of determination from the raw (unweighted) residuals. Measures the fraction of variance explained by the model. |
 | AIC | AIC | Akaike Information Criterion: `N * ln(chi2/N) + 2k`. Lower is better. |
 | BIC | BIC | Bayesian Information Criterion: `N * ln(chi2/N) + k * ln(N)`. Penalizes complexity more heavily than AIC for large N. |
+| Objective | objective | Shown only when the fit minimized something other than chi-squared (a robust loss or a reduce function): the minimized value. AIC and BIC are then omitted, because they are functions of chi-squared, which was not minimized, and would rank an outlier-dominated chi-squared fit above the robust one. Chi-squared is still reported as a description of the residuals. |
 
-**Interpreting reduced chi-squared**:
+**Interpreting reduced chi-squared** (only when real Y-errors were used;
+without them chi2 is in arbitrary units and chi2/nu says nothing about the
+model, and the reported parameter errors are scaled by it):
 - chi2/nu >> 1: the model does not describe the data, or the error bars are
   underestimated.
 - chi2/nu ~ 1: good fit with correctly estimated errors.
-- chi2/nu << 1: the model is over-fitting, or the error bars are
-  overestimated.
+- chi2/nu << 1: the error bars are overestimated, or the data points are
+  correlated (fewer independent measurements than N). A small chi2/nu is
+  not evidence of over-fitting.
 
 See: Bevington, P.R. & Robinson, D.K. (2003), *Data Reduction and Error
 Analysis for the Physical Sciences*, 3rd edition, McGraw-Hill.
