@@ -1176,8 +1176,19 @@ cannot constrain all parameters, but jointly they can.
 5. Select which parameters to share across series (checkboxes).
    Checked parameters will have a single value across all series.
    Unchecked parameters get independent values per series (prefixed
-   `s0_`, `s1_`, etc.).
+   `s0_`, `s1_`, etc.). Derived parameters such as `fwhm` or `height` are
+   not free parameters: they are shared exactly when every parameter in
+   their expression is shared, whatever their checkbox says.
 6. Click **Fit**.
+
+The selected series must be weighted on the same footing. With any
+Y-error based weight mode (the default `1/yerr` included), every series
+needs Y-errors, or none may have them; otherwise the fit is refused. A
+series without errors would enter with unit weights, its residuals in
+data units next to the others' `1/sigma` residuals, so one series would
+dominate silently and the combined chi-squared would add unlike
+quantities. Choose **No weights** to fit series with and without errors
+together.
 
 ### Example use cases
 

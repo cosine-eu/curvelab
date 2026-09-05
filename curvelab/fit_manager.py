@@ -44,6 +44,11 @@ WEIGHT_MODES = [
     WEIGHT_EFFECTIVE_VARIANCE,
 ]
 DEFAULT_WEIGHT_MODE = WEIGHT_INV_YERR
+# Modes whose weights come from yerr (and so silently fall back to unit
+# weights when a dataset has none).
+_YERR_WEIGHT_MODES = {
+    WEIGHT_INV_YERR, WEIGHT_INV_YERR2, WEIGHT_YERR, WEIGHT_EFFECTIVE_VARIANCE,
+}
 
 # Minimizers offered in the UI. The slow ones run on a background thread.
 FIT_METHODS = [
@@ -945,6 +950,21 @@ class FitManager:
                     pname = f"s{i}_{name}"
                     combined.add(pname, value=bp.value, min=bp.min, max=bp.max,
                                  vary=bp.vary, expr=per_dataset_expr(bp.expr, i))
+
+        # Every dataset must be weighted on the same footing: a dataset
+        # without yerr gets unit weights, i.e. residuals in y units, which
+        # concatenated with another dataset's 1/sigma residuals lets one of
+        # them dominate silently and makes the combined chi-square a sum of
+        # unlike quantities.
+        if weight_mode in _YERR_WEIGHT_MODES:
+            have = [yerr is not None for _, _, yerr, _ in datasets]
+            if any(have) and not all(have):
+                missing = [i + 1 for i, h in enumerate(have) if not h]
+                raise ValueError(
+                    f"Weight mode '{weight_mode}' needs y-errors on every "
+                    f"dataset, but dataset(s) {missing} of {n} have none. "
+                    "Give every series y-errors, or choose 'No weights'."
+                )
 
         # Pre-compute constant weights (everything except Effective variance
         # with xerr, which depends on the model derivative per iteration)

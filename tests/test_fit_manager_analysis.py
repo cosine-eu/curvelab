@@ -275,6 +275,27 @@ class GlobalFitTests(unittest.TestCase):
         self.assertAlmostEqual(b2, 5.0, delta=0.2)
         self.assertGreater(abs(b1 - b2), 1.0)
 
+    def test_mixed_yerr_is_refused_for_yerr_weight_modes(self):
+        # One dataset with sigma = 0.01 and one without yerr: the unweighted
+        # residuals are in y units next to 1/sigma ones, the first dataset
+        # dominates completely and chi2 mixes units. Refuse, don't guess.
+        yerr1 = np.full_like(self.y1, 0.01)
+        with self.assertRaises(ValueError) as cm:
+            self.fm.run_global_fit(
+                [(self.x1, self.y1, yerr1, None), (self.x2, self.y2, None, None)],
+                shared_params={"slope"},
+            )
+        self.assertIn("dataset(s) [2] of 2", str(cm.exception))
+
+    def test_mixed_yerr_is_fine_without_weights(self):
+        from curvelab.fit_manager import WEIGHT_NONE
+        yerr1 = np.full_like(self.y1, 0.01)
+        results = self.fm.run_global_fit(
+            [(self.x1, self.y1, yerr1, None), (self.x2, self.y2, None, None)],
+            shared_params={"slope"}, weight_mode=WEIGHT_NONE,
+        )
+        self.assertEqual(len(results), 2)
+
     def test_report_and_gof_present(self):
         results = self.fm.run_global_fit(
             [(self.x1, self.y1, None, None), (self.x2, self.y2, None, None)],
