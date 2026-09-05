@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from .data_manager import DataManager
-from .fit_manager import FitManager
+from .fit_manager import DEFAULT_EMCEE_SETTINGS, FitManager
 from .plot_manager import PlotManager
 from .session import (
     FitSession, ParamEdit, SeriesRecord,
@@ -81,6 +81,9 @@ class CurveLabApp(
         # Threading state for async fits
         self._fit_thread: threading.Thread | None = None
         self._fit_abort = threading.Event()
+        # emcee sampler settings (Analysis > MCMC Settings), saved with the
+        # workspace.
+        self._emcee_settings: dict = dict(DEFAULT_EMCEE_SETTINGS)
 
         self._build_layout()
         self._build_menu()

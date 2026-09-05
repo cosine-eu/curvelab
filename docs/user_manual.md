@@ -1056,19 +1056,46 @@ ensemble sampler of Goodman & Weare (2010).
 ### Workflow
 
 1. First run a standard fit (e.g., `least_squares`) to find a good starting
-   point.
-2. Select **emcee** as the method and click **Fit**.
-3. The fit runs in a background thread (can be aborted).
-4. After completion, the **MCMC Summary** dialog appears automatically,
-   showing for each parameter: Median, Mean, Standard deviation, 2.5% and
-   97.5% quantiles (95% credible interval).
+   point. emcee is the one method that does not reset to the start values:
+   it samples around wherever the parameters are, which after that fit is
+   the least-squares optimum.
+2. Optionally open **Analysis > MCMC Settings** to set the number of
+   walkers, steps, burn-in, thinning, and the random seed (defaults: 100
+   walkers, 1000 steps, burn-in 200, thin 1, seed 0). The settings are
+   saved with the workspace.
+3. Select **emcee** as the method and click **Fit**.
+4. The fit runs in a background thread (can be aborted).
+5. After completion, the **MCMC Summary** dialog appears automatically. It
+   starts with the sampling diagnostics, then lists for each parameter:
+   Median, Mean, Standard deviation, 2.5% and 97.5% quantiles (95% credible
+   interval).
 
-### Practical considerations
+### Reading the result
 
-- Ensure convergence by running enough steps.
-- A good starting point from a prior least-squares fit is essential.
-- If Y-errors are provided, the likelihood is Gaussian with known
-  variances. Without errors, a uniform likelihood is used.
+- In the parameter table, **Value** is the posterior median and **StdErr**
+  is half the 16th-84th percentile range: a credible interval, not a
+  covariance-based error. The fit report says so in its `[[MCMC (emcee)]]`
+  block.
+- **Acceptance fraction** (mean over walkers) should lie between 0.2 and
+  0.5. Lower means the walkers rarely move (proposals too wide, or a
+  parameter stuck at a bound); higher means they move too freely (the
+  chain explores slowly).
+- **Autocorrelation time** tau, per parameter, is the number of steps
+  between independent samples. The chain should be at least 50 tau long;
+  the summary reports `steps / longest tau` and says when it is too short
+  to trust. When tau cannot be estimated at all, the chain is far too
+  short.
+- **Burn-in** removes the walkers' approach to the posterior; use at least
+  2 tau. **Thinning** keeps every n-th step and mainly saves memory.
+- The likelihood is Gaussian. With the default `1/yerr` weighting the
+  residuals are already `(y - f)/sigma` and the errors are taken as known.
+  With **No weights** (or no Y-errors) emcee fits the noise scale as an
+  extra parameter, `__lnsigma`, the log of the data's sigma; it appears in
+  the table and the summary but is not a model parameter and is dropped
+  after the run.
+- Profile-likelihood confidence intervals are not available for an emcee
+  result (there is no chi-squared minimum to profile); the posterior
+  quantiles are the interval.
 
 See:
 - Foreman-Mackey, D. et al. (2013), *emcee: The MCMC Hammer*, PASP

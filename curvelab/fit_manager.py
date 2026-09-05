@@ -349,6 +349,87 @@ def convergence_lines(success: bool, message: str, nfev, params: dict,
     return lines
 
 
+# Sampling diagnostics targets (Foreman-Mackey et al. 2013, emcee docs).
+EMCEE_ACCEPTANCE_RANGE = (0.2, 0.5)
+EMCEE_MIN_CHAIN_OVER_TAU = 50
+# Sampler settings offered in the MCMC Settings dialog. burn discards the
+# first steps of every walker (lmfit's default of 0 averages over the
+# burn-in); seed makes a run reproducible.
+DEFAULT_EMCEE_SETTINGS = {"steps": 1000, "nwalkers": 100, "burn": 200, "thin": 1, "seed": 0}
+
+
+def emcee_diagnostics(result, kws: dict) -> dict:
+    """JSON-safe summary of an emcee run: sampler settings, mean acceptance
+    fraction, per-parameter autocorrelation time tau, and the chain length
+    in units of the longest tau. Values the user must judge the sample by,
+    which lmfit computes but the report never showed."""
+    chain = getattr(result, "chain", None)
+    steps_kept = int(chain.shape[0]) if chain is not None and chain.ndim >= 2 else None
+    acc = getattr(result, "acceptance_fraction", None)
+    acor = getattr(result, "acor", None)
+    names = list(getattr(result, "var_names", []) or [])
+    tau = None
+    if acor is not None:
+        try:
+            tau = {n: float(t) for n, t in zip(names, np.atleast_1d(acor))}
+        except Exception:
+            tau = None
+    steps = int(kws.get("steps", 1000))
+    ratio = None
+    if tau and steps_kept:
+        worst = max(tau.values())
+        ratio = float(steps / worst) if worst > 0 else None
+    return {
+        "steps": steps,
+        "nwalkers": int(kws.get("nwalkers", 100)),
+        "burn": int(kws.get("burn", 0)),
+        "thin": int(kws.get("thin", 1)),
+        "seed": kws.get("seed"),
+        "is_weighted": bool(kws.get("is_weighted", True)),
+        "steps_kept": steps_kept,
+        "acceptance_fraction": float(np.mean(acc)) if acc is not None else None,
+        "autocorr_time": tau,
+        "steps_over_tau": ratio,
+    }
+
+
+def emcee_lines(mcmc: dict) -> list[str]:
+    """Report lines for an emcee result: what the table's numbers are and
+    whether the sample can be trusted."""
+    lo, hi = EMCEE_ACCEPTANCE_RANGE
+    lines = [
+        "[[MCMC (emcee)]]",
+        "    values are posterior medians; StdErr is half the 16th-84th "
+        "percentile range (a credible, not a confidence, interval)",
+        f"    walkers {mcmc['nwalkers']}, steps {mcmc['steps']}, burn "
+        f"{mcmc['burn']}, thin {mcmc['thin']}"
+        + (f", seed {mcmc['seed']}" if mcmc.get("seed") is not None else ""),
+    ]
+    acc = mcmc.get("acceptance_fraction")
+    if acc is not None:
+        ok = lo <= acc <= hi
+        lines.append(f"    mean acceptance fraction {acc:.2f}"
+                     + ("" if ok else f"  (outside the {lo}-{hi} target: the walkers "
+                        "are moving too rarely or too freely)"))
+    tau = mcmc.get("autocorr_time")
+    if tau:
+        lines.append("    autocorrelation time: "
+                     + ", ".join(f"{n} {t:.1f}" for n, t in tau.items()))
+        ratio = mcmc.get("steps_over_tau")
+        if ratio is not None:
+            need = EMCEE_MIN_CHAIN_OVER_TAU
+            lines.append(f"    steps / longest tau = {ratio:.0f}"
+                         + ("" if ratio >= need else f"  (below {need}: run more steps, "
+                            "the sample is not yet converged)"))
+    else:
+        lines.append("    autocorrelation time could not be estimated: the chain "
+                     "is too short to judge convergence")
+    if not mcmc.get("is_weighted", True):
+        lines.append("    __lnsigma is the fitted log of the noise scale "
+                     "(unweighted residuals): the data's sigma, not a model parameter")
+    return lines
+
+
 def strong_correlations(params) -> list[list]:
     """[name_a, name_b, rho] for each varying pair with |rho| above
     STRONG_CORRELATION, strongest first. Such pairs trade off against each
@@ -537,6 +618,44 @@ class FitManager:
         e.g. to reuse a fit's result as the next fit's guess."""
         if self._params is not None:
             self._start_values = {n: p.value for n, p in self._params.items()}
+
+    def _prepare_emcee_kws(self, kws: dict, weights) -> None:
+        """Fill in the emcee keywords that must follow from the fit setup.
+
+        is_weighted: whether the residual is already (data - model)/sigma.
+        It follows from the weights actually in use, not from whether the
+        series has a yerr column: 'No weights' with yerr present is an
+        unweighted residual, and emcee must then fit the noise scale
+        (__lnsigma) rather than assume sigma = 1.
+
+        pos: lmfit starts every walker at value * (1 + 1e-4 N(0,1)), so a
+        parameter whose value is exactly 0 gets identical walkers and the
+        ensemble cannot move in that direction. Walkers are placed here
+        with an absolute spread for zero-valued parameters, inside the
+        bounds, using the caller's seed for reproducibility.
+        """
+        kws.setdefault("is_weighted", weights is not None)
+        if "pos" in kws:
+            return
+        rng = np.random.default_rng(kws.get("seed"))
+        names = [n for n, p in self._params.items() if p.vary and not p.expr]
+        values = [self._params[n].value for n in names]
+        lows = [self._params[n].min for n in names]
+        highs = [self._params[n].max for n in names]
+        if not kws["is_weighted"] and "__lnsigma" not in self._params:
+            names.append("__lnsigma")
+            values.append(0.01)
+            lows.append(-np.inf)
+            highs.append(np.inf)
+        nwalkers = int(kws.get("nwalkers", 100))
+        values = np.asarray(values, dtype=float)
+        spread = np.where(values != 0, 1e-4 * np.abs(values), 1e-4)
+        pos = values + spread * rng.standard_normal((nwalkers, len(values)))
+        lo = np.asarray(lows, dtype=float)
+        hi = np.asarray(highs, dtype=float)
+        margin = np.where(np.isfinite(hi - lo), 1e-6 * np.abs(hi - lo), 0.0)
+        pos = np.clip(pos, lo + margin, hi - margin)
+        kws["pos"] = pos
 
     def _reset_to_start_values(self):
         """Reset each varying parameter to its remembered starting value so
@@ -870,8 +989,11 @@ class FitManager:
 
         # Start from the remembered guess/user values, not the previous
         # result, so repeated fits are reproducible and don't drift along a
-        # degenerate direction.
-        self._reset_to_start_values()
+        # degenerate direction. emcee is the exception: it samples the
+        # posterior around wherever the parameters are, and the useful place
+        # is the least-squares optimum the user has just found.
+        if method != "emcee":
+            self._reset_to_start_values()
 
         # Snapshot initial parameter values before fitting
         init_values = {name: par.value for name, par in self._params.items()}
@@ -895,6 +1017,8 @@ class FitManager:
             kws["reduce_fcn"] = reduce_fcn
         if objective_kws:
             kws.update(objective_kws)
+        if method == "emcee":
+            self._prepare_emcee_kws(kws, weights)
 
         fit_kwargs = dict(
             method=method, nan_policy="omit",
@@ -954,8 +1078,12 @@ class FitManager:
         message = str(getattr(self._last_result, "message", "") or "")
         nfev = getattr(self._last_result, "nfev", None)
 
-        # Update internal params with fitted values
-        self._params = self._last_result.params
+        # Update internal params with fitted values. An unweighted emcee run
+        # adds __lnsigma (the fitted noise scale) to the result's params; it
+        # is reported with the result but must not become a model parameter
+        # that every later fit carries along.
+        self._params = self._last_result.params.copy()
+        self._params.pop("__lnsigma", None)
 
         objective = objective_value(self._last_result.residual, kws)
         gof = make_gof(
@@ -982,10 +1110,12 @@ class FitManager:
                 }
                 candidates.append(entry)
 
-        # Capture emcee flatchain
+        # Capture emcee flatchain and sampling diagnostics
         flatchain = None
+        mcmc = None
         if hasattr(self._last_result, "flatchain") and self._last_result.flatchain is not None:
             flatchain = self._last_result.flatchain
+            mcmc = emcee_diagnostics(self._last_result, kws)
 
         return FitResult(
             x_dense=x_dense,
@@ -997,12 +1127,14 @@ class FitManager:
             params=params_info,
             report="\n".join(
                 convergence_lines(success, message, nfev, params_info, correlated)
+                + (emcee_lines(mcmc) if mcmc else [])
                 + ["", self._last_result.fit_report()]),
             gof=gof,
             component_curves=component_curves,
             y_uncertainty=y_uncertainty,
             candidates=candidates,
             flatchain=flatchain,
+            mcmc=mcmc,
             init_params=init_values,
             errorbars=bool(getattr(self._last_result, "errorbars", True)),
             success=success,

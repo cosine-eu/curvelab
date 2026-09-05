@@ -13,7 +13,7 @@ from .ui_dialogs_analysis import (
     ConfidenceIntervalDialog, CorrelationMatrixDialog, CovarianceMatrixDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog, ProfileLikelihoodDialog,
     BootstrapDialog, BruteCandidatesDialog, EmceeSummaryDialog,
-    UncertaintyPropagationDialog,
+    EmceeSettingsDialog, UncertaintyPropagationDialog,
 )
 
 
@@ -194,8 +194,15 @@ class AnalysisHandlersMixin:
         """Show emcee MCMC summary dialog."""
         if sess.result is None or sess.result.flatchain is None:
             return
-        dlg = EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params)
+        dlg = EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params,
+                                 mcmc=sess.result.mcmc)
         dlg.title(self._analysis_title("MCMC (emcee) Summary"))
+
+    def _show_emcee_settings(self):
+        """Edit the emcee sampler settings used by the next emcee fit."""
+        def on_apply(settings):
+            self._emcee_settings = settings
+        EmceeSettingsDialog(self, dict(self._emcee_settings), on_apply=on_apply)
 
     def _show_uncertainty_propagation(self):
         """Open Uncertainty Propagation dialog."""

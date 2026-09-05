@@ -824,6 +824,48 @@ class ModelComparisonComparabilityTests(GuiTestBase):
             dlg.destroy()
 
 
+class EmceeSettingsTests(GuiTestBase):
+    """emcee had no controls: lmfit's defaults (burn 0, no seed) applied and
+    the handler set is_weighted from the yerr column. Settings now live on
+    the app, are edited in a dialog, reach run_fit as fit_kws, and survive
+    a workspace round trip."""
+
+    def test_settings_dialog_applies_and_validates(self):
+        from curvelab.ui_dialogs_analysis import EmceeSettingsDialog
+        from curvelab.fit_manager import DEFAULT_EMCEE_SETTINGS
+        self.assertEqual(self.app._emcee_settings, DEFAULT_EMCEE_SETTINGS)
+        applied = {}
+        dlg = EmceeSettingsDialog(self.app, dict(self.app._emcee_settings), on_apply=applied.update)
+        dlg._vars["burn"].set("5000")                # burn >= steps
+        dlg._apply()
+        self.assertIn("Burn-in must be smaller", dlg._status_var.get())
+        dlg._vars["burn"].set("50"); dlg._vars["steps"].set("400"); dlg._vars["seed"].set("")
+        dlg._apply()
+        self.assertEqual(applied, {"nwalkers": 100, "steps": 400, "burn": 50, "thin": 1, "seed": None})
+
+    def test_settings_reach_run_fit_and_round_trip(self):
+        self._add_fitted_series(run=False)
+        self.app._emcee_settings = {"steps": 123, "nwalkers": 10, "burn": 7, "thin": 2, "seed": 3}
+        fp = self.app.fit_panel
+        fp.method_var.set("emcee"); fp._on_method_changed()
+        sess = self.app._active_session
+        with mock.patch.object(sess.fit_manager, "run_fit") as run, \
+                mock.patch("curvelab.app_fit_handlers.messagebox"):
+            self.app._on_fit()
+            deadline = 200
+            while self.app._fit_thread is not None and deadline:
+                self.root.update(); deadline -= 1
+        self.assertEqual(run.call_args.kwargs["fit_kws"],
+                         {"steps": 123, "nwalkers": 10, "burn": 7, "thin": 2, "seed": 3})
+        self.assertNotIn("is_weighted", run.call_args.kwargs["fit_kws"])
+
+        ws = {"plot_controls": {"emcee_settings": {"steps": 55, "seed": None}}}
+        self.app._load_workspace_plot_controls(ws)
+        self.assertEqual(self.app._emcee_settings["steps"], 55)
+        self.assertIsNone(self.app._emcee_settings["seed"])
+        self.assertEqual(self.app._emcee_settings["nwalkers"], 100)   # default filled in
+
+
 class ContourDialogTests(GuiTestBase):
     """The contour dialog used to fill a sigma grid with no levels and no
     colorbar, so 1/2/3-sigma regions could not be read off. It now draws

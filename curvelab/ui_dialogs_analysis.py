@@ -453,17 +453,87 @@ class BruteCandidatesDialog(BaseDialog):
             self.destroy()
 
 
-class EmceeSummaryDialog(BaseDialog):
-    """Display emcee MCMC summary statistics."""
+class EmceeSettingsDialog(BaseDialog):
+    """Sampler settings for the emcee method: walkers, steps, burn-in,
+    thinning, and the random seed. Applied to the next emcee fit."""
 
-    def __init__(self, parent, flatchain, params_info: dict):
-        super().__init__(parent, "MCMC (emcee) Summary", size="600x400")
+    FIELDS = (
+        ("nwalkers", "Walkers", "Ensemble size; at least twice the number of varying parameters."),
+        ("steps", "Steps", "Steps per walker. Aim for 50 times the autocorrelation time."),
+        ("burn", "Burn-in", "Steps discarded from the start of every walker."),
+        ("thin", "Thin", "Keep every n-th step."),
+        ("seed", "Seed", "Random seed for a reproducible run; empty for a fresh draw."),
+    )
+
+    def __init__(self, parent, settings: dict, on_apply=None):
+        super().__init__(parent, "MCMC Settings", resizable=(False, False))
+        self._on_apply = on_apply
+        self._vars: dict[str, tk.StringVar] = {}
+        body = ttk.Frame(self, padding=10)
+        body.pack(fill=tk.BOTH, expand=True)
+        for row, (key, label, hint) in enumerate(self.FIELDS):
+            ttk.Label(body, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, pady=2)
+            value = settings.get(key)
+            var = tk.StringVar(value="" if value is None else str(value))
+            self._vars[key] = var
+            ttk.Entry(body, textvariable=var, width=10).grid(row=row, column=1, sticky=tk.W, padx=5)
+            ttk.Label(body, text=hint, foreground="gray").grid(row=row, column=2, sticky=tk.W)
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(body, textvariable=self._status_var, foreground="red").grid(
+            row=len(self.FIELDS), column=0, columnspan=3, sticky=tk.W, pady=(6, 0))
+        btns = ttk.Frame(self, padding=(10, 0, 10, 10))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="Apply", command=self._apply).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+
+    def parse(self) -> dict:
+        """The settings as typed, validated. Raises ValueError with a
+        message naming the offending field."""
+        out = {}
+        for key, label, _ in self.FIELDS:
+            text = self._vars[key].get().strip()
+            if key == "seed" and not text:
+                out[key] = None
+                continue
+            try:
+                value = int(text)
+            except ValueError:
+                raise ValueError(f"{label} must be a whole number.")
+            if key != "seed" and value < (0 if key == "burn" else 1):
+                raise ValueError(f"{label} must be positive.")
+            out[key] = value
+        if out["burn"] >= out["steps"]:
+            raise ValueError("Burn-in must be smaller than the number of steps.")
+        return out
+
+    def _apply(self):
+        try:
+            settings = self.parse()
+        except ValueError as e:
+            self._status_var.set(str(e))
+            return
+        if self._on_apply:
+            self._on_apply(settings)
+        self.destroy()
+
+
+class EmceeSummaryDialog(BaseDialog):
+    """Display emcee sampling diagnostics and posterior summary statistics."""
+
+    def __init__(self, parent, flatchain, params_info: dict, mcmc: dict | None = None):
+        super().__init__(parent, "MCMC (emcee) Summary", size="700x480")
 
         try:
             import pandas as pd
+            from .fit_manager import emcee_lines
+            lines = []
+            if mcmc:
+                lines.extend(emcee_lines(mcmc))
+                lines.append("")
+            lines.append("Posterior summary (after burn-in and thinning):")
             if isinstance(flatchain, pd.DataFrame):
-                lines = [f"{'Parameter':<20s} {'Median':>12s} {'Mean':>12s} "
-                         f"{'Std':>12s} {'2.5%':>12s} {'97.5%':>12s}"]
+                lines.append(f"{'Parameter':<20s} {'Median':>12s} {'Mean':>12s} "
+                             f"{'Std':>12s} {'2.5%':>12s} {'97.5%':>12s}")
                 lines.append("-" * 80)
                 for col in flatchain.columns:
                     data = flatchain[col]
@@ -474,7 +544,7 @@ class EmceeSummaryDialog(BaseDialog):
                     )
                 content = "\n".join(lines)
             else:
-                content = "Flatchain data not available as DataFrame."
+                content = "\n".join(lines + ["Flatchain data not available as DataFrame."])
         except Exception as e:
             content = f"Error processing emcee results: {e}"
 

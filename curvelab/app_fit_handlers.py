@@ -293,10 +293,10 @@ class FitHandlersMixin:
             messagebox.showerror("Fit Error", str(e))
             return
 
-        # Build fit_kws for emcee
-        fit_kws = {}
-        if method == "emcee":
-            fit_kws["is_weighted"] = yerr is not None
+        # emcee's sampler settings come from the MCMC Settings dialog;
+        # is_weighted and the walker start are filled in by run_fit from
+        # the weights actually used.
+        fit_kws = dict(self._emcee_settings) if method == "emcee" else {}
 
         objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
         iter_cb = self._abort_iter_cb()

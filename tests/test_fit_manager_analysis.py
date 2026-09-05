@@ -218,6 +218,73 @@ class ConfidenceIntervalScalingTests(unittest.TestCase):
         self.assertIn("scaled by", fm.compute_confidence_intervals(sigmas=[1]))
 
 
+class EmceeTests(unittest.TestCase):
+    """emcee ran with is_weighted taken from the yerr column rather than the
+    weights in use, started every walker at value*(1+1e-4 N) so a zero
+    parameter could not move, reset to the start values instead of sampling
+    around the least-squares optimum, and reported none of its diagnostics."""
+
+    def setUp(self):
+        try:
+            import emcee  # noqa: F401
+        except ImportError:
+            self.skipTest("emcee not installed")
+        import warnings
+        warnings.simplefilter("ignore")
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(1)
+        self.x = np.linspace(-5, 5, 60)
+        self.y = 2.0 * self.x + rng.normal(0, 0.1, 60)          # intercept is 0
+        self.yerr = np.full(60, 0.1)
+        self.fm = FitManager()
+        self.fm.add_component("Linear")
+        self.fm.auto_guess(self.x, self.y)
+        self.fm.set_param("intercept", value=0.0)
+        self.kws = {"steps": 200, "nwalkers": 16, "burn": 40, "seed": 0}
+
+    def _emcee(self, **run_kw):
+        return self.fm.run_fit(self.x, self.y, method="emcee", fit_kws=dict(self.kws), **run_kw)
+
+    def test_is_weighted_follows_the_weights_not_the_yerr_column(self):
+        from curvelab.fit_manager import WEIGHT_NONE
+        r = self._emcee(yerr=self.yerr, weight_mode=WEIGHT_NONE)
+        self.assertFalse(r.mcmc["is_weighted"])
+        self.assertIn("__lnsigma", r.flatchain.columns)
+        r = self._emcee(yerr=self.yerr)
+        self.assertTrue(r.mcmc["is_weighted"])
+        self.assertNotIn("__lnsigma", r.flatchain.columns)
+
+    def test_zero_valued_parameter_is_sampled(self):
+        r = self._emcee(weight_mode="No weights")
+        self.assertGreater(r.flatchain["intercept"].std(), 0.01)
+
+    def test_seed_reproduces_the_chain(self):
+        # emcee samples around the current values, so put the parameters
+        # at the same (least-squares) point before each run.
+        self.fm.run_fit(self.x, self.y, weight_mode="No weights")
+        a = self._emcee(weight_mode="No weights")
+        self.fm.run_fit(self.x, self.y, weight_mode="No weights")
+        b = self._emcee(weight_mode="No weights")
+        np.testing.assert_array_equal(a.flatchain["slope"].values, b.flatchain["slope"].values)
+
+    def test_emcee_starts_from_the_current_values_not_the_start(self):
+        # After a least-squares fit the parameters sit at the optimum; emcee
+        # must sample around that, not reset to the auto-guess.
+        ls = self.fm.run_fit(self.x, self.y, weight_mode="No weights")
+        r = self._emcee(weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["slope"], ls.params["slope"]["value"], places=6)
+
+    def test_diagnostics_reported(self):
+        r = self._emcee(weight_mode="No weights")
+        m = r.mcmc
+        self.assertEqual((m["steps"], m["nwalkers"], m["burn"], m["seed"]), (200, 16, 40, 0))
+        self.assertIsNotNone(m["acceptance_fraction"])
+        self.assertIn("[[MCMC (emcee)]]", r.report)
+        self.assertIn("posterior medians", r.report)
+        self.assertIn("acceptance fraction", r.report)
+        self.assertIn("__lnsigma is the fitted log of the noise scale", r.report)
+
+
 class ProfileLikelihoodTests(LinearFitBase):
     def test_profiles_shape_and_minimum(self):
         profiles = self.fm.compute_ci_profiles()

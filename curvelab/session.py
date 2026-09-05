@@ -43,6 +43,7 @@ class FitResult:
     y_uncertainty: np.ndarray | None = None  # 1-sigma band on dense grid
     candidates: list[dict] | None = None  # brute-force candidates
     flatchain: object | None = None  # emcee DataFrame
+    mcmc: dict | None = None  # emcee settings and sampling diagnostics
     init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
     errorbars: bool = True  # False when the fit couldn't estimate uncertainties
     xerr_data: np.ndarray | None = None

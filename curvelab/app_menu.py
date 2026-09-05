@@ -65,6 +65,9 @@ class MenuMixin:
             label="Global Fit...", command=self._on_global_fit
         )
         analysis_menu.add_command(
+            label="MCMC Settings...", command=self._show_emcee_settings
+        )
+        analysis_menu.add_command(
             label="Uncertainty Propagation...", command=self._show_uncertainty_propagation
         )
         analysis_menu.add_separator()

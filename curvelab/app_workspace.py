@@ -12,7 +12,9 @@ import pandas as pd
 from tkinter import messagebox, filedialog
 
 from .data_manager import DataManager
-from .fit_manager import DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, WEIGHT_MODES
+from .fit_manager import (
+    DEFAULT_EMCEE_SETTINGS, DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, WEIGHT_MODES,
+)
 from .workspace import (
     WorkspaceEncoder, decode_workspace,
     serialize_series_records, deserialize_series_record,
@@ -168,6 +170,7 @@ class WorkspaceMixin:
                 "objective": self.fit_panel.objective_var.get(),
                 "f_scale": self.fit_panel.f_scale_var.get(),
                 "weight_mode": self.fit_panel.weight_var.get(),
+                "emcee_settings": dict(self._emcee_settings),
                 "max_nfev": self.fit_panel.max_nfev_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
                 "ylabel": self.plot_controls.ylabel_var.get(),
@@ -342,6 +345,9 @@ class WorkspaceMixin:
             weight_mode = DEFAULT_WEIGHT_MODE
         self.fit_panel.weight_var.set(weight_mode)
         self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))
+        saved = pc.get("emcee_settings")
+        if isinstance(saved, dict):
+            self._emcee_settings = {**DEFAULT_EMCEE_SETTINGS, **saved}
         # Objective replaces the old reduce_fcn key; fall back to it for
         # workspaces written before the change. set_objective must run after
         # method_var is set, since the valid objectives depend on the method.
