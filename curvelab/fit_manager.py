@@ -1,5 +1,6 @@
 """Curve fitting logic using lmfit."""
 
+import ast
 from dataclasses import dataclass
 
 import numpy as np
@@ -260,6 +261,28 @@ class FitComponent:
     prefix: str  # e.g. "gauss1_"
     operator: str = "+"  # "+" (sum) or "*" (multiply); ignored for first component
     expression: str = ""  # Only used when name == "Expression"
+
+
+def _expr_names(expr: str) -> set[str]:
+    """Names referenced by a parameter expression (an lmfit/asteval string)."""
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return set()
+    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+
+def _rewrite_expr_names(expr: str, mapping: dict[str, str]) -> str:
+    """Return expr with every referenced name in mapping replaced by its
+    mapped name, leaving functions and other names untouched."""
+
+    class _Rename(ast.NodeTransformer):
+        def visit_Name(self, node):
+            new = mapping.get(node.id)
+            return ast.copy_location(ast.Name(id=new, ctx=node.ctx), node) if new else node
+
+    tree = _Rename().visit(ast.parse(expr, mode="eval"))
+    return ast.unparse(tree)
 
 
 class FitManager:
@@ -811,6 +834,12 @@ class FitManager:
         Parameters that are in *shared_params* get one entry in the combined
         Parameters object.  Non-shared params get per-dataset prefixed entries
         (s0_, s1_, ...).  Returns one FitResult per dataset.
+
+        A derived parameter (one with an expression, such as fwhm or height)
+        is not a free parameter, so *shared_params* is ignored for it: it is
+        shared exactly when every parameter its expression refers to is
+        shared, and otherwise gets per-dataset entries whose expressions are
+        rewritten to the per-dataset names.
         """
         from lmfit import Parameters, minimize
 
@@ -819,11 +848,33 @@ class FitManager:
 
         n = len(datasets)
         base_params = self._params
+        base_names = list(base_params.keys())
+
+        # Resolve which names are shared, letting derived parameters follow
+        # their dependencies. Iterate because an expression may refer to
+        # another derived parameter.
+        shared = {nm for nm in base_names
+                  if nm in shared_params and not base_params[nm].expr}
+        derived = [nm for nm in base_names if base_params[nm].expr]
+        changed = True
+        while changed:
+            changed = False
+            for nm in derived:
+                deps = _expr_names(base_params[nm].expr) & set(base_names)
+                if nm not in shared and deps <= shared:
+                    shared.add(nm)
+                    changed = True
+        shared_params = shared
+
+        def per_dataset_expr(expr: str, i: int) -> str | None:
+            if not expr:
+                return None
+            return _rewrite_expr_names(
+                expr, {nm: f"s{i}_{nm}" for nm in base_names if nm not in shared_params}
+            )
 
         # Build combined Parameters
         combined = Parameters()
-        base_names = list(base_params.keys())
-
         for name in base_names:
             bp = base_params[name]
             if name in shared_params:
@@ -833,7 +884,7 @@ class FitManager:
                 for i in range(n):
                     pname = f"s{i}_{name}"
                     combined.add(pname, value=bp.value, min=bp.min, max=bp.max,
-                                 vary=bp.vary, expr=bp.expr or None)
+                                 vary=bp.vary, expr=per_dataset_expr(bp.expr, i))
 
         # Pre-compute constant weights (everything except Effective variance
         # with xerr, which depends on the model derivative per iteration)
@@ -886,8 +937,9 @@ class FitManager:
                     p = mini_result.params[name]
                 else:
                     p = mini_result.params[f"s{i}_{name}"]
+                # Report the user's expression, not the s{i}_-rewritten one.
                 params_info[name] = param_info(
-                    p.value, p.stderr, p.min, p.max, p.vary, p.expr or ""
+                    p.value, p.stderr, p.min, p.max, p.vary, bp.expr or ""
                 )
                 init_values[name] = bp.value
 

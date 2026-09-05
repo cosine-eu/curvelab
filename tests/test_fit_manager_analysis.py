@@ -188,6 +188,46 @@ class GlobalFitTests(unittest.TestCase):
         self.assertIn("reduced chi-squared", results[0].gof)
 
 
+class GlobalFitDerivedParamTests(unittest.TestCase):
+    """Derived parameters (fwhm = 2.3548*sigma) were copied into the
+    per-dataset s{i}_ namespace with their expression verbatim, so any peak
+    model whose sigma was not shared raised NameError('sigma'). A derived
+    parameter now follows its dependencies: shared when they all are,
+    otherwise per dataset with a rewritten expression."""
+
+    def setUp(self):
+        from curvelab.fit_manager import FitManager
+        self.x = np.linspace(-10, 10, 200)
+        self.y1 = 3.0 * np.exp(-self.x ** 2 / (2 * 2.0 ** 2))
+        self.y2 = 5.0 * np.exp(-self.x ** 2 / (2 * 1.0 ** 2))
+        self.fm = FitManager()
+        self.fm.add_component("Gaussian")
+        self.fm.auto_guess(self.x, self.y1)
+        self.datasets = [(self.x, self.y1, None, None), (self.x, self.y2, None, None)]
+
+    def test_unshared_sigma_gives_per_dataset_fwhm(self):
+        # The dialog ticks every parameter by default, derived ones included.
+        results = self.fm.run_global_fit(
+            self.datasets, shared_params={"center", "fwhm", "height"},
+        )
+        for res, sigma_true, amp_true in zip(results, (2.0, 1.0), (3.0, 5.0)):
+            sigma = res.params["sigma"]["value"]
+            self.assertAlmostEqual(sigma, sigma_true, places=3)
+            self.assertAlmostEqual(res.params["fwhm"]["value"], 2.3548200 * sigma, places=5)
+            self.assertAlmostEqual(res.params["height"]["value"], amp_true, places=3)
+            # The report shows the user's expression, not the s0_/s1_ one.
+            self.assertEqual(res.params["fwhm"]["expr"], "2.3548200*sigma")
+
+    def test_shared_sigma_gives_shared_fwhm(self):
+        results = self.fm.run_global_fit(
+            self.datasets, shared_params={"center", "sigma"},
+        )
+        f1 = results[0].params["fwhm"]["value"]
+        f2 = results[1].params["fwhm"]["value"]
+        self.assertEqual(f1, f2)
+        self.assertAlmostEqual(f1, 2.3548200 * results[0].params["sigma"]["value"], places=6)
+
+
 class CompositeOperatorFitTests(unittest.TestCase):
     """The +, *, -, / composition operators in a real fit."""
 
