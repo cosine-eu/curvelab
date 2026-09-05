@@ -587,17 +587,32 @@ class FitManager:
                     break
 
     def set_param_hint(self, name: str, **kwargs):
-        """Store a parameter hint that survives model rebuilds."""
+        """Store a parameter hint that survives model rebuilds.
+
+        A value given here also becomes the fit's starting value; see
+        set_param.
+        """
         self._param_hints[name] = {**self._param_hints.get(name, {}), **kwargs}
         if self._model is not None:
             self._model.set_param_hint(name, **kwargs)
         if self._params is not None and name in self._params:
             self._params[name].set(**kwargs)
+        if "value" in kwargs:
+            self._start_values[name] = kwargs["value"]
 
     def set_param(self, name: str, **kwargs):
-        """Set parameter attributes (value, min, max, vary)."""
+        """Set parameter attributes (value, min, max, vary, expr).
+
+        A value set this way is a deliberate choice of where the next fit
+        should start, so it is recorded as the start value here rather than
+        relying on every caller to remember set_start_value: run_fit resets
+        to the start values, and a caller that forgot would have its edit
+        silently discarded.
+        """
         if self._params is not None and name in self._params:
             self._params[name].set(**kwargs)
+        if "value" in kwargs:
+            self._start_values[name] = kwargs["value"]
 
     def model_description(self) -> str:
         """Compact one-line description, e.g. 'Gaussian + Linear'."""

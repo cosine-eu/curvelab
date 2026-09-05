@@ -373,6 +373,23 @@ class RefitFromGuessTests(unittest.TestCase):
         r = fm.run_fit(x, y, weight_mode="No weights")
         self.assertAlmostEqual(r.init_params["center"], 7.5)
 
+    def test_set_param_value_becomes_the_start(self):
+        # set_param(value=...) is how the notebook and the Find Peaks dialog
+        # edit values; they did not call set_start_value, so run_fit's reset
+        # threw the edit away. The setter now records the start itself.
+        fm, x, y = self._fit_setup()
+        fm.run_fit(x, y, weight_mode="No weights")
+        fm.set_param("center", value=6.5)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], 6.5)
+
+    def test_set_param_hint_value_becomes_the_start(self):
+        fm, x, y = self._fit_setup()
+        fm.run_fit(x, y, weight_mode="No weights")
+        fm.set_param_hint("center", value=6.0)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], 6.0)
+
     def test_fixed_parameter_is_not_reset(self):
         # A pinned (vary=False) value must survive the reset-to-start, not be
         # clobbered by a stale guess.
