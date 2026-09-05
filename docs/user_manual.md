@@ -127,7 +127,7 @@ Four menus are available in the menu bar:
 | Menu | Items |
 |------|-------|
 | **File** | Save/Load Workspace, Paste Data, Export Parameters/Report/Curve Data, Export/Import Model Result, Save Plot, Quit |
-| **Analysis** | Confidence Intervals, Correlation/Covariance Matrix, Diagnostic Plots, 2D Contours, Profile Likelihood, Bootstrap CI, Global Fit, Uncertainty Propagation, Model Comparison, F-Test, Simulate Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier Detection, Clear Exclusions (Active Series), Clear Exclusions (All Series) |
+| **Analysis** | Confidence Intervals, Correlation/Covariance Matrix, Diagnostic Plots, 2D Contours, Profile Likelihood, Bootstrap CI, Global Fit, MCMC Settings, Uncertainty Propagation, Model Comparison, F-Test, Simulate Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier Detection, Clear Exclusions (Active Series), Clear Exclusions (All Series) |
 | **Settings** | Fonts, Show numeric warnings |
 | **Help** | About CurveLab |
 
@@ -520,8 +520,10 @@ Each fit starts from the current parameter values — the Auto Guess result,
 or whatever you have typed into the **Value** column — and clicking **Fit**
 again starts from those same values, not from the previous fit's output. So
 repeated fits are reproducible: the answer doesn't drift when you fit twice.
-This applies to ordinary and ODR fits alike. Fixed (Vary = No) parameters
-keep the value you set; only the varying parameters are reset to the start.
+This applies to ordinary, global and ODR fits alike; emcee is the exception
+(Section 15). Fixed (Vary = No) parameters keep the value you set; only the
+varying parameters are reset to the start. The start values are saved with
+the workspace and copied along with the model by Batch Fit.
 
 To deliberately refine — start the next fit from the last result — click
 **Use as Start** below the parameter table. It copies the current fitted
@@ -657,7 +659,10 @@ See:
 
 After a fit, the results panel shows three sections:
 
-1. **GOF summary line** -- key statistics displayed at the top
+1. **GOF summary line** -- key statistics displayed at the top: chi2,
+   chi2/nu, R2, AIC and BIC (or the minimized objective in their place,
+   see below), followed by a warning flag for any strongly correlated
+   parameter pair
 2. **Parameter table** -- one row per parameter with columns:
 
 | Column | Description |
@@ -665,13 +670,16 @@ After a fit, the results panel shows three sections:
 | **Name** | Parameter name (prefixed by component, e.g., `gaussian1_center`) |
 | **Value** | Best-fit value |
 | **Initial** | Value before the fit (for comparison) |
-| **StdErr** | Standard error from the covariance matrix |
+| **StdErr** | Standard error from the covariance matrix. Marked `(at min)` or `(at max)` when the parameter ended on a bound, where the number is not its uncertainty. For an emcee fit, half the 16th-84th percentile range. |
 | **Min** | Lower bound |
 | **Max** | Upper bound |
 | **Vary** | Whether the parameter was free (Yes/No) |
 | **Expr** | Constraint expression, if any |
 
-3. **Fit report** -- the full lmfit fit report text
+3. **Fit report** -- a `[[Convergence]]` block (how the minimizer ended,
+   function evaluations, parameters at a bound, strongly correlated pairs,
+   points omitted for a non-finite model), an `[[MCMC (emcee)]]` block
+   after an emcee fit, then the full lmfit fit report text
 
 ### Goodness-of-fit statistics
 
@@ -1289,7 +1297,10 @@ cannot constrain all parameters, but jointly they can.
    `s0_`, `s1_`, etc.). Derived parameters such as `fwhm` or `height` are
    not free parameters: they are shared exactly when every parameter in
    their expression is shared, whatever their checkbox says.
-6. Click **Fit**.
+6. Click **Fit**. The dialog closes and the fit runs in the background
+   like a slow single fit: the panel locks and the **Fit** button becomes
+   **Abort**. The Objective and Scale-covariance controls apply to a
+   global fit as they do to a single one.
 
 The selected series must be weighted on the same footing. With any
 Y-error based weight mode (the default `1/yerr` included), every series
@@ -1813,8 +1824,11 @@ complete application state.
 | Model components and expressions | Yes |
 | Parameter values, bounds, expressions, hints | Yes |
 | Fit results (curves, params, GOF, report) | Yes |
+| Fit options of each result (method, weights, objective, Scale covariance) | Yes |
+| Fit weights, convergence status, at-bound and correlation flags | Yes |
 | Component curves | Yes |
-| Init param values | Yes |
+| Init param values and the start values for the next fit | Yes |
+| emcee sampler settings and sampling diagnostics | Yes |
 | Plot control settings | Yes |
 | Font settings | Yes |
 | Brute-force candidates | Yes |
@@ -1890,8 +1904,11 @@ it lags behind in these respects:
 - The old **Reduce** dropdown is still present instead of the method-aware
   **Objective** control and its `f_scale` entry, so scipy's robust loss
   functions cannot be selected (see [Section 6](#6-weighting-and-objective-functions)).
-- No **Use as Start** button, and no warning when a fit reports no
-  uncertainties.
+- No **Use as Start** button, no post-fit warning dialog (convergence,
+  parameters at a bound, missing uncertainties), and no MCMC Settings; an
+  emcee fit uses the default sampler settings.
+- The fit setup is not validated before running (bounds for the global
+  methods, x-errors for ODR, matching y-errors in a global fit).
 - Of the analysis tools only **Model Comparison** is available; confidence
   intervals, contours, bootstrap, profile likelihood, F-test, global fit,
   uncertainty propagation and the data tools are desktop-only.
