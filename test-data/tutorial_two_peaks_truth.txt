@@ -1,0 +1,13 @@
+tutorial_two_peaks.csv: generated with CurveLab's Simulate Data
+(analysis_tools.simulate_data), model Gaussian + Gaussian + Linear,
+x = 0..10, 200 points, Gaussian noise sigma = 0.25, seed 0,
+plus one outlier: +3.0 added to the point at x = 8.1910.
+y_clean is the noise-free model. True parameters:
+  gaussian1_amplitude    10.0
+  gaussian1_center       4.0
+  gaussian1_sigma        0.6
+  gaussian2_amplitude    6.0
+  gaussian2_center       5.5
+  gaussian2_sigma        0.9
+  linear1_slope          -0.15
+  linear1_intercept      3.0
