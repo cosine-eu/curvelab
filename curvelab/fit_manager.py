@@ -259,7 +259,12 @@ def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dic
 
 def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
                vary=True, expr="") -> dict:
-    """One parameter's entry for FitResult.params."""
+    """One parameter's entry for FitResult.params.
+
+    at_bound is "min", "max" or None. A varying parameter that ended on a
+    bound is not at an interior minimum, so its stderr (the curvature there)
+    does not describe its uncertainty.
+    """
     return {
         "value": value,
         "stderr": stderr,
@@ -267,7 +272,33 @@ def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
         "max": maximum,
         "vary": vary,
         "expr": expr,
+        "at_bound": _at_bound(value, minimum, maximum) if vary else None,
     }
+
+
+def _at_bound(value, minimum, maximum) -> str | None:
+    """Which bound (if any) a value sits on, to within rounding."""
+    if value is None:
+        return None
+    for tag, bound in (("min", minimum), ("max", maximum)):
+        if bound is not None and np.isfinite(bound) and np.isclose(
+                value, bound, rtol=1e-9, atol=1e-12):
+            return tag
+    return None
+
+
+def convergence_lines(success: bool, message: str, nfev, params: dict) -> list[str]:
+    """Report lines describing how the minimizer ended and which varying
+    parameters sit on a bound, prepended to every fit report."""
+    status = "converged" if success else "NOT converged"
+    detail = f" -- {message}" if message else ""
+    evals = f" ({nfev} function evaluations)" if nfev is not None else ""
+    lines = ["[[Convergence]]", f"    {status}{detail}{evals}"]
+    bounded = [f"{name} (at {info['at_bound']})" for name, info in params.items()
+               if info.get("at_bound")]
+    if bounded:
+        lines.append("    at a bound, stderr not meaningful: " + ", ".join(bounded))
+    return lines
 
 
 @dataclass
@@ -851,6 +882,9 @@ class FitManager:
                 component_curves[key] = vals
 
         params_info = self.params_to_info(self._last_result.params)
+        success = bool(getattr(self._last_result, "success", True))
+        message = str(getattr(self._last_result, "message", "") or "")
+        nfev = getattr(self._last_result, "nfev", None)
 
         # Update internal params with fitted values
         self._params = self._last_result.params
@@ -887,7 +921,9 @@ class FitManager:
             y_fit_data=self._last_result.best_fit,
             yerr_data=yerr,
             params=params_info,
-            report=self._last_result.fit_report(),
+            report="\n".join(
+                convergence_lines(success, message, nfev, params_info)
+                + ["", self._last_result.fit_report()]),
             gof=gof,
             component_curves=component_curves,
             y_uncertainty=y_uncertainty,
@@ -895,6 +931,9 @@ class FitManager:
             flatchain=flatchain,
             init_params=init_values,
             errorbars=bool(getattr(self._last_result, "errorbars", True)),
+            success=success,
+            message=message,
+            nfev=nfev,
             xerr_data=xerr,
             fit_options={
                 "method": method,
@@ -1126,7 +1165,11 @@ class FitManager:
             )
 
             # Generate a report string
-            lines = [f"Global Fit — Dataset {i + 1}/{n}"]
+            lines = convergence_lines(
+                bool(getattr(mini_result, "success", True)),
+                str(getattr(mini_result, "message", "") or ""),
+                getattr(mini_result, "nfev", None), params_info) + [""]
+            lines.append(f"Global Fit — Dataset {i + 1}/{n}")
             lines.append(f"  Method: {method}")
             lines.append(f"  chi-squared = {gof['chi-squared']:.6g}")
             lines.append(f"  reduced chi-squared = {gof['reduced chi-squared']:.6g}")
@@ -1149,6 +1192,9 @@ class FitManager:
                 report=report,
                 gof=gof,
                 init_params=init_values,
+                success=bool(getattr(mini_result, "success", True)),
+                message=str(getattr(mini_result, "message", "") or ""),
+                nfev=getattr(mini_result, "nfev", None),
             ))
 
         return results
@@ -1371,9 +1417,12 @@ class FitManager:
 
         gof = make_gof(chisqr=chisqr, redchi=redchi, rsquared=r_squared)
 
-        # Report
-        lines = ["Orthogonal Distance Regression (odrpack)"]
-        lines.append(f"  Stop reason: {result.stopreason}")
+        # Report (run_odr raised above if odrpack reported failure)
+        stop_reason = " / ".join(result.stopreason) if isinstance(
+            result.stopreason, (list, tuple)) else str(result.stopreason)
+        lines = convergence_lines(True, stop_reason, result.nfev, params_info) + [""]
+        lines.append("Orthogonal Distance Regression (odrpack)")
+        lines.append(f"  Stop reason: {stop_reason}")
         lines.append(f"  Function evals: {result.nfev}")
         lines.append(f"  Iterations: {result.niter}")
         lines.append(f"  Sum of squares: {chisqr:.6g}")
@@ -1397,6 +1446,9 @@ class FitManager:
             component_curves=component_curves,
             y_uncertainty=y_uncertainty,
             init_params=init_values,
+            xerr_data=xerr,
+            message=stop_reason,
+            nfev=result.nfev,
         )
 
     def run_bootstrap(

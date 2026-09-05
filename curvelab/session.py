@@ -42,6 +42,12 @@ class FitResult:
     init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
     errorbars: bool = True  # False when the fit couldn't estimate uncertainties
     xerr_data: np.ndarray | None = None
+    # How the minimizer ended. success is False when it stopped without
+    # converging (max_nfev reached, abort, tolerance failure); message is the
+    # minimizer's own description; nfev the number of function evaluations.
+    success: bool = True
+    message: str = ""
+    nfev: int | None = None
     # How the fit was run (method, weight_mode, objective, scale_covar), in a
     # JSON-safe form, so a workspace reload can reproduce it rather than
     # refit with defaults. None for results from before this was recorded.

@@ -531,6 +531,81 @@ class FitErrorbarsFlagTests(unittest.TestCase):
         self.assertFalse(fm.run_fit(x, y, weight_mode="No weights").errorbars)
 
 
+class FitOutcomeTests(unittest.TestCase):
+    """How a fit ended used to reach the user only as a generic 'no
+    uncertainties' warning. The result now carries success/message/nfev and
+    marks parameters that sit on a bound, and the post-fit notes name the
+    actual cause."""
+
+    def _peak_data(self):
+        rng = np.random.default_rng(0)
+        x = np.linspace(-10, 10, 200)
+        y = 3.0 * np.exp(-(x - 1.0) ** 2 / (2 * 2.0 ** 2)) + rng.normal(0, 0.05, 200)
+        return x, y
+
+    def test_max_nfev_abort_is_reported_as_not_converged(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x, y = self._peak_data()
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.set_param_hint("center", value=-5.0)
+        fm.set_param_hint("sigma", value=0.5)
+        fm.set_param_hint("amplitude", value=1.0)
+        r = fm.run_fit(x, y, weight_mode="No weights", max_nfev=4)
+        self.assertFalse(r.success)
+        self.assertEqual(r.nfev, 4)
+        self.assertIn("aborted", r.message.lower())
+        self.assertTrue(r.report.startswith("[[Convergence]]\n    NOT converged"))
+        notes = fit_outcome_notes(r, "least_squares")
+        self.assertTrue(any(n.startswith("The fit did not converge after 4") for n in notes))
+        # The abort is not blamed on identifiability.
+        self.assertFalse(any("identifiable" in n for n in notes))
+
+    def test_converged_fit_reports_success(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x, y = self._peak_data()
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertTrue(r.success)
+        self.assertGreater(r.nfev, 0)
+        self.assertTrue(r.report.startswith("[[Convergence]]\n    converged"))
+        self.assertEqual(fit_outcome_notes(r, "least_squares"), [])
+
+    def test_parameter_at_bound_is_flagged(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x = np.linspace(0, 10, 40)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.set_param_hint("slope", value=1.0, min=0.0, max=1.5)   # truth is 2
+        fm.set_param_hint("intercept", value=1.0)
+        r = fm.run_fit(x, 2.0 * x + 1.0, weight_mode="No weights")
+        self.assertEqual(r.params["slope"]["at_bound"], "max")
+        self.assertIsNone(r.params["intercept"]["at_bound"])
+        self.assertIn("at a bound, stderr not meaningful: slope (at max)", r.report)
+        notes = fit_outcome_notes(r, "least_squares")
+        self.assertEqual(len(notes), 1)
+        self.assertIn("slope (at max)", notes[0])
+
+    def test_scalar_method_without_numdifftools_is_explained(self):
+        from unittest import mock
+        from curvelab.session import FitResult
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x = np.linspace(0, 1, 5)
+        r = FitResult(x_dense=x, y_fit_dense=x, x_data=x, y_data=x, y_fit_data=x,
+                      yerr_data=None, params={}, report="", errorbars=False)
+        with mock.patch("importlib.util.find_spec", return_value=None):
+            notes = fit_outcome_notes(r, "nelder")
+        self.assertIn("numdifftools", notes[0])
+        # With the package present (or a covariance method) it is identifiability.
+        notes = fit_outcome_notes(r, "least_squares")
+        self.assertIn("identifiable", notes[0])
+
+
 class OdsEngineTests(unittest.TestCase):
     """07c55a5: .ods loading used the package name instead of pandas engine id."""
 

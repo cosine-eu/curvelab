@@ -861,7 +861,6 @@ class NoUncertaintyWarningTests(GuiTestBase):
 
     def test_warns_when_errorbars_missing(self):
         rec, sess = self._add_fitted_series(run=False)
-        sess.fit_manager.run_fit  # ensure a fit manager exists
         # Fabricate a completed result flagged as having no uncertainties.
         x = np.linspace(0, 1, 10)
         from curvelab.session import FitResult
@@ -874,6 +873,28 @@ class NoUncertaintyWarningTests(GuiTestBase):
 
         warn.assert_called_once()
         self.assertIn("uncertaint", warn.call_args[0][1].lower())
+
+    def test_not_converged_and_at_bound_share_one_dialog(self):
+        rec, sess = self._add_fitted_series(run=False)
+        x = np.linspace(0, 1, 10)
+        from curvelab.session import FitResult
+        from curvelab.fit_manager import param_info
+        sess.result = FitResult(
+            x_dense=x, y_fit_dense=x, x_data=x, y_data=x, y_fit_data=x,
+            yerr_data=None, report="",
+            params={"slope": param_info(1.5, 0.1, 0.0, 1.5, True)},
+            success=False, message="Fit aborted: number of function evaluations > 4",
+            nfev=4, errorbars=True)
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn:
+            self.app._post_fit_update(sess, rec, "ds::x::y")
+        warn.assert_called_once()
+        text = warn.call_args[0][1]
+        self.assertIn("did not converge after 4", text)
+        self.assertIn("slope (at max)", text)
+        # The table marks the bound in the StdErr column.
+        tree = self.app.fit_results.param_tree
+        row = tree.item(tree.get_children()[0])
+        self.assertIn("(at max)", row["values"][2])
 
     def test_no_warning_for_normal_fit(self):
         rec, sess = self._add_fitted_series(run=True)  # ordinary Linear fit

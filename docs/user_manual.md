@@ -521,14 +521,30 @@ next **Fit** continues from there. Repeat Use as Start → Fit to iterate. This
 is the opt-in replacement for the old automatic chaining; raising **Max nfev**
 is the other way to push a slow fit further.
 
-### When a fit reports no uncertainties
+### How the fit ended
 
-If the **StdErr** column comes back empty, CurveLab warns you that the fit
-could not estimate uncertainties. This means the covariance matrix is
-singular — the parameters are not all identifiable from the data. The fitted
-*curve* can still look excellent (good chi-squared and R-squared) while
-individual parameter values are meaningless, because the model can trade one
-parameter off against another with no change to the curve.
+Every fit report starts with a `[[Convergence]]` block: whether the
+minimizer converged, its own termination message, the number of function
+evaluations, and any varying parameter that ended on a bound. After a fit,
+CurveLab shows one warning dialog if any of the following applies:
+
+- **The fit did not converge.** The minimizer stopped early (Max nfev
+  reached, Abort pressed, or a tolerance failure). The parameter values are
+  where it stopped, not a best fit. Raise **Max nfev**, improve the start
+  (**Auto Guess**), or try another method.
+- **A parameter is at a bound.** The StdErr column shows `(at min)` or
+  `(at max)` next to it. A parameter on a bound is not at an interior
+  minimum, so the curvature there is not its uncertainty. Loosen the bound
+  if it was a guess, or fix the parameter if the bound is physical.
+- **No uncertainties from a scalar method.** Methods such as `nelder` or
+  `powell` do not produce a covariance matrix; lmfit estimates one
+  afterwards only if the `numdifftools` package is installed.
+- **No uncertainties because the covariance is singular.** The StdErr
+  column is empty although the fit converged: the parameters are not all
+  identifiable from the data. The fitted *curve* can still look excellent
+  (good chi-squared and R-squared) while individual parameter values are
+  meaningless, because the model can trade one parameter off against
+  another with no change to the curve.
 
 A classic example is fitting a **Breit-Wigner (Fano)** line to a symmetric
 peak: the amplitude and the asymmetry parameter `q` are degenerate (only their

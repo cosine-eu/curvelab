@@ -10,12 +10,63 @@ import threading
 from tkinter import messagebox
 
 from .fit_manager import (
-    DEFAULT_F_SCALE, FitManager, SLOW_METHODS,
+    DEFAULT_F_SCALE, FitManager, METHOD_CAPS, OBJ_SCALAR, SLOW_METHODS,
     objective_kwargs, validate_fit_setup,
 )
 from .ui_dialogs_analysis import (
     GlobalFitDialog, ModelComparisonDialog, comparison_row,
 )
+
+
+def fit_outcome_notes(result, method: str) -> list[str]:
+    """Plain-language notes about how a fit ended, for the post-fit dialog.
+
+    Distinguishes the causes that used to share one 'not identifiable'
+    message: the minimizer stopped before converging; the method gives no
+    covariance without numdifftools; a parameter ended on a bound; and the
+    genuine case, a covariance the data cannot support.
+    """
+    import importlib.util
+
+    notes = []
+    if not result.success:
+        evals = f" after {result.nfev} function evaluations" if result.nfev is not None else ""
+        notes.append(
+            f"The fit did not converge{evals}: {result.message or 'no reason given'}.\n"
+            "The parameter values are where the minimizer stopped, not a "
+            "best fit. Raise Max nfev, improve the starting values (Auto "
+            "Guess), or try another method."
+        )
+    at_bound = [f"{name} (at {info['at_bound']})" for name, info in result.params.items()
+                if info.get("at_bound")]
+    if at_bound:
+        notes.append(
+            "Parameter(s) at a bound: " + ", ".join(at_bound) + ".\n"
+            "A parameter on a bound is not at an interior minimum, so its "
+            "StdErr is not its uncertainty. Loosen the bound if it was a "
+            "guess, or fix the parameter if the bound is physical."
+        )
+    if result.success and not result.errorbars:
+        caps = METHOD_CAPS.get(method)
+        scalar = caps is not None and caps.objective == OBJ_SCALAR
+        if scalar and importlib.util.find_spec("numdifftools") is None:
+            notes.append(
+                f"No uncertainties: the '{method}' method does not produce a "
+                "covariance matrix, and estimating one afterwards needs the "
+                "'numdifftools' package, which is not installed. Install it "
+                "(pip install numdifftools) or use least_squares/leastsq."
+            )
+        else:
+            notes.append(
+                "No uncertainties: the covariance matrix could not be "
+                "estimated (the StdErr column is empty). This usually means the "
+                "parameters are not all identifiable from the data, for example "
+                "an over-parameterized model or a parameter the data cannot "
+                "constrain. The curve may look good while individual values are "
+                "unreliable. Consider fixing or removing a parameter, or using a "
+                "simpler model."
+            )
+    return notes
 
 
 class FitHandlersMixin:
@@ -291,17 +342,9 @@ class FitHandlersMixin:
                 result.params, gof=result.gof, session_key=skey
             )
 
-        if not result.errorbars:
-            messagebox.showwarning(
-                "No Uncertainties",
-                "The fit did not produce parameter uncertainties (the StdErr "
-                "column is empty).\n\nThis usually means the parameters are "
-                "not all identifiable from the data — for example an over-"
-                "parameterized model, or a parameter the data can't constrain. "
-                "The curve may look good while individual parameter values are "
-                "unreliable. Consider fixing or removing a parameter, or using "
-                "a simpler model.",
-            )
+        notes = fit_outcome_notes(result, self.fit_panel.method_var.get())
+        if notes:
+            messagebox.showwarning("Fit Warning", "\n\n".join(notes))
 
     def _on_global_fit(self):
         """Open Global Fit dialog for simultaneous fitting across series."""

@@ -1123,6 +1123,9 @@ class FitResultsPanel(ttk.LabelFrame):
             val = f"{info['value']:.6g}" if info["value"] is not None else ""
             init_val = f"{info['init_value']:.6g}" if info.get("init_value") is not None else ""
             stderr = f"{info['stderr']:.6g}" if info.get("stderr") is not None else ""
+            if info.get("at_bound"):
+                # The curvature at a bound is not this parameter's uncertainty.
+                stderr = f"{stderr} (at {info['at_bound']})".strip()
             mn = f"{info['min']:.6g}" if info["min"] not in (None, float("-inf")) else "-inf"
             mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
             vary = "Yes" if info.get("vary", True) else "No"
