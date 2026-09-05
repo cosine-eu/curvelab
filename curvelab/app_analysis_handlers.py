@@ -231,6 +231,8 @@ class AnalysisHandlersMixin:
 
     def _import_model_result(self):
         """Import lmfit ModelResult from a .sav file."""
+        if self._refuse_while_fitting():
+            return
         filepath = filedialog.askopenfilename(
             filetypes=[("lmfit Model Result", "*.sav"), ("All files", "*.*")],
             title="Import Model Result",

@@ -38,6 +38,8 @@ class FitHandlersMixin:
             messagebox.showerror("Guess Error", str(e))
 
     def _on_fit(self):
+        if self._refuse_while_fitting():
+            return
         sess = self._require_session()
         if sess is None:
             return
@@ -161,12 +163,26 @@ class FitHandlersMixin:
             messagebox.showerror("ODR Error", str(e))
 
     def _set_fit_running(self, running: bool):
-        """Toggle the Fit/Abort button and lock out every control that
-        mutates the model or parameters while a background fit thread is
+        """Toggle the Fit/Abort button and lock out the panel controls that
+        mutate the model or parameters while a background fit thread is
         reading/writing them (add/remove component, auto guess, batch fit,
-        clear, session changes, and direct parameter-table edits)."""
+        clear, session changes, and direct parameter-table edits). Entry
+        points that are not panel buttons (menu items, key bindings) cannot
+        be disabled this way and call _refuse_while_fitting instead."""
         self.fit_panel.set_fitting_state(running)
         self.fit_results.set_locked(running)
+
+    def _fit_in_progress(self) -> bool:
+        return self._fit_thread is not None and self._fit_thread.is_alive()
+
+    def _refuse_while_fitting(self) -> bool:
+        """True (after telling the user) if a background fit is running and
+        the caller must not touch the model or parameters."""
+        if not self._fit_in_progress():
+            return False
+        messagebox.showwarning(
+            "Busy", "A fit is running. Wait for it to finish, or abort it.")
+        return True
 
     def _run_fit_async(self, rec, sess, method, sid):
         """Run fit in a background thread (slow methods)."""
@@ -276,6 +292,8 @@ class FitHandlersMixin:
 
     def _on_global_fit(self):
         """Open Global Fit dialog for simultaneous fitting across series."""
+        if self._refuse_while_fitting():
+            return
         sess = self._require_session()
         if sess is None:
             return

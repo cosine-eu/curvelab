@@ -116,6 +116,44 @@ class ControlLockoutTests(GuiTestBase):
         self.assertEqual(str(fp._fit_btn["text"]), "Fit")
 
 
+    def test_menu_and_key_entry_points_refuse_while_a_fit_runs(self):
+        # Panel buttons are disabled by the lock; menu items and key bindings
+        # cannot be, so they must check for a live fit thread themselves.
+        # Ctrl+Z on the parameters while the worker is inside model.fit on
+        # the same Parameters object is exactly the race the lock exists for.
+        from curvelab.session import ParamEdit
+        self._add_fitted_series(run=False)
+        sess = self.app._active_session
+        fm = sess.fit_manager
+        sess.undo_stack.append(ParamEdit(param_name="slope", field="value",
+                                         old_value=9.0, new_value=fm.params["slope"].value))
+        live = mock.Mock()
+        live.is_alive.return_value = True
+        self.app._fit_thread = live
+        try:
+            with mock.patch("curvelab.app_fit_handlers.messagebox") as mb, \
+                    mock.patch("curvelab.app_workspace.filedialog") as fd, \
+                    mock.patch("curvelab.app_analysis_handlers.filedialog") as fd2:
+                self.app._undo_param_edit()
+                self.app._on_fit()
+                self.app._on_global_fit()
+                self.app._load_workspace()
+                self.app._import_model_result()
+            self.assertEqual(mb.showwarning.call_count, 5)
+            self.assertTrue(all(c[0][0] == "Busy" for c in mb.showwarning.call_args_list))
+            # Nothing happened: the undo was not applied and no file dialog opened.
+            self.assertEqual(len(sess.undo_stack), 1)
+            self.assertNotEqual(fm.params["slope"].value, 9.0)
+            fd.askopenfilename.assert_not_called()
+            fd2.askopenfilename.assert_not_called()
+        finally:
+            self.app._fit_thread = None
+
+        # With no fit running the same undo goes through.
+        self.app._undo_param_edit()
+        self.assertEqual(fm.params["slope"].value, 9.0)
+
+
 class RemoveSeriesReplotTests(GuiTestBase):
     """ff1ddb4: removing a series from the panel replots immediately."""
 

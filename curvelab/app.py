@@ -534,6 +534,8 @@ class CurveLabApp(
         self.fit_results.set_params(FitManager.params_to_info(fm.params))
 
     def _undo_param_edit(self, event=None):
+        if self._refuse_while_fitting():
+            return
         sess = self._active_session
         fm = self._active_fit_mgr
         if sess is None or fm is None or not sess.undo_stack:
@@ -546,6 +548,8 @@ class CurveLabApp(
         self._refresh_param_display()
 
     def _redo_param_edit(self, event=None):
+        if self._refuse_while_fitting():
+            return
         sess = self._active_session
         fm = self._active_fit_mgr
         if sess is None or fm is None or not sess.redo_stack:

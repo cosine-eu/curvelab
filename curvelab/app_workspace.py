@@ -203,6 +203,8 @@ class WorkspaceMixin:
 
     def _load_workspace(self, event=None):
         """Load a workspace from a .clw JSON file."""
+        if self._refuse_while_fitting():
+            return
         filepath = filedialog.askopenfilename(
             filetypes=[("CurveLab Workspace", "*.clw"), ("All files", "*.*")],
             title="Load Workspace",
