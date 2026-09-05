@@ -163,14 +163,14 @@ class AnalysisHandlersMixin:
         rec = self._active_record
         fm = sess.fit_manager
 
-        def on_run(n_boot, boot_type):
+        def on_run(n_boot, boot_type, seed):
             x, y, yerr, xerr = self._get_fit_data(rec)
             weight_mode = self.fit_panel.weight_var.get()
             method = self.fit_panel.method_var.get()
             return fm.run_bootstrap(
                 x, y, yerr=yerr, n_boot=n_boot,
                 method=method, boot_type=boot_type,
-                weight_mode=weight_mode,
+                weight_mode=weight_mode, seed=seed,
             )
 
         dlg = BootstrapDialog(self, on_run=on_run)

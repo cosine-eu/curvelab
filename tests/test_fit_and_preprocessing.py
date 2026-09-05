@@ -550,6 +550,86 @@ class BootstrapTests(unittest.TestCase):
         self.assertAlmostEqual(mean_slope, 2.0, delta=0.3)
 
 
+class BootstrapCorrectnessTests(unittest.TestCase):
+    """The residual bootstrap resampled raw residuals across points with
+    different sigma, refitted with plain chi-square whatever the fit's
+    objective, was unseeded, and counted non-converged refits as successes."""
+
+    def test_seed_makes_the_run_reproducible(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.3, 40)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        fm.run_fit(x, y, weight_mode="No weights")
+        a, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode="No weights", seed=7)
+        b, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode="No weights", seed=7)
+        c, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode="No weights", seed=8)
+        np.testing.assert_array_equal(a["slope"], b["slope"])
+        self.assertFalse(np.array_equal(a["slope"], c["slope"]))
+
+    def test_weighted_residual_bootstrap_respects_each_points_sigma(self):
+        # sigma grows tenfold across the range. Resampling raw residuals
+        # puts large residuals from the noisy end onto the quiet end, which
+        # inflates the intercept spread far beyond its stderr; resampling
+        # weighted residuals keeps the spread consistent with the fit.
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(3)
+        x = np.linspace(0, 10, 60)
+        sigma = 0.05 + 0.5 * x / 10
+        y = 2.0 * x + 1.0 + rng.normal(0, 1, 60) * sigma
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, yerr=sigma, scale_covar=False)
+        dists, n_failed = fm.run_bootstrap(x, y, yerr=sigma, n_boot=200, seed=0)
+        self.assertEqual(n_failed, 0)
+        boot_sd = dists["intercept"].std()
+        stderr = r.params["intercept"]["stderr"]
+        self.assertLess(boot_sd, 1.6 * stderr)
+        self.assertGreater(boot_sd, 0.6 * stderr)
+
+    def test_refits_use_the_fits_objective(self):
+        from unittest import mock
+        from curvelab.fit_manager import FitManager, objective_kwargs, WEIGHT_NONE
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 40)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        fm.run_fit(x, y, weight_mode=WEIGHT_NONE, method="least_squares",
+                   objective_kws=objective_kwargs("least_squares", "Cauchy", 2.0),
+                   scale_covar=False)
+        with mock.patch.object(fm._model, "fit", wraps=fm._model.fit) as spy:
+            fm.run_bootstrap(x, y, n_boot=3, weight_mode=WEIGHT_NONE, seed=0)
+        kw = spy.call_args.kwargs
+        self.assertEqual(kw["fit_kws"], {"loss": "cauchy", "f_scale": 2.0})
+        self.assertFalse(kw["scale_covar"])
+
+    def test_non_converged_refits_are_counted_as_failed(self):
+        from unittest import mock
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        fm.run_fit(x, y, weight_mode="No weights")
+        real_fit = fm._model.fit
+
+        def flaky(*a, **k):
+            res = real_fit(*a, **k)
+            res.success = False
+            return res
+        with mock.patch.object(fm._model, "fit", side_effect=flaky):
+            dists, n_failed = fm.run_bootstrap(x, y, n_boot=5, weight_mode="No weights", seed=0)
+        self.assertEqual(n_failed, 5)
+        self.assertEqual(len(dists["slope"]), 0)
+
+
 class PreprocessingTests(unittest.TestCase):
     """Gap 4: Test data preprocessing guard-rails."""
 

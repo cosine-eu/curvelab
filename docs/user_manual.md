@@ -998,7 +998,7 @@ chi-squared surface.
 
 | Type | Method |
 |------|--------|
-| **Residual bootstrap** | Resamples the residuals (with replacement), adds them to the fitted curve, and refits. Assumes the residual distribution is correct but the specific ordering does not matter. |
+| **Residual bootstrap** | Resamples the residuals (with replacement), adds them to the fitted curve, and refits. Assumes the residuals are independent and identically distributed once weighted, i.e. that the noise model is right; for a weighted fit the residuals are resampled as `r_i w_i` and scaled back by each target point's `1/w_j`, so a residual from a noisy point does not land on a quiet one at full size. |
 | **Case bootstrap** | Resamples (x, y, yerr) rows with replacement and refits. Makes fewer assumptions but may break structure in the data. |
 
 ### Usage
@@ -1007,7 +1007,14 @@ chi-squared surface.
 2. Open the Bootstrap CI dialog.
 3. Set the number of bootstrap resamples (default: 200).
 4. Select the bootstrap type.
-5. Click **Run**.
+5. Set the random seed (default 0, so a rerun reproduces the same
+   intervals; clear the field for a fresh draw).
+6. Click **Run**.
+
+Each resample is refitted with the objective (robust loss or reduce
+function) and the Scale-covariance setting of the fit being bootstrapped.
+Resamples whose refit does not converge are dropped and counted in the
+status line.
 
 ### Output
 

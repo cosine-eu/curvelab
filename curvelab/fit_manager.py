@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 from lmfit import CompositeModel, Model, Parameters
+from lmfit.minimizer import reduce_chisquare
 from lmfit.model import ModelResult
 from lmfit.models import SplineModel
 
@@ -1628,38 +1629,66 @@ class FitManager:
         method: str = DEFAULT_FIT_METHOD,
         boot_type: str = "residual",
         weight_mode: str = DEFAULT_WEIGHT_MODE,
+        seed: int | None = None,
     ) -> tuple[dict[str, np.ndarray], int]:
         """Run bootstrap resampling and return parameter distributions.
 
         boot_type:
-          - "residual": Resample residuals and add to fitted values
-          - "case": Resample (x, y, yerr) rows with replacement
+          - "residual": resample the residuals and add them to the fitted
+            curve. For a weighted fit the residuals are resampled in
+            *weighted* form (r_i w_i, of order one everywhere) and scaled
+            back by each target point's 1/w_j: raw residuals from
+            low-sigma points would otherwise land on high-sigma points and
+            vice versa, distorting the distributions.
+          - "case": resample (x, y, yerr) rows with replacement.
+
+        Each resample is refitted with the last fit's objective (robust
+        loss or reduce function) and scale_covar, so the distributions
+        describe the fit the user ran. seed makes the resampling
+        reproducible; None draws a fresh sequence.
 
         Returns ({param_name: array of successful resample values}, n_failed),
-        where n_failed is the number of resamples whose fit didn't converge
-        or raised (dropped from the distributions -- a high count means the
-        reported confidence intervals are based on fewer samples than
-        n_boot and may be unreliable).
+        where n_failed counts resamples whose fit raised or reported
+        success=False (dropped from the distributions -- a high count means
+        the reported confidence intervals rest on fewer samples than n_boot
+        and may be unreliable).
         """
         if self._last_result is None or self._model is None:
             raise ValueError("Run a fit first")
 
-        best_params = self._last_result.params
-        y_fit = self._last_result.best_fit
+        rng = np.random.default_rng(seed)
+        last = self._last_result
+        best_params = last.params
+        y_fit = last.best_fit
         residuals = y - y_fit
+        fit_weights = last.weights if last.weights is not None else None
+        # The objective the fit used: a scipy loss travels in the stored
+        # keywords, a reduce function in the result's reduce_fcn attribute
+        # (lmfit's default there is reduce_chisquare, i.e. none).
+        fit_kws = {k: v for k, v in (last.kws or {}).items() if k in ("loss", "f_scale")}
+        reduce_fcn = getattr(last, "reduce_fcn", None)
+        if reduce_fcn is not None and reduce_fcn is not reduce_chisquare:
+            fit_kws["reduce_fcn"] = reduce_fcn
+        scale_covar = bool(getattr(last, "scale_covar", True))
 
         param_names = [n for n, p in best_params.items() if p.vary]
         distributions: dict[str, list[float]] = {n: [] for n in param_names}
         n_failed = 0
+        n_pts = len(x)
 
         for _ in range(n_boot):
             if boot_type == "case":
-                idx = np.random.randint(0, len(x), size=len(x))
+                idx = rng.integers(0, n_pts, size=n_pts)
                 x_b, y_b = x[idx], y[idx]
                 yerr_b = yerr[idx] if yerr is not None else None
             else:
-                idx = np.random.randint(0, len(residuals), size=len(residuals))
-                x_b, y_b = x, y_fit + residuals[idx]
+                idx = rng.integers(0, n_pts, size=n_pts)
+                if fit_weights is not None:
+                    w = np.asarray(fit_weights, dtype=float)
+                    y_b = y_fit + (residuals * w)[idx] / w
+                else:
+                    y_b = y_fit + residuals[idx]
+                x_b = x
                 yerr_b = yerr
 
             weights = self._compute_weights(y_b, yerr_b, weight_mode)
@@ -1667,8 +1696,12 @@ class FitManager:
                 params_copy = best_params.copy()
                 result = self._model.fit(
                     y_b, params_copy, x=x_b, weights=weights,
-                    method=method, nan_policy="omit",
+                    method=method, nan_policy="omit", fit_kws=fit_kws,
+                    scale_covar=scale_covar,
                 )
+                if not getattr(result, "success", True):
+                    n_failed += 1
+                    continue
                 for n in param_names:
                     distributions[n].append(result.params[n].value)
             except Exception:

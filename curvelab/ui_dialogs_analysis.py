@@ -670,6 +670,12 @@ class BootstrapDialog(BaseDialog):
                      values=["residual", "case"], state="readonly",
                      width=10).pack(side=tk.LEFT, padx=5)
 
+        # A fixed default seed makes a rerun reproduce the same intervals;
+        # clear the field for a fresh random draw.
+        ttk.Label(ctrl, text="Seed:").pack(side=tk.LEFT, padx=(10, 0))
+        self._seed_var = tk.StringVar(value="0")
+        ttk.Entry(ctrl, textvariable=self._seed_var, width=6).pack(side=tk.LEFT, padx=5)
+
         self._run_btn = ttk.Button(ctrl, text="Run", command=self._run)
         self._run_btn.pack(side=tk.LEFT, padx=10)
         self._status_var = tk.StringVar(value="")
@@ -690,11 +696,17 @@ class BootstrapDialog(BaseDialog):
             self._status_var.set("Invalid N.")
             return
         boot_type = self._type_var.get()
+        seed_text = self._seed_var.get().strip()
+        try:
+            seed = int(seed_text) if seed_text else None
+        except ValueError:
+            self._status_var.set("Invalid seed.")
+            return
         self._run_btn.config(state=tk.DISABLED)
         self._status_var.set("Running...")
         self.update_idletasks()
         try:
-            distributions, n_failed = self._on_run(n_boot, boot_type)
+            distributions, n_failed = self._on_run(n_boot, boot_type, seed)
             self._show_results(distributions)
             if n_failed:
                 self._status_var.set(
