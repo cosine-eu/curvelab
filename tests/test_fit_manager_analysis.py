@@ -443,6 +443,23 @@ class ReduceFunctionTests(unittest.TestCase):
         self.assertAlmostEqual(result.params["slope"]["value"], 2.0, delta=0.3)
 
 
+class WeightedRSquaredTests(unittest.TestCase):
+    """lmfit 1.2.x computed R^2 from the weighted residuals over the
+    unweighted total sum of squares, so a perfect fit with small sigma gave a
+    large negative R^2. lmfit 1.3 uses raw residuals; this pins that."""
+
+    def test_weighted_perfect_fit_has_r_squared_near_one(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 30)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.005, 30)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, yerr=np.full(30, 0.01))
+        self.assertGreater(r.gof["R-squared"], 0.999)
+
+
 class WeightModeCoverageTests(unittest.TestCase):
     """The _compute_weights modes not covered by the existing tests."""
 
