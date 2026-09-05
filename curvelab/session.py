@@ -41,6 +41,11 @@ class FitResult:
     flatchain: object | None = None  # emcee DataFrame
     init_params: dict[str, float] | None = None  # {name: initial_value_before_fit}
     errorbars: bool = True  # False when the fit couldn't estimate uncertainties
+    xerr_data: np.ndarray | None = None
+    # How the fit was run (method, weight_mode, objective, scale_covar), in a
+    # JSON-safe form, so a workspace reload can reproduce it rather than
+    # refit with defaults. None for results from before this was recorded.
+    fit_options: dict | None = None
 
     def residuals(self) -> np.ndarray:
         """Raw residuals (data minus fit) at the data points."""

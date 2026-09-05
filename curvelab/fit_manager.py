@@ -280,6 +280,33 @@ class FitComponent:
     expression: str = ""  # Only used when name == "Expression"
 
 
+def _objective_to_serializable(fit_kws: dict) -> dict:
+    """The objective part of the fit keywords in JSON-safe form: a reduce
+    function is stored by name so a workspace can record it."""
+    out = {}
+    for key, value in (fit_kws or {}).items():
+        if key == "reduce_fcn" and callable(value):
+            out[key] = value.__name__
+        elif key in ("reduce_fcn", "loss", "f_scale"):
+            out[key] = value
+    return out
+
+
+def _objective_from_serializable(data: dict | None) -> dict:
+    """Inverse of _objective_to_serializable. An unknown reduce-function
+    name (removed in a later version) is dropped, giving chi-square."""
+    out = {}
+    for key, value in (data or {}).items():
+        if key == "reduce_fcn" and isinstance(value, str):
+            fn = next((f for f in REDUCE_FUNCTIONS.values()
+                       if f is not None and f.__name__ == value), None)
+            if fn is not None:
+                out[key] = fn
+        elif key in ("loss", "f_scale"):
+            out[key] = value
+    return out
+
+
 def _expr_names(expr: str) -> set[str]:
     """Names referenced by a parameter expression (an lmfit/asteval string)."""
     try:
@@ -868,24 +895,67 @@ class FitManager:
             flatchain=flatchain,
             init_params=init_values,
             errorbars=bool(getattr(self._last_result, "errorbars", True)),
+            xerr_data=xerr,
+            fit_options={
+                "method": method,
+                "weight_mode": weight_mode,
+                "objective": _objective_to_serializable(kws),
+                "scale_covar": scale_covar,
+            },
         )
 
     def refit_from_result(self, result: FitResult) -> None:
-        """Re-run the fit using stored result data to reconstruct _last_result.
+        """Re-run the fit from a stored result to reconstruct _last_result.
 
-        This is used after loading a workspace to make analysis tools
-        (CIs, contours, profiles, etc.) available without manual re-fitting.
+        Used after loading a workspace so the analysis tools (CIs, contours,
+        profiles, ...) work without a manual refit. The refit starts from
+        the saved best-fit values with the saved method, weights, objective
+        and scale_covar, so it lands on the same optimum and the analysis
+        describes the fit the table shows. Results from before the options
+        were recorded, and methods that cannot be re-run in place (emcee,
+        the global optimizers, ODR), fall back to the default least-squares
+        method with default weights from the saved values; for a chi-square
+        fit that is the same optimum, for emcee it is the least-squares fit
+        nearest the posterior medians.
         """
         if self._model is None or self._params is None:
             return
         x, y = result.x_data, result.y_data
-        yerr = result.yerr_data
-        weights = self._compute_weights(y, yerr, DEFAULT_WEIGHT_MODE)
+        yerr, xerr = result.yerr_data, result.xerr_data
         if self._has_spline:
             self._rebuild_model_with_data(x)
+
+        # Start at the saved optimum.
+        for name, info in (result.params or {}).items():
+            if name in self._params and not self._params[name].expr:
+                self._params[name].set(value=info["value"])
+
+        opts = result.fit_options or {}
+        method = opts.get("method", DEFAULT_FIT_METHOD)
+        if method in SLOW_METHODS or method == "odr" or method not in METHOD_CAPS:
+            method = DEFAULT_FIT_METHOD
+        weight_mode = opts.get("weight_mode", DEFAULT_WEIGHT_MODE)
+        if weight_mode not in WEIGHT_MODES:
+            weight_mode = DEFAULT_WEIGHT_MODE
+        scale_covar = bool(opts.get("scale_covar", True))
+        fit_kws = _objective_from_serializable(opts.get("objective"))
+
+        weights = self._compute_weights(y, yerr, weight_mode)
+        if weight_mode == WEIGHT_EFFECTIVE_VARIANCE:
+            if xerr is not None and yerr is not None:
+                params = self._params
+                weights = self._effective_variance_weights(
+                    lambda xv: self._model.eval(params, x=xv), x, yerr, xerr
+                )
+            elif yerr is not None:
+                weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
+            else:
+                weights = None
+
         self._last_result = self._model.fit(
             y, self._params, x=x, weights=weights,
-            method=DEFAULT_FIT_METHOD, nan_policy="omit",
+            method=method, nan_policy="omit", fit_kws=fit_kws,
+            scale_covar=scale_covar,
         )
         self._params = self._last_result.params
 

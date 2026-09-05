@@ -408,6 +408,80 @@ class WorkspaceRoundTripTests(unittest.TestCase):
             places=6,
         )
 
+    def test_reload_refit_reproduces_a_robust_unscaled_fit(self):
+        # The reload refit used to run leastsq with default weights and
+        # scale_covar=True from the hints: the table showed the saved fit
+        # while the analysis dialogs described a different one.
+        import warnings
+        from curvelab.fit_manager import FitManager, objective_kwargs, WEIGHT_NONE
+        from curvelab.session import SeriesRecord, FitSession
+        from curvelab.workspace import (
+            WorkspaceEncoder, serialize_series_records,
+            deserialize_series_record, decode_workspace,
+        )
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 60)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 60)
+        y[30] += 20.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = fm.run_fit(
+                x, y, weight_mode=WEIGHT_NONE, method="least_squares",
+                objective_kws=objective_kwargs("least_squares", "Cauchy", 1.0),
+                scale_covar=False)
+        self.assertEqual(result.fit_options["objective"], {"loss": "cauchy", "f_scale": 1.0})
+
+        rec = SeriesRecord(x=x, y=y, style={"x": "x", "y": "y"}, dataset_name="d")
+        rec.fit_sessions["fit1"] = FitSession(name="fit1", fit_manager=fm, result=result)
+        blob = json.loads(json.dumps(serialize_series_records({"s": rec}), cls=WorkspaceEncoder),
+                          object_hook=decode_workspace)
+        rec2 = deserialize_series_record(blob["s"], x, y, None, None, "d")
+        sess2 = rec2.fit_sessions["fit1"]
+        self.assertEqual(sess2.result.fit_options, result.fit_options)
+
+        fm2 = FitManager.deserialize(fm.serialize())
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            fm2.refit_from_result(sess2.result)
+        refit = fm2._last_result
+        self.assertEqual(refit.method, "least_squares")
+        self.assertEqual(refit.kws, {"loss": "cauchy", "f_scale": 1.0})
+        self.assertAlmostEqual(refit.params["slope"].value, result.params["slope"]["value"], places=6)
+        self.assertAlmostEqual(refit.params["slope"].stderr, result.params["slope"]["stderr"], places=6)
+
+    def test_reload_refit_maps_reduce_fcn_by_name(self):
+        from curvelab.fit_manager import FitManager, objective_kwargs, WEIGHT_NONE, _reduce_cauchylogpdf
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        result = fm.run_fit(x, y, weight_mode=WEIGHT_NONE, method="nelder",
+                            objective_kws=objective_kwargs("nelder", "Cauchy log-pdf"))
+        self.assertEqual(result.fit_options["objective"], {"reduce_fcn": "_reduce_cauchylogpdf"})
+        fm2 = FitManager.deserialize(fm.serialize())
+        fm2.refit_from_result(result)
+        self.assertEqual(fm2._last_result.method, "Nelder-Mead")   # lmfit's name for nelder
+        self.assertIs(fm2._last_result.reduce_fcn, _reduce_cauchylogpdf)
+
+    def test_reload_refit_without_recorded_options_uses_defaults(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        result = fm.run_fit(x, y, weight_mode="No weights")
+        result.fit_options = None                      # a pre-0.11.5 workspace
+        fm2 = FitManager.deserialize(fm.serialize())
+        fm2.refit_from_result(result)
+        from curvelab.fit_manager import DEFAULT_FIT_METHOD
+        self.assertEqual(fm2._last_result.method, DEFAULT_FIT_METHOD)
+        self.assertAlmostEqual(fm2._last_result.params["slope"].value, 2.0, places=6)
+
     def test_special_float_round_trip(self):
         from curvelab.workspace import encode_value, decode_workspace
 

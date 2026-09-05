@@ -1705,12 +1705,16 @@ complete application state.
 ### Immediate analysis after loading
 
 When you load a workspace, CurveLab automatically reconstructs the lmfit
-`ModelResult` object for each completed fit session. This means analysis
+`ModelResult` object for each completed fit session by refitting from the
+saved best-fit values with the saved method, weight mode, objective, and
+Scale-covariance setting, so it lands on the same optimum and the analysis
 tools (Confidence Intervals, Correlation Matrix, Diagnostic Plots, 2D
-Contours, Profile Likelihood, Uncertainty Propagation, etc.) are available
-immediately after loading -- you do not need to re-run the fit. The
-DataPanel series list is also fully populated so all series appear in the
-listbox.
+Contours, Profile Likelihood, Uncertainty Propagation, etc.) describe the
+fit shown in the table -- you do not need to re-run the fit. Fits made
+with `emcee`, the global optimizers, or ODR cannot be re-run in place; for
+those the reconstruction is a least-squares fit started from the saved
+values, and the parameter table keeps the saved result. The DataPanel
+series list is also fully populated so all series appear in the listbox.
 
 ### Portability
 

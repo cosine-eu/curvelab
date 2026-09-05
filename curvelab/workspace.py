@@ -102,6 +102,8 @@ def serialize_series_records(
                     "report": r.report,
                     "candidates": r.candidates,
                     "init_params": r.init_params,
+                    "xerr_data": r.xerr_data,
+                    "fit_options": r.fit_options,
                 })
             fit_sessions[sess_name] = sess_data
 
@@ -179,6 +181,8 @@ def deserialize_series_record(
                 report=rdata.get("report", ""),
                 candidates=rdata.get("candidates"),
                 init_params=rdata.get("init_params"),
+                xerr_data=_to_array(rdata["xerr_data"]) if rdata.get("xerr_data") is not None else None,
+                fit_options=rdata.get("fit_options"),
             )
 
         rec.fit_sessions[sess_name] = sess
