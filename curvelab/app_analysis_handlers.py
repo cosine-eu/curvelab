@@ -129,7 +129,7 @@ class AnalysisHandlersMixin:
                 "Need at least 2 varied parameters for contour plots.",
             )
             return
-        dlg = ConfidenceContourDialog(self, fm.ci_minimizer(), vary_params)
+        dlg = ConfidenceContourDialog(self, fm, vary_params)
         dlg.title(self._analysis_title("2D Confidence Contours"))
 
     def _show_profile_likelihood(self):

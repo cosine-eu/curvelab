@@ -108,11 +108,28 @@ class ConfidenceAfterOtherObjectivesTests(unittest.TestCase):
         self.assertEqual(self.fm._last_result.kws, {"loss": "cauchy", "f_scale": 1.0})
 
     def test_contour_grid_after_robust_loss(self):
-        from lmfit import conf_interval2d
         self._fit_cauchy()
-        mini = self.fm.ci_minimizer()
-        _, _, grid = conf_interval2d(mini, mini, "slope", "intercept", nx=5, ny=5)
-        self.assertEqual(grid.shape, (5, 5))
+        _, _, dchi2, levels = self.fm.compute_ci_contour("slope", "intercept", nx=5, ny=5)
+        self.assertEqual(dchi2.shape, (5, 5))
+        self.assertAlmostEqual(float(dchi2.min()), 0.0, places=6)
+        self.assertEqual(list(levels), ["1\u03c3", "2\u03c3", "3\u03c3"])
+
+    def test_joint_thresholds_are_two_parameter_levels(self):
+        # 1-sigma for two parameters jointly is delta-chi2 = 2.30, not 1;
+        # with scale_covar on the levels shrink by about chi2/nu.
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 30)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 30)
+        yerr = np.full(30, 0.1)
+        self.fm.run_fit(x, y, yerr=yerr, scale_covar=False)
+        lv = self.fm.joint_ci_thresholds()
+        self.assertAlmostEqual(lv["1\u03c3"], 2.2957, places=3)
+        self.assertAlmostEqual(lv["2\u03c3"], 6.1801, places=3)
+        self.assertAlmostEqual(lv["3\u03c3"], 11.829, places=2)
+        self.fm.run_fit(x, y, yerr=yerr, scale_covar=True)
+        redchi = self.fm._last_result.redchi
+        scaled = self.fm.joint_ci_thresholds()
+        self.assertAlmostEqual(scaled["1\u03c3"] / 2.2957, redchi, delta=0.15 * redchi)
 
     def test_ci_after_emcee(self):
         try:

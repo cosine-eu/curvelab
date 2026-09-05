@@ -508,13 +508,16 @@ class DiagnosticPlotsDialog(BaseDialog):
 
 
 class ConfidenceContourDialog(BaseDialog):
-    """Interactive 2D confidence contour plot using lmfit.conf_interval2d."""
+    """Interactive 2D confidence-region plot: the delta-chi2 surface over two
+    parameters (FitManager.compute_ci_contour) with labeled joint 1/2/3-sigma
+    contours, so the regions can be read off the plot."""
 
-    def __init__(self, parent, last_result, vary_params: list[str]):
+    def __init__(self, parent, fit_manager, vary_params: list[str]):
         super().__init__(parent, "2D Confidence Contours", size="700x600")
 
-        self._last_result = last_result
+        self._fm = fit_manager
         self._vary_params = vary_params
+        self._colorbar = None
 
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         from matplotlib.figure import Figure
@@ -568,16 +571,28 @@ class ConfidenceContourDialog(BaseDialog):
         self.update_idletasks()
 
         try:
-            from lmfit import conf_interval2d
-            x_arr, y_arr, grid = conf_interval2d(
-                self._last_result, self._last_result,
-                x_name, y_name, nx=nx, ny=ny,
-            )
+            x_arr, y_arr, dchi2, levels = self._fm.compute_ci_contour(
+                x_name, y_name, nx=nx, ny=ny)
             self._ax.clear()
-            self._ax.contourf(x_arr, y_arr, grid, cmap="coolwarm")
+            if self._colorbar is not None:
+                self._colorbar.remove()
+                self._colorbar = None
+            filled = self._ax.contourf(x_arr, y_arr, dchi2, levels=20, cmap="coolwarm")
+            self._colorbar = self._fig.colorbar(filled, ax=self._ax)
+            self._colorbar.set_label("\u0394\u03c7\u00b2")
+            # Joint sigma regions for the two parameters together.
+            values = list(levels.values())
+            lines = self._ax.contour(x_arr, y_arr, dchi2, levels=values,
+                                     colors="black", linewidths=0.8)
+            self._ax.clabel(lines, fmt={v: k for k, v in levels.items()}, fontsize=8)
             self._ax.set_xlabel(x_name)
             self._ax.set_ylabel(y_name)
-            self._ax.set_title(f"Confidence: {x_name} vs {y_name}")
+            scaled = self._fm._ci_scaled()
+            self._ax.set_title(
+                f"Joint confidence regions: {x_name} vs {y_name}\n"
+                + ("\u0394\u03c7\u00b2 thresholds from the F-test, scaled by \u03c7\u00b2/\u03bd"
+                   if scaled else "\u0394\u03c7\u00b2 = 2.30 / 6.18 / 11.8 for 1/2/3\u03c3 (2 parameters)"),
+                fontsize=9)
             self._fig.tight_layout()
             self._canvas.draw()
             self._status_var.set("Done.")

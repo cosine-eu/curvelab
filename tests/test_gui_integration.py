@@ -754,6 +754,32 @@ class DerivativeIntegralDialogTests(GuiTestBase):
         new[0].destroy()
 
 
+class ContourDialogTests(GuiTestBase):
+    """The contour dialog used to fill a sigma grid with no levels and no
+    colorbar, so 1/2/3-sigma regions could not be read off. It now draws
+    labeled joint-sigma contours over a delta-chi2 map with a colorbar."""
+
+    def test_compute_draws_labeled_contours_and_colorbar(self):
+        rec, sess = self._add_fitted_series(run=True)
+        self.app._active_series_id = "ds::x::y"
+        import tkinter as tk
+        before = set(self.app.winfo_children())
+        self.app._show_confidence_contours()
+        dlg = next(w for w in self.app.winfo_children()
+                   if w not in before and isinstance(w, tk.Toplevel))
+        try:
+            dlg._grid_var.set(5)
+            dlg._compute()
+            self.assertEqual(dlg._status_var.get(), "Done.")
+            self.assertIsNotNone(dlg._colorbar)
+            self.assertEqual(dlg._colorbar.ax.get_ylabel(), "\u0394\u03c7\u00b2")
+            labels = [t.get_text() for t in dlg._ax.texts]      # clabel texts
+            self.assertTrue(any(l.startswith("1") for l in labels), labels)
+            self.assertIn("Joint confidence regions", dlg._ax.get_title())
+        finally:
+            dlg.destroy()
+
+
 class BadMaxNfevTests(GuiTestBase):
     """A Max nfev that is not a positive whole number used to raise from
     int() after the async path had already flipped the panel into Abort

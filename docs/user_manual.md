@@ -924,7 +924,13 @@ method.
 
 CurveLab uses `lmfit.conf_interval2d()` to compute the chi-squared surface
 on a 2D grid. For each grid point, the two selected parameters are fixed
-and all other parameters are re-optimized.
+and all other parameters are re-optimized. The plot shows the increase
+over the minimum, `delta chi2`, as a color map with a colorbar, and draws
+labeled contours at the **joint** 1-, 2-, and 3-sigma levels for two
+parameters varied together. These are wider than one-parameter intervals:
+with Scale covariance off they are `delta chi2 = 2.30, 6.18, 11.8`; with it
+on they are the F-test levels, scaled by reduced chi-squared, like the
+1D intervals of Section 9. The title states which.
 
 ### Usage
 

@@ -1354,6 +1354,39 @@ class FitManager:
             return float(self._last_result.chisqr * f.ppf(prob, 1, nfree) / nfree)
         return float(chi2.ppf(prob, 1))
 
+    def joint_ci_thresholds(self, nfix: int = 2, sigmas=(1, 2, 3)) -> dict[str, float]:
+        """delta-chi2 levels marking the joint sigma-level regions for nfix
+        parameters varied together, under the CI method in use (see
+        ci_threshold): chi2.ppf(p, nfix) unscaled, or the F-test level
+        chi2_best * nfix * F_ppf(p, nfix, nu) / nu when scale_covar is on.
+        Joint regions are wider than one-parameter intervals: 1-sigma for
+        two parameters is delta-chi2 = 2.30, not 1."""
+        from scipy.stats import chi2, f, norm
+        if self._last_result is None:
+            raise ValueError("No fit result available")
+        levels = {}
+        for sigma in sigmas:
+            prob = 2.0 * norm.cdf(sigma) - 1.0
+            if self._ci_scaled():
+                nfree = self._last_result.nfree
+                levels[f"{sigma}\u03c3"] = float(
+                    self._last_result.chisqr * nfix * f.ppf(prob, nfix, nfree) / nfree)
+            else:
+                levels[f"{sigma}\u03c3"] = float(chi2.ppf(prob, nfix))
+        return levels
+
+    def compute_ci_contour(self, x_name: str, y_name: str, nx: int = 10, ny: int = 10):
+        """delta-chi2 surface over two parameters, the others re-optimized
+        at each grid point. Returns (x_values, y_values, delta_chi2_grid,
+        levels) where levels are the joint 1/2/3-sigma thresholds from
+        joint_ci_thresholds, so a caller can draw labeled contours."""
+        from lmfit import conf_interval2d
+        mini = self.ci_minimizer()
+        xs, ys, chi2_grid = conf_interval2d(mini, mini, x_name, y_name, nx=nx, ny=ny,
+                                            chi2_out=True)
+        best = min(float(mini.chisqr), float(np.nanmin(chi2_grid)))
+        return xs, ys, np.asarray(chi2_grid) - best, self.joint_ci_thresholds(2)
+
     def compute_confidence_intervals(self, sigmas=None) -> str:
         """Compute confidence intervals and return a CI report string."""
         from lmfit import conf_interval, ci_report
