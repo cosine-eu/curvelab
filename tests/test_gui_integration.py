@@ -116,6 +116,104 @@ class ControlLockoutTests(GuiTestBase):
         self.assertEqual(str(fp._fit_btn["text"]), "Fit")
 
 
+    def test_menu_and_key_entry_points_refuse_while_a_fit_runs(self):
+        # Panel buttons are disabled by the lock; menu items and key bindings
+        # cannot be, so they must check for a live fit thread themselves.
+        # Ctrl+Z on the parameters while the worker is inside model.fit on
+        # the same Parameters object is exactly the race the lock exists for.
+        from curvelab.session import ParamEdit
+        self._add_fitted_series(run=False)
+        sess = self.app._active_session
+        fm = sess.fit_manager
+        sess.undo_stack.append(ParamEdit(param_name="slope", field="value",
+                                         old_value=9.0, new_value=fm.params["slope"].value))
+        live = mock.Mock()
+        live.is_alive.return_value = True
+        self.app._fit_thread = live
+        try:
+            with mock.patch("curvelab.app_fit_handlers.messagebox") as mb, \
+                    mock.patch("curvelab.app_workspace.filedialog") as fd, \
+                    mock.patch("curvelab.app_analysis_handlers.filedialog") as fd2:
+                self.app._undo_param_edit()
+                self.app._on_fit()
+                self.app._on_global_fit()
+                self.app._load_workspace()
+                self.app._import_model_result()
+            self.assertEqual(mb.showwarning.call_count, 5)
+            self.assertTrue(all(c[0][0] == "Busy" for c in mb.showwarning.call_args_list))
+            # Nothing happened: the undo was not applied and no file dialog opened.
+            self.assertEqual(len(sess.undo_stack), 1)
+            self.assertNotEqual(fm.params["slope"].value, 9.0)
+            fd.askopenfilename.assert_not_called()
+            fd2.askopenfilename.assert_not_called()
+        finally:
+            self.app._fit_thread = None
+
+        # With no fit running the same undo goes through.
+        self.app._undo_param_edit()
+        self.assertEqual(fm.params["slope"].value, 9.0)
+
+
+class BackgroundRunnerTests(GuiTestBase):
+    """Slow single fits and global fits share one background runner: the
+    panel locks while the job runs, results land on the Tk thread, an
+    abort drops the result, and an exception becomes a dialog."""
+
+    def _pump_until_done(self, timeout_s=10.0):
+        import time
+        deadline = time.time() + timeout_s
+        while self.app._fit_thread is not None and time.time() < deadline:
+            self.root.update()
+            time.sleep(0.01)
+        self.root.update()
+        self.assertIsNone(self.app._fit_thread, "background job did not finish")
+
+    def test_job_result_is_delivered_and_panel_unlocked(self):
+        self._add_fitted_series(run=False)
+        seen = []
+        self.assertTrue(self.app._run_in_background(lambda: 42, seen.append))
+        self.assertEqual(self.app.fit_panel._fit_btn["text"], "Abort")
+        self._pump_until_done()
+        self.assertEqual(seen, [42])
+        self.assertEqual(self.app.fit_panel._fit_btn["text"], "Fit")
+
+    def test_job_error_is_shown_and_abort_is_silent(self):
+        self._add_fitted_series(run=False)
+
+        def boom():
+            raise RuntimeError("no good")
+        with mock.patch("curvelab.app_fit_handlers.messagebox") as mb:
+            self.app._run_in_background(boom, lambda r: None, error_title="Global Fit Error")
+            self._pump_until_done()
+        mb.showerror.assert_called_once()
+        self.assertEqual(mb.showerror.call_args[0][0], "Global Fit Error")
+
+        seen = []
+        with mock.patch("curvelab.app_fit_handlers.messagebox") as mb:
+            self.app._run_in_background(lambda: self.app._fit_abort.set() or 1, seen.append)
+            self._pump_until_done()
+        self.assertEqual(seen, [])                 # aborted: result dropped
+        mb.showerror.assert_not_called()
+
+    def test_global_fit_runs_on_the_background_thread(self):
+        rec_a, sess_a = self._add_fitted_series(sid="ds::x::y", label="A", dataset="ds", run=False)
+        rec_b, _ = self._add_fitted_series(sid="ds2::x::y", label="B", dataset="ds2", run=False)
+        self.app._active_series_id = "ds::x::y"
+        captured = {}
+        with mock.patch("curvelab.app_fit_handlers.GlobalFitDialog",
+                        side_effect=lambda *a, **kw: captured.update(kw)):
+            self.app._on_global_fit()
+        with mock.patch("curvelab.app_fit_handlers.messagebox"):
+            captured["on_fit"](["ds::x::y", "ds2::x::y"], {"slope"})
+            self.assertIsNotNone(self.app._fit_thread)       # ran in the background
+            self._pump_until_done()
+        self.assertIsNotNone(sess_a.result)
+        self.assertIsNotNone(rec_b.fit_sessions["Fit 1"].result)
+        self.assertEqual(sess_a.result.params["slope"]["value"],
+                         rec_b.fit_sessions["Fit 1"].result.params["slope"]["value"])
+        self.assertIn("ds::x::y::Fit 1", self.app.plot_mgr._fit_lines)
+
+
 class RemoveSeriesReplotTests(GuiTestBase):
     """ff1ddb4: removing a series from the panel replots immediately."""
 
@@ -535,6 +633,48 @@ class SqliteWorkspaceReloadTests(GuiTestBase):
         self.assertEqual(len(self.app.data_mgr.datasets), 2)
 
 
+class WorkspaceLoadWarningTests(GuiTestBase):
+    """Series whose columns are gone and fits that cannot be reconstructed
+    used to vanish silently on load. They are now collected and reported
+    once, and the rest of the workspace still loads."""
+
+    def test_missing_column_and_failed_refit_are_reported_once(self):
+        x = np.linspace(0, 10, 20)
+        self.app.data_mgr.add_dataframe("ds", pd.DataFrame({"x": x, "y": 2 * x}))
+        mapping = {"ds": "ds"}
+        ws = {"series": {
+            "ds::x::y": {"dataset_name": "ds", "visible": True, "fit_sessions": {},
+                         "style": {"dataset": "ds", "x": "x", "y": "y", "yerr": "", "xerr": "",
+                                   "label": "good", "marker": "o", "linestyle": "None", "color": ""}},
+            "ds::x::gone": {"dataset_name": "ds", "visible": True, "fit_sessions": {},
+                            "style": {"dataset": "ds", "x": "x", "y": "gone", "yerr": "", "xerr": "",
+                                      "label": "stale", "marker": "o", "linestyle": "None", "color": ""}},
+        }}
+        problems: list[str] = []
+        self.app._load_workspace_series(ws, mapping, problems)
+        self.assertEqual(list(self.app._series_records), ["ds::x::y"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("'stale' skipped", problems[0])
+        self.assertIn("No column 'gone'", problems[0])
+
+        # A session whose refit blows up is reported, not passed over.
+        rec = self.app._series_records["ds::x::y"]
+        sess = rec.ensure_session("fit1")
+        sess.fit_manager.add_component("Linear")
+        sess.result = mock.Mock()
+        with mock.patch.object(sess.fit_manager, "refit_from_result",
+                               side_effect=RuntimeError("boom")):
+            self.app._load_workspace_refit(problems)
+        self.assertEqual(len(problems), 2)
+        self.assertIn("session 'fit1'", problems[1])
+        self.assertIn("boom", problems[1])
+
+        with mock.patch("curvelab.app.messagebox") as mb:
+            self.app._report_collected_warnings("Workspace Load Warnings", problems)
+        mb.showwarning.assert_called_once()
+        self.assertEqual(mb.showwarning.call_args[0][0], "Workspace Load Warnings")
+
+
 class ObjectiveControlTests(GuiTestBase):
     """The Objective control follows the method, f_scale enables only for
     robust losses, and the app turns the selection into fit_kws."""
@@ -568,12 +708,12 @@ class ObjectiveControlTests(GuiTestBase):
         fp.objective_var.set("Cauchy"); fp._on_objective_changed()
         fp.f_scale_var.set("3.0")
 
-        objective_kws, *_ = self.app._get_fit_options()
+        objective_kws = self.app._get_fit_options().objective_kws
         self.assertEqual(objective_kws, {"loss": "cauchy", "f_scale": 3.0})
 
         fp.method_var.set("nelder"); fp._on_method_changed()
-        fp.objective_var.set("Neg. entropy"); fp._on_objective_changed()
-        objective_kws, *_ = self.app._get_fit_options()
+        fp.objective_var.set("Cauchy log-pdf"); fp._on_objective_changed()
+        objective_kws = self.app._get_fit_options().objective_kws
         self.assertIn("reduce_fcn", objective_kws)
 
     def test_bad_f_scale_falls_back_to_default(self):
@@ -582,8 +722,210 @@ class ObjectiveControlTests(GuiTestBase):
         fp.method_var.set("least_squares"); fp._on_method_changed()
         fp.objective_var.set("Cauchy"); fp._on_objective_changed()
         fp.f_scale_var.set("not a number")
-        objective_kws, *_ = self.app._get_fit_options()
+        objective_kws = self.app._get_fit_options().objective_kws
         self.assertEqual(objective_kws["f_scale"], 1.0)
+
+
+class DerivativeIntegralDialogTests(GuiTestBase):
+    """The dialog opens on a fitted composite model. This is the only path
+    that computes component areas, and it crashed on NumPy 2 until the
+    numerics moved into analysis_tools."""
+
+    def test_dialog_opens_with_component_areas(self):
+        import tkinter as tk
+        self._add_fitted_series(run=False)
+        sess = self.app._active_session
+        fm = sess.fit_manager
+        fm.add_component("Constant")          # Linear + Constant -> component curves
+        rec = self.app._active_record
+        sess.result = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        self.assertTrue(sess.result.component_curves)
+
+        before = set(self.app.winfo_children())
+        self.app._show_derivative_integral()
+        new = [w for w in self.app.winfo_children()
+               if w not in before and isinstance(w, tk.Toplevel)]
+        self.assertEqual(len(new), 1)
+        # First child is the info frame holding the area labels.
+        labels = new[0].winfo_children()[0].winfo_children()
+        texts = [str(w.cget("text")) for w in labels]
+        self.assertTrue(any(t.startswith("Total area") for t in texts))
+        self.assertEqual(sum(t.startswith("  ") for t in texts), 2)
+        new[0].destroy()
+
+
+class ModelComparisonComparabilityTests(GuiTestBase):
+    """Model Comparison counted fixed and derived parameters as k and ranked
+    AICs from fits to different data, weights or objectives; the F-test did
+    the same. Rows now carry a comparison key and only comparable rows are
+    ranked or tested."""
+
+    def _fit(self, fm, x, y, **kw):
+        return fm.run_fit(x, y, weight_mode="No weights", **kw)
+
+    def test_row_counts_varying_parameters_only(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.ui_dialogs_analysis import comparison_row
+        x = np.linspace(-5, 5, 80)
+        y = 3.0 * np.exp(-x ** 2 / 2)
+        fm = FitManager()
+        fm.add_component("Gaussian")               # amplitude, center, sigma, fwhm, height
+        fm.set_param_hint("center", value=0.0, vary=False)
+        fm.auto_guess(x, y)
+        row = comparison_row("s", fm.model_description(), self._fit(fm, x, y))
+        self.assertEqual(row["n_params"], 2)       # amplitude and sigma
+        self.assertIsNotNone(row["key"])
+
+    def test_incomparable_rows_are_marked_and_not_ranked(self):
+        from curvelab.fit_manager import FitManager, objective_kwargs
+        from curvelab.ui_dialogs_analysis import comparison_row, ModelComparisonDialog
+        x = np.linspace(0, 10, 50)
+        y = 2.0 * x + 1.0 + np.random.default_rng(0).normal(0, 0.1, 50)
+        rows = []
+        for label, xr, kw in (("full", slice(None), {}),
+                              ("half range", slice(0, 25), {}),
+                              ("robust", slice(None), {"method": "least_squares",
+                                                       "objective_kws": objective_kwargs(
+                                                           "least_squares", "Cauchy", 1.0)})):
+            fm = FitManager()
+            fm.add_component("Linear")
+            fm.auto_guess(x[xr], y[xr])
+            rows.append(comparison_row(label, "Linear", self._fit(fm, x[xr], y[xr], **kw)))
+        self.assertNotEqual(rows[0]["key"], rows[1]["key"])   # different points
+        self.assertNotEqual(rows[0]["key"], rows[2]["key"])   # different objective
+        self.assertIsNone(rows[2]["aic"])
+
+        dlg = ModelComparisonDialog(self.app, rows)
+        try:
+            self.assertIn("\u2020 fitted to different data", dlg.note)
+            self.assertIn("robust loss", dlg.note)
+            tree = next(w for w in dlg.winfo_children()[0].winfo_children()
+                        if w.winfo_class() == "Treeview")
+            items = [tree.item(i) for i in tree.get_children()]
+            self.assertEqual(list(items[0]["tags"]), ["best"])    # only comparable row
+            self.assertTrue(items[1]["text"].endswith("\u2020"))
+            self.assertNotIn("best", items[1]["tags"])
+        finally:
+            dlg.destroy()
+
+    def test_batch_summary_does_not_rank_series(self):
+        from curvelab.ui_dialogs_analysis import ModelComparisonDialog
+        rows = [{"session": "A / fit", "model": "Linear", "n_params": 2, "chisqr": 1.0,
+                 "redchi": 0.1, "aic": -10.0, "bic": -9.0, "key": ("a",)},
+                {"session": "B / fit", "model": "Linear", "n_params": 2, "chisqr": 1.0,
+                 "redchi": 0.1, "aic": -20.0, "bic": -19.0, "key": ("b",)}]
+        dlg = ModelComparisonDialog(self.app, rows, highlight_best=False)
+        try:
+            self.assertIn("not compared across rows", dlg.note)
+            tree = next(w for w in dlg.winfo_children()[0].winfo_children()
+                        if w.winfo_class() == "Treeview")
+            self.assertTrue(all("best" not in tree.item(i)["tags"] for i in tree.get_children()))
+        finally:
+            dlg.destroy()
+
+
+class EmceeSettingsTests(GuiTestBase):
+    """emcee had no controls: lmfit's defaults (burn 0, no seed) applied and
+    the handler set is_weighted from the yerr column. Settings now live on
+    the app, are edited in a dialog, reach run_fit as fit_kws, and survive
+    a workspace round trip."""
+
+    def test_settings_dialog_applies_and_validates(self):
+        from curvelab.ui_dialogs_analysis import EmceeSettingsDialog
+        from curvelab.fit_manager import DEFAULT_EMCEE_SETTINGS
+        self.assertEqual(self.app._emcee_settings, DEFAULT_EMCEE_SETTINGS)
+        applied = {}
+        dlg = EmceeSettingsDialog(self.app, dict(self.app._emcee_settings), on_apply=applied.update)
+        dlg._vars["burn"].set("5000")                # burn >= steps
+        dlg._apply()
+        self.assertIn("Burn-in must be smaller", dlg._status_var.get())
+        dlg._vars["burn"].set("50"); dlg._vars["steps"].set("400"); dlg._vars["seed"].set("")
+        dlg._apply()
+        self.assertEqual(applied, {"nwalkers": 100, "steps": 400, "burn": 50, "thin": 1, "seed": None})
+
+    def test_settings_reach_run_fit_and_round_trip(self):
+        self._add_fitted_series(run=False)
+        self.app._emcee_settings = {"steps": 123, "nwalkers": 10, "burn": 7, "thin": 2, "seed": 3}
+        fp = self.app.fit_panel
+        fp.method_var.set("emcee"); fp._on_method_changed()
+        sess = self.app._active_session
+        with mock.patch.object(sess.fit_manager, "run_fit") as run, \
+                mock.patch("curvelab.app_fit_handlers.messagebox"):
+            self.app._on_fit()
+            deadline = 200
+            while self.app._fit_thread is not None and deadline:
+                self.root.update(); deadline -= 1
+        self.assertEqual(run.call_args.kwargs["fit_kws"],
+                         {"steps": 123, "nwalkers": 10, "burn": 7, "thin": 2, "seed": 3})
+        self.assertNotIn("is_weighted", run.call_args.kwargs["fit_kws"])
+
+        ws = {"plot_controls": {"emcee_settings": {"steps": 55, "seed": None}}}
+        self.app._load_workspace_plot_controls(ws)
+        self.assertEqual(self.app._emcee_settings["steps"], 55)
+        self.assertIsNone(self.app._emcee_settings["seed"])
+        self.assertEqual(self.app._emcee_settings["nwalkers"], 100)   # default filled in
+
+
+class ContourDialogTests(GuiTestBase):
+    """The contour dialog used to fill a sigma grid with no levels and no
+    colorbar, so 1/2/3-sigma regions could not be read off. It now draws
+    labeled joint-sigma contours over a delta-chi2 map with a colorbar."""
+
+    def test_compute_draws_labeled_contours_and_colorbar(self):
+        rec, sess = self._add_fitted_series(run=True)
+        self.app._active_series_id = "ds::x::y"
+        import tkinter as tk
+        before = set(self.app.winfo_children())
+        self.app._show_confidence_contours()
+        dlg = next(w for w in self.app.winfo_children()
+                   if w not in before and isinstance(w, tk.Toplevel))
+        try:
+            dlg._grid_var.set(5)
+            dlg._compute()
+            self.assertEqual(dlg._status_var.get(), "Done.")
+            self.assertIsNotNone(dlg._colorbar)
+            self.assertEqual(dlg._colorbar.ax.get_ylabel(), "\u0394\u03c7\u00b2")
+            labels = [t.get_text() for t in dlg._ax.texts]      # clabel texts
+            self.assertTrue(any(l.startswith("1") for l in labels), labels)
+            self.assertIn("Joint confidence regions", dlg._ax.get_title())
+        finally:
+            dlg.destroy()
+
+
+class BadMaxNfevTests(GuiTestBase):
+    """A Max nfev that is not a positive whole number used to raise from
+    int() after the async path had already flipped the panel into Abort
+    state, leaving every fit control disabled with no fit running."""
+
+    def _fit_with_max_nfev(self, text):
+        self._add_fitted_series(run=False)
+        fp = self.app.fit_panel
+        fp.method_var.set("nelder"); fp._on_method_changed()   # async path
+        fp.max_nfev_var.set(text)
+        with mock.patch("curvelab.app_fit_handlers.messagebox") as mb:
+            self.app._on_fit()
+        return fp, mb
+
+    def test_non_numeric_max_nfev_warns_and_leaves_fit_button_usable(self):
+        fp, mb = self._fit_with_max_nfev("abc")
+        mb.showwarning.assert_called_once()
+        self.assertEqual(mb.showwarning.call_args[0][0], "Invalid Fit Option")
+        self.assertEqual(fp._fit_btn["text"], "Fit")
+        self.assertEqual(str(fp._add_comp_btn.cget("state")), "normal")
+        self.assertIsNone(self.app._fit_thread)
+
+    def test_zero_max_nfev_is_rejected(self):
+        fp, mb = self._fit_with_max_nfev("0")
+        mb.showwarning.assert_called_once()
+        self.assertEqual(fp._fit_btn["text"], "Fit")
+
+    def test_get_fit_options_raises_for_bad_max_nfev(self):
+        self._add_fitted_series(run=False)
+        self.app.fit_panel.max_nfev_var.set("12.5")
+        with self.assertRaises(ValueError):
+            self.app._get_fit_options()
+        self.app.fit_panel.max_nfev_var.set(" 250 ")
+        self.assertEqual(self.app._get_fit_options().max_nfev, 250)
 
 
 class ObjectiveWorkspaceTests(GuiTestBase):
@@ -612,28 +954,44 @@ class ObjectiveWorkspaceTests(GuiTestBase):
     def test_legacy_reduce_fcn_key_still_loads(self):
         # A pre-objective workspace: scalar method + reduce label.
         ws = {"plot_controls": {"fit_method": "nelder",
-                                "reduce_fcn": "Neg. entropy"}}
+                                "reduce_fcn": "Cauchy log-pdf"}}
         self.app._load_workspace_plot_controls(ws)
         self.assertEqual(self.app.fit_panel.method_var.get(), "nelder")
-        self.assertEqual(self.app.fit_panel.objective_var.get(), "Neg. entropy")
+        self.assertEqual(self.app.fit_panel.objective_var.get(), "Cauchy log-pdf")
+
+    def test_removed_objective_label_falls_back_to_default(self):
+        # "Neg. entropy" no longer exists; a workspace that saved it must
+        # load with the default objective rather than fail.
+        ws = {"plot_controls": {"fit_method": "nelder",
+                                "objective": "Neg. entropy"}}
+        self.app._load_workspace_plot_controls(ws)
+        self.assertEqual(self.app.fit_panel.objective_var.get(), "Chi-square (default)")
 
 
 class UseResultAsStartTests(GuiTestBase):
     """The 'Use as Start' button seeds the next fit from the current result,
     the opt-in way to chain a refinement now that fits restart from the guess."""
 
-    def test_button_transfers_result_into_start_values(self):
-        rec, sess = self._add_fitted_series(run=True)
+    def test_button_makes_the_next_fit_start_from_the_result(self):
+        rec, sess = self._add_fitted_series(run=False)
         fm = sess.fit_manager
-        # Move the live params off the fitted result, as a stray edit might.
-        fitted = fm.params["slope"].value
-        fm.set_param("slope", value=999.0)
+        # A deliberately poor start, so the guess and the result differ
+        # (the Linear auto-guess would already land on the optimum).
+        fm.set_param("slope", value=1.0)
+        sess.result = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        guess_slope = sess.result.init_params["slope"]
+        fitted_slope = sess.result.params["slope"]["value"]
+        self.assertEqual(guess_slope, 1.0)
+        self.assertNotAlmostEqual(guess_slope, fitted_slope, places=3)
 
+        # Without the button the next fit restarts from the guess...
+        again = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        self.assertAlmostEqual(again.init_params["slope"], guess_slope)
+
+        # ...with it, from the fitted result.
         self.app._on_use_result_as_start()
-
-        # capture_start_values grabbed the current params; the next fit starts
-        # from them. Here we assert the start now reflects the captured values.
-        self.assertEqual(fm._start_values["slope"], 999.0)
+        chained = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        self.assertAlmostEqual(chained.init_params["slope"], fitted_slope, places=8)
 
     def test_button_needs_a_result(self):
         rec, sess = self._add_fitted_series(run=False)  # no result yet
@@ -648,7 +1006,6 @@ class NoUncertaintyWarningTests(GuiTestBase):
 
     def test_warns_when_errorbars_missing(self):
         rec, sess = self._add_fitted_series(run=False)
-        sess.fit_manager.run_fit  # ensure a fit manager exists
         # Fabricate a completed result flagged as having no uncertainties.
         x = np.linspace(0, 1, 10)
         from curvelab.session import FitResult
@@ -661,6 +1018,28 @@ class NoUncertaintyWarningTests(GuiTestBase):
 
         warn.assert_called_once()
         self.assertIn("uncertaint", warn.call_args[0][1].lower())
+
+    def test_not_converged_and_at_bound_share_one_dialog(self):
+        rec, sess = self._add_fitted_series(run=False)
+        x = np.linspace(0, 1, 10)
+        from curvelab.session import FitResult
+        from curvelab.fit_manager import param_info
+        sess.result = FitResult(
+            x_dense=x, y_fit_dense=x, x_data=x, y_data=x, y_fit_data=x,
+            yerr_data=None, report="",
+            params={"slope": param_info(1.5, 0.1, 0.0, 1.5, True)},
+            success=False, message="Fit aborted: number of function evaluations > 4",
+            nfev=4, errorbars=True)
+        with mock.patch("curvelab.app_fit_handlers.messagebox.showwarning") as warn:
+            self.app._post_fit_update(sess, rec, "ds::x::y")
+        warn.assert_called_once()
+        text = warn.call_args[0][1]
+        self.assertIn("did not converge after 4", text)
+        self.assertIn("slope (at max)", text)
+        # The table marks the bound in the StdErr column.
+        tree = self.app.fit_results.param_tree
+        row = tree.item(tree.get_children()[0])
+        self.assertIn("(at max)", row["values"][2])
 
     def test_no_warning_for_normal_fit(self):
         rec, sess = self._add_fitted_series(run=True)  # ordinary Linear fit

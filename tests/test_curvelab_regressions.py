@@ -40,46 +40,6 @@ class FitManagerDeserializeTests(unittest.TestCase):
         self.assertEqual(fm.components[1].expression, "a*exp(-b*x)+c")
 
 
-class WorkspaceContractTests(unittest.TestCase):
-    def test_app_workspace_includes_reduce_and_weight_in_save_and_load(self):
-        ws_path = Path(__file__).resolve().parents[1] / "curvelab" / "app_workspace.py"
-        source = ws_path.read_text(encoding="utf-8")
-
-        # Save path
-        self.assertRegex(source, r'"objective"')
-        self.assertRegex(source, r'"weight_mode"')
-
-        # Load path
-        self.assertRegex(source, r'self\.fit_panel\.set_objective\(')
-        self.assertRegex(source, r'self\.fit_panel\.weight_var\.set\(')
-
-    def test_diagnostic_plots_dialog_is_wired(self):
-        curvelab_dir = Path(__file__).resolve().parents[1] / "curvelab"
-        menu_source = (curvelab_dir / "app_menu.py").read_text(encoding="utf-8")
-        handlers_source = (curvelab_dir / "app_analysis_handlers.py").read_text(encoding="utf-8")
-        dlg_source = (curvelab_dir / "ui_dialogs_analysis.py").read_text(encoding="utf-8")
-
-        self.assertRegex(handlers_source, r"def _show_diagnostic_plots\(self\)")
-        self.assertIn("DiagnosticPlotsDialog", dlg_source)
-        self.assertRegex(
-            menu_source,
-            r'label="Diagnostic Plots\.\.\.", command=self\._show_diagnostic_plots',
-        )
-
-    def test_confidence_contour_dialog_is_wired(self):
-        curvelab_dir = Path(__file__).resolve().parents[1] / "curvelab"
-        menu_source = (curvelab_dir / "app_menu.py").read_text(encoding="utf-8")
-        handlers_source = (curvelab_dir / "app_analysis_handlers.py").read_text(encoding="utf-8")
-        dlg_source = (curvelab_dir / "ui_dialogs_analysis.py").read_text(encoding="utf-8")
-
-        self.assertRegex(handlers_source, r"def _show_confidence_contours\(self\)")
-        self.assertIn("ConfidenceContourDialog", dlg_source)
-        self.assertRegex(
-            menu_source,
-            r'label="2D Confidence Contours\.\.\.", command=self\._show_confidence_contours',
-        )
-
-
 class ModelRegistryTests(unittest.TestCase):
     def test_exponential_gaussian_in_registry(self):
         try:
@@ -116,8 +76,8 @@ class FitManagerReduceWeightTests(unittest.TestCase):
             raise unittest.SkipTest(f"curvelab unavailable: {exc}")
         self.assertIn("Chi-square (default)", REDUCE_FUNCTIONS)
         self.assertIsNone(REDUCE_FUNCTIONS["Chi-square (default)"])
-        self.assertIn("Neg. entropy", REDUCE_FUNCTIONS)
         self.assertIn("Cauchy log-pdf", REDUCE_FUNCTIONS)
+        self.assertNotIn("Neg. entropy", REDUCE_FUNCTIONS)  # removed: no minimum at r = 0
 
     def test_weight_modes_list(self):
         try:

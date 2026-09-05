@@ -17,7 +17,7 @@ from IPython.display import display
 from matplotlib.gridspec import GridSpec
 
 from .data_manager import DataManager
-from .fit_manager import FitManager, FitResult, REDUCE_FUNCTIONS, WEIGHT_MODES
+from .fit_manager import FitManager, FitResult, REDUCE_FUNCTIONS, SLOW_METHODS, WEIGHT_MODES
 from .models import MODEL_NAMES
 from .preprocessing import prepare_fit_data
 from .session import (
@@ -38,8 +38,7 @@ def _make_session_key(series_id: str, session_name: str) -> str:
 
 
 # Methods that may be slow — still run synchronously in notebook
-_SLOW_METHODS = {"emcee", "differential_evolution", "basinhopping",
-                 "dual_annealing", "shgo", "ampgo"}
+_SLOW_METHODS = SLOW_METHODS     # one definition, in fit_manager
 
 
 class CurveLabWidget(widgets.VBox):
@@ -1144,8 +1143,10 @@ class CurveLabWidget(widgets.VBox):
             return
         par = fm.params[name]
         self._param_value.value = par.value
-        self._param_min.value = par.min if np.isfinite(par.min) else -1e308
-        self._param_max.value = par.max if np.isfinite(par.max) else 1e308
+        # ipywidgets FloatText cannot hold inf; the largest finite double
+        # stands in for an open bound.
+        self._param_min.value = par.min if np.isfinite(par.min) else -np.finfo(float).max
+        self._param_max.value = par.max if np.isfinite(par.max) else np.finfo(float).max
         self._param_vary.value = par.vary
         self._param_expr.value = par.expr or ""
 
@@ -1342,9 +1343,8 @@ class CurveLabWidget(widgets.VBox):
                 "y_fit": result.y_fit_data,
                 "residuals": residuals,
             }
-            if result.yerr_data is not None:
-                safe_yerr = np.maximum(np.abs(result.yerr_data), 1e-12)
-                resid_data["weighted_residuals"] = residuals / safe_yerr
+            if result.is_weighted():
+                resid_data["weighted_residuals"] = result.weighted_residuals()
 
             df_curve = pd.DataFrame(dense_data)
             df_resid = pd.DataFrame(resid_data)
@@ -1503,7 +1503,10 @@ class CurveLabWidget(widgets.VBox):
         self._fit_xmax.value = pc.get("fit_xmax", "")
         self._method_dd.value = pc.get("fit_method", "least_squares")
         self._reduce_dd.value = pc.get("reduce_fcn", "Chi-square (default)")
-        self._weight_dd.value = pc.get("weight_mode", "1/yerr (default)")
+        weight_mode = pc.get("weight_mode", "1/yerr (default)")
+        if weight_mode not in WEIGHT_MODES:      # removed mode in an old workspace
+            weight_mode = "1/yerr (default)"
+        self._weight_dd.value = weight_mode
         self._max_nfev_text.value = pc.get("max_nfev", "")
         self._xlabel.value = pc.get("xlabel", "")
         self._ylabel.value = pc.get("ylabel", "")

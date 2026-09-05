@@ -102,6 +102,15 @@ def serialize_series_records(
                     "report": r.report,
                     "candidates": r.candidates,
                     "init_params": r.init_params,
+                    "xerr_data": r.xerr_data,
+                    "fit_options": r.fit_options,
+                    "success": r.success,
+                    "message": r.message,
+                    "nfev": r.nfev,
+                    "n_omitted": r.n_omitted,
+                    "strong_correlations": r.strong_correlations,
+                    "fit_weights": r.fit_weights,
+                    "mcmc": r.mcmc,
                 })
             fit_sessions[sess_name] = sess_data
 
@@ -179,6 +188,15 @@ def deserialize_series_record(
                 report=rdata.get("report", ""),
                 candidates=rdata.get("candidates"),
                 init_params=rdata.get("init_params"),
+                xerr_data=_to_array(rdata["xerr_data"]) if rdata.get("xerr_data") is not None else None,
+                fit_options=rdata.get("fit_options"),
+                success=bool(rdata.get("success", True)),
+                message=rdata.get("message", ""),
+                nfev=rdata.get("nfev"),
+                n_omitted=int(rdata.get("n_omitted", 0) or 0),
+                strong_correlations=list(rdata.get("strong_correlations") or []),
+                fit_weights=_to_array(rdata["fit_weights"]) if rdata.get("fit_weights") is not None else None,
+                mcmc=rdata.get("mcmc"),
             )
 
         rec.fit_sessions[sess_name] = sess

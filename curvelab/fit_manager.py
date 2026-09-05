@@ -1,20 +1,19 @@
 """Curve fitting logic using lmfit."""
 
+import ast
+import copy
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
 from lmfit import CompositeModel, Model, Parameters
+from lmfit.minimizer import reduce_chisquare
 from lmfit.model import ModelResult
 from lmfit.models import SplineModel
 
 from .models import create_expression_model, create_model, create_spline_model
 # Re-exports; canonical location is session.py
-from .session import FitResult, MIN_ERROR
-
-
-def _reduce_negentropy(r):
-    """Neg-entropy reduce function for robust fitting."""
-    return -np.sum(r * np.log(np.maximum(np.abs(r), MIN_ERROR)))
+from .session import FitResult, MIN_ERROR, STRONG_CORRELATION
 
 
 def _reduce_cauchylogpdf(r):
@@ -22,38 +21,37 @@ def _reduce_cauchylogpdf(r):
     return np.sum(np.log1p(r * r))
 
 
+# Scalar objectives for the scalar minimizers. A "Neg. entropy" entry was
+# removed: neither the formula used here nor lmfit's own negentropy has its
+# minimum at zero residual, so it was not a usable fit objective.
 REDUCE_FUNCTIONS = {
     "Chi-square (default)": None,
-    "Neg. entropy": _reduce_negentropy,
     "Cauchy log-pdf": _reduce_cauchylogpdf,
 }
 
 # Weight modes double as UI labels and dispatch keys, so they are named once.
+# lmfit multiplies the residual by the weight, so a weight of 1/sigma is
+# what makes the objective chi-square. Two former modes, "1/yerr^2" and
+# "yerr as weights", minimized sum r^2/sigma^4 and sum (sigma r)^2, for which
+# stderr, chi-square, AIC and BIC are all meaningless; they were removed.
 WEIGHT_INV_YERR = "1/yerr (default)"
-WEIGHT_INV_YERR2 = "1/yerr\u00b2"
 WEIGHT_INV_Y = "1/y"
 WEIGHT_NONE = "No weights"
-WEIGHT_YERR = "yerr as weights"
 WEIGHT_EFFECTIVE_VARIANCE = "Effective variance"
 
 WEIGHT_MODES = [
     WEIGHT_INV_YERR,
-    WEIGHT_INV_YERR2,
     WEIGHT_INV_Y,
     WEIGHT_NONE,
-    WEIGHT_YERR,
     WEIGHT_EFFECTIVE_VARIANCE,
 ]
 DEFAULT_WEIGHT_MODE = WEIGHT_INV_YERR
+# Modes whose weights come from yerr (and so silently fall back to unit
+# weights when a dataset has none).
+_YERR_WEIGHT_MODES = {WEIGHT_INV_YERR, WEIGHT_EFFECTIVE_VARIANCE}
 
-# Minimizers offered in the UI. The slow ones run on a background thread.
-FIT_METHODS = [
-    "leastsq", "least_squares", "nelder", "powell",
-    "cobyla", "lbfgsb",
-    "differential_evolution", "basinhopping",
-    "dual_annealing", "shgo", "ampgo",
-    "brute", "emcee", "odr",
-]
+# The slow minimizers run on a background thread (FIT_METHODS is derived from
+# METHOD_CAPS below).
 SLOW_METHODS = {
     "emcee", "brute", "differential_evolution", "basinhopping",
     "dual_annealing", "shgo", "ampgo",
@@ -99,11 +97,11 @@ METHOD_CAPS: dict[str, MethodCaps] = {
     "powell": _SCALAR,
     "cobyla": _SCALAR,
     "lbfgsb": _SCALAR,
-    "basinhopping": _SCALAR,
-    "ampgo": _SCALAR,
     "differential_evolution": _SCALAR_BOUNDED,
+    "basinhopping": _SCALAR,
     "dual_annealing": _SCALAR_BOUNDED,
     "shgo": _SCALAR_BOUNDED,
+    "ampgo": _SCALAR,
     "brute": _SCALAR_BOUNDED,
     "emcee": MethodCaps(objective=OBJ_POSTERIOR),
     "odr": MethodCaps(
@@ -112,6 +110,9 @@ METHOD_CAPS: dict[str, MethodCaps] = {
         requires=("odrpack",),
     ),
 }
+# Minimizers offered in the UI, in menu order: exactly the METHOD_CAPS keys,
+# so there is one list to keep in sync.
+FIT_METHODS = list(METHOD_CAPS)
 
 
 # Objective choices per kind. For OBJ_SCALAR the label maps to a reduce_fcn
@@ -132,7 +133,7 @@ DEFAULT_F_SCALE = 1.0
 
 # Single-choice objective labels for the kinds that offer no alternatives.
 _FIXED_OBJECTIVE_CHOICES = {
-    OBJ_RESIDUAL: ["Least squares"],
+    OBJ_RESIDUAL: [LEAST_SQUARES_DEFAULT],
     OBJ_POSTERIOR: ["Log-posterior"],
     OBJ_ODR: ["Orthogonal distance"],
 }
@@ -148,7 +149,7 @@ def objective_choices(method: str) -> list[str]:
     return list(_FIXED_OBJECTIVE_CHOICES[kind])
 
 
-def validate_fit_setup(method: str, params, has_xerr: bool,
+def validate_fit_setup(method: str, params: Parameters | None, has_xerr: bool,
                        weight_mode: str) -> tuple[list[str], list[str]]:
     """Check a fit configuration before running it.
 
@@ -190,6 +191,14 @@ def validate_fit_setup(method: str, params, has_xerr: bool,
             "none, so 1/yerr weighting is used instead."
         )
 
+    if method == "odr" and not has_xerr:
+        errors.append(
+            "Orthogonal distance regression needs x-errors; this series has "
+            "none. Without them ODR silently assumes an x-error of 1 in data "
+            "units and absorbs the residuals into x. Add an x-error column, "
+            "or use a least-squares method."
+        )
+
     return errors, warnings
 
 
@@ -221,13 +230,29 @@ N_DENSE = 500
 # to |x|, with a floor so x == 0 still gets a usable step.
 DFDX_REL_STEP = 1e-8
 DFDX_MIN_STEP = 1e-10
+# Effective-variance weights are iterated to self-consistency: refit with
+# weights re-evaluated at the fitted parameters until no varying parameter
+# moves by more than this relative amount, or the round limit is hit.
+EFFECTIVE_VARIANCE_MAX_ROUNDS = 10
+EFFECTIVE_VARIANCE_RTOL = 1e-6
+# Central-difference step for the ODR band Jacobian (df/dbeta).
+ODR_JAC_REL_STEP = 1e-6
+ODR_JAC_MIN_STEP = 1e-10
+# Stand-in for an infinite parameter bound in odrpack, which needs finite
+# bounds: the largest finite double.
+ODR_UNBOUNDED = float(np.finfo(float).max)
 
 
-def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dict:
+def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None,
+             objective=None) -> dict:
     """Goodness-of-fit dict with the canonical key names and order.
 
     Statistics that a fit doesn't provide (ODR has no AIC/BIC) are left
-    out, so consumers never have to format a None.
+    out, so consumers never have to format a None. "objective" is the
+    minimized value when the objective was not chi-square (a robust loss
+    or a reduce function); chi-square is then still reported, as the
+    weighted sum of squares at the solution, but it is not what was
+    minimized.
     """
     values = {
         "chi-squared": chisqr,
@@ -235,13 +260,74 @@ def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dic
         "R-squared": rsquared,
         "AIC": aic,
         "BIC": bic,
+        "objective": objective,
     }
     return {k: v for k, v in values.items() if v is not None}
 
 
+# scipy.optimize.least_squares loss functions rho(z), z = (r/f_scale)^2; the
+# minimized cost is 0.5 * f_scale^2 * sum(rho(z)).
+_SCIPY_LOSSES = {
+    "linear": lambda z: z,
+    "soft_l1": lambda z: 2.0 * (np.sqrt(1.0 + z) - 1.0),
+    "huber": lambda z: np.where(z <= 1.0, z, 2.0 * np.sqrt(z) - 1.0),
+    "cauchy": lambda z: np.log1p(z),
+    "arctan": lambda z: np.arctan(z),
+}
+
+
+def objective_value(residual: np.ndarray, fit_kws: dict) -> float | None:
+    """The value the minimizer actually minimized, when it was not
+    chi-square: sum(reduce_fcn) for a scalar reduce function, or scipy's
+    robust cost for a least_squares loss. None when the objective was
+    chi-square, so callers can tell the two cases apart.
+
+    lmfit's chisqr/redchi/aic/bic are always the plain (weighted) sum of
+    squares, whatever the objective; after a robust fit they are not the
+    minimized quantity and AIC/BIC cannot rank models fitted with it.
+    """
+    fit_kws = fit_kws or {}
+    reduce_fcn = fit_kws.get("reduce_fcn")
+    if callable(reduce_fcn):
+        return float(reduce_fcn(np.asarray(residual, dtype=float)))
+    loss = fit_kws.get("loss", "linear")
+    if loss and loss != "linear":
+        rho = _SCIPY_LOSSES.get(loss)
+        if rho is None:
+            return None
+        f_scale = float(fit_kws.get("f_scale", 1.0))
+        z = (np.asarray(residual, dtype=float) / f_scale) ** 2
+        return float(0.5 * f_scale ** 2 * np.sum(rho(z)))
+    return None
+
+
+@dataclass(frozen=True)
+class FitOptions:
+    """The fit settings read from the Fit panel, in one object rather than a
+    positional tuple: the objective keywords (see objective_kwargs), the
+    weight mode, an optional evaluation cap, the confidence-band sigma, and
+    whether the covariance is scaled by reduced chi-square."""
+    objective_kws: dict
+    weight_mode: str = DEFAULT_WEIGHT_MODE
+    max_nfev: int | None = None
+    band_sigma: int = 1
+    scale_covar: bool = True
+
+    def run_fit_kwargs(self) -> dict:
+        """Keyword arguments for FitManager.run_fit."""
+        return dict(objective_kws=self.objective_kws, weight_mode=self.weight_mode,
+                    max_nfev=self.max_nfev, band_sigma=self.band_sigma,
+                    scale_covar=self.scale_covar)
+
+
 def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
                vary=True, expr="") -> dict:
-    """One parameter's entry for FitResult.params."""
+    """One parameter's entry for FitResult.params.
+
+    at_bound is "min", "max" or None. A varying parameter that ended on a
+    bound is not at an interior minimum, so its stderr (the curvature there)
+    does not describe its uncertainty.
+    """
     return {
         "value": value,
         "stderr": stderr,
@@ -249,7 +335,144 @@ def param_info(value, stderr=None, minimum=-np.inf, maximum=np.inf,
         "max": maximum,
         "vary": vary,
         "expr": expr,
+        "at_bound": _at_bound(value, minimum, maximum) if vary else None,
     }
+
+
+def _at_bound(value, minimum, maximum) -> str | None:
+    """Which bound (if any) a value sits on, to within rounding."""
+    if value is None:
+        return None
+    for tag, bound in (("min", minimum), ("max", maximum)):
+        if bound is not None and np.isfinite(bound) and np.isclose(
+                value, bound, rtol=1e-9, atol=1e-12):
+            return tag
+    return None
+
+
+def convergence_lines(success: bool, message: str, nfev, params: dict,
+                      strong_correlations=()) -> list[str]:
+    """Report lines describing how the minimizer ended, which varying
+    parameters sit on a bound, and which pairs are strongly correlated;
+    prepended to every fit report."""
+    status = "converged" if success else "NOT converged"
+    detail = f" -- {message}" if message else ""
+    evals = f" ({nfev} function evaluations)" if nfev is not None else ""
+    lines = ["[[Convergence]]", f"    {status}{detail}{evals}"]
+    bounded = [f"{name} (at {info['at_bound']})" for name, info in params.items()
+               if info.get("at_bound")]
+    if bounded:
+        lines.append("    at a bound, stderr not meaningful: " + ", ".join(bounded))
+    if strong_correlations:
+        pairs = ", ".join(f"{a}/{b} (rho = {rho:+.3f})" for a, b, rho in strong_correlations)
+        lines.append(f"    strongly correlated (|rho| > {STRONG_CORRELATION}): {pairs}")
+    return lines
+
+
+# Stochastic global optimizers accept a seed through fit_kws. A fixed
+# default makes a repeated fit reproduce itself; brute and shgo are
+# deterministic and take none.
+SEEDED_METHODS = {"differential_evolution", "basinhopping", "dual_annealing"}
+DEFAULT_GLOBAL_SEED = 0
+
+# Sampling diagnostics targets (Foreman-Mackey et al. 2013, emcee docs).
+EMCEE_ACCEPTANCE_RANGE = (0.2, 0.5)
+EMCEE_MIN_CHAIN_OVER_TAU = 50
+# Sampler settings offered in the MCMC Settings dialog. burn discards the
+# first steps of every walker (lmfit's default of 0 averages over the
+# burn-in); seed makes a run reproducible.
+DEFAULT_EMCEE_SETTINGS = {"steps": 1000, "nwalkers": 100, "burn": 200, "thin": 1, "seed": 0}
+
+
+def emcee_diagnostics(result, kws: dict) -> dict:
+    """JSON-safe summary of an emcee run: sampler settings, mean acceptance
+    fraction, per-parameter autocorrelation time tau, and the chain length
+    in units of the longest tau. Values the user must judge the sample by,
+    which lmfit computes but the report never showed."""
+    chain = getattr(result, "chain", None)
+    steps_kept = int(chain.shape[0]) if chain is not None and chain.ndim >= 2 else None
+    acc = getattr(result, "acceptance_fraction", None)
+    acor = getattr(result, "acor", None)
+    names = list(getattr(result, "var_names", []) or [])
+    tau = None
+    if acor is not None:
+        try:
+            tau = {n: float(t) for n, t in zip(names, np.atleast_1d(acor))}
+        except Exception:
+            tau = None
+    steps = int(kws.get("steps", 1000))
+    ratio = None
+    if tau and steps_kept:
+        worst = max(tau.values())
+        ratio = float(steps / worst) if worst > 0 else None
+    return {
+        "steps": steps,
+        "nwalkers": int(kws.get("nwalkers", 100)),
+        "burn": int(kws.get("burn", 0)),
+        "thin": int(kws.get("thin", 1)),
+        "seed": kws.get("seed"),
+        "is_weighted": bool(kws.get("is_weighted", True)),
+        "steps_kept": steps_kept,
+        "acceptance_fraction": float(np.mean(acc)) if acc is not None else None,
+        "autocorr_time": tau,
+        "steps_over_tau": ratio,
+    }
+
+
+def emcee_lines(mcmc: dict) -> list[str]:
+    """Report lines for an emcee result: what the table's numbers are and
+    whether the sample can be trusted."""
+    lo, hi = EMCEE_ACCEPTANCE_RANGE
+    lines = [
+        "[[MCMC (emcee)]]",
+        "    values are posterior medians; StdErr is half the 16th-84th "
+        "percentile range (a credible, not a confidence, interval)",
+        f"    walkers {mcmc['nwalkers']}, steps {mcmc['steps']}, burn "
+        f"{mcmc['burn']}, thin {mcmc['thin']}"
+        + (f", seed {mcmc['seed']}" if mcmc.get("seed") is not None else ""),
+    ]
+    acc = mcmc.get("acceptance_fraction")
+    if acc is not None:
+        ok = lo <= acc <= hi
+        lines.append(f"    mean acceptance fraction {acc:.2f}"
+                     + ("" if ok else f"  (outside the {lo}-{hi} target: the walkers "
+                        "are moving too rarely or too freely)"))
+    tau = mcmc.get("autocorr_time")
+    if tau:
+        lines.append("    autocorrelation time: "
+                     + ", ".join(f"{n} {t:.1f}" for n, t in tau.items()))
+        ratio = mcmc.get("steps_over_tau")
+        if ratio is not None:
+            need = EMCEE_MIN_CHAIN_OVER_TAU
+            lines.append(f"    steps / longest tau = {ratio:.0f}"
+                         + ("" if ratio >= need else f"  (below {need}: run more steps, "
+                            "the sample is not yet converged)"))
+    else:
+        lines.append("    autocorrelation time could not be estimated: the chain "
+                     "is too short to judge convergence")
+    if not mcmc.get("is_weighted", True):
+        lines.append("    __lnsigma is the fitted log of the noise scale "
+                     "(unweighted residuals): the data's sigma, not a model parameter")
+    return lines
+
+
+def strong_correlations(params) -> list[list]:
+    """[name_a, name_b, rho] for each varying pair with |rho| above
+    STRONG_CORRELATION, strongest first. Such pairs trade off against each
+    other: only a combination is well determined by the data."""
+    seen = set()
+    out = []
+    for name, par in params.items():
+        if not par.vary or not par.correl:
+            continue
+        for other, rho in par.correl.items():
+            key = tuple(sorted((name, other)))
+            if key in seen or rho is None or abs(rho) <= STRONG_CORRELATION:
+                continue
+            seen.add(key)
+            out.append([key[0], key[1], float(rho)])
+    out.sort(key=lambda t: -abs(t[2]))
+    return out
 
 
 @dataclass
@@ -260,6 +483,55 @@ class FitComponent:
     prefix: str  # e.g. "gauss1_"
     operator: str = "+"  # "+" (sum) or "*" (multiply); ignored for first component
     expression: str = ""  # Only used when name == "Expression"
+
+
+def _objective_to_serializable(fit_kws: dict) -> dict:
+    """The objective part of the fit keywords in JSON-safe form: a reduce
+    function is stored by name so a workspace can record it."""
+    out = {}
+    for key, value in (fit_kws or {}).items():
+        if key == "reduce_fcn" and callable(value):
+            out[key] = value.__name__
+        elif key in ("reduce_fcn", "loss", "f_scale"):
+            out[key] = value
+    return out
+
+
+def _objective_from_serializable(data: dict | None) -> dict:
+    """Inverse of _objective_to_serializable. An unknown reduce-function
+    name (removed in a later version) is dropped, giving chi-square."""
+    out = {}
+    for key, value in (data or {}).items():
+        if key == "reduce_fcn" and isinstance(value, str):
+            fn = next((f for f in REDUCE_FUNCTIONS.values()
+                       if f is not None and f.__name__ == value), None)
+            if fn is not None:
+                out[key] = fn
+        elif key in ("loss", "f_scale"):
+            out[key] = value
+    return out
+
+
+def _expr_names(expr: str) -> set[str]:
+    """Names referenced by a parameter expression (an lmfit/asteval string)."""
+    try:
+        tree = ast.parse(expr, mode="eval")
+    except SyntaxError:
+        return set()
+    return {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+
+
+def _rewrite_expr_names(expr: str, mapping: dict[str, str]) -> str:
+    """Return expr with every referenced name in mapping replaced by its
+    mapped name, leaving functions and other names untouched."""
+
+    class _Rename(ast.NodeTransformer):
+        def visit_Name(self, node):
+            new = mapping.get(node.id)
+            return ast.copy_location(ast.Name(id=new, ctx=node.ctx), node) if new else node
+
+    tree = _Rename().visit(ast.parse(expr, mode="eval"))
+    return ast.unparse(tree)
 
 
 class FitManager:
@@ -291,9 +563,12 @@ class FitManager:
             prefix = ""
         else:
             if len(self.components) == 1 and self.components[0].prefix == "":
-                # Retroactively add prefix to first component
+                # Retroactively add prefix to first component. Its hints and
+                # start values are keyed by the bare names and must follow,
+                # or the user's edits silently revert on rebuild.
                 old = self.components[0]
                 old.prefix = f"{old.name.lower()}1_"
+                self._reprefix_param_state("", old.prefix)
             prefix = f"{model_name.lower()}{count}_"
 
         comp = FitComponent(
@@ -313,26 +588,33 @@ class FitManager:
         if not (0 <= index < len(self.components)):
             return
         removed = self.components.pop(index)
-        self._drop_param_hints(removed.prefix)
+        self._drop_param_state(removed.prefix)
         if len(self.components) == 1:
             # Single component: no prefix for cleaner parameter names
             old_prefix = self.components[0].prefix
             self.components[0].prefix = ""
-            self._reprefix_param_hints(old_prefix, "")
+            self._reprefix_param_state(old_prefix, "")
         self._rebuild_model()
 
-    def _drop_param_hints(self, prefix: str):
-        """Forget hints belonging to a component prefix."""
-        for name in [n for n in self._param_hints if n.startswith(prefix)]:
-            del self._param_hints[name]
+    def _drop_param_state(self, prefix: str):
+        """Forget hints and start values belonging to a component prefix.
 
-    def _reprefix_param_hints(self, old_prefix: str, new_prefix: str):
-        """Re-key hints from one component prefix to another."""
+        Stale start values are not harmless: if the prefix is later reused
+        (a lone component regains bare names), _reset_to_start_values would
+        resurrect them over the current values.
+        """
+        for mapping in (self._param_hints, self._start_values):
+            for name in [n for n in mapping if n.startswith(prefix)]:
+                del mapping[name]
+
+    def _reprefix_param_state(self, old_prefix: str, new_prefix: str):
+        """Re-key hints and start values from one component prefix to
+        another, so they keep applying to the same parameters."""
         if old_prefix == new_prefix:
             return
-        for name in [n for n in self._param_hints if n.startswith(old_prefix)]:
-            hints = self._param_hints.pop(name)
-            self._param_hints[new_prefix + name[len(old_prefix):]] = hints
+        for mapping in (self._param_hints, self._start_values):
+            for name in [n for n in mapping if n.startswith(old_prefix)]:
+                mapping[new_prefix + name[len(old_prefix):]] = mapping.pop(name)
 
     def edit_expression(self, index: int, new_expr: str):
         """Update the expression of an Expression component and rebuild."""
@@ -362,6 +644,44 @@ class FitManager:
         e.g. to reuse a fit's result as the next fit's guess."""
         if self._params is not None:
             self._start_values = {n: p.value for n, p in self._params.items()}
+
+    def _prepare_emcee_kws(self, kws: dict, weights) -> None:
+        """Fill in the emcee keywords that must follow from the fit setup.
+
+        is_weighted: whether the residual is already (data - model)/sigma.
+        It follows from the weights actually in use, not from whether the
+        series has a yerr column: 'No weights' with yerr present is an
+        unweighted residual, and emcee must then fit the noise scale
+        (__lnsigma) rather than assume sigma = 1.
+
+        pos: lmfit starts every walker at value * (1 + 1e-4 N(0,1)), so a
+        parameter whose value is exactly 0 gets identical walkers and the
+        ensemble cannot move in that direction. Walkers are placed here
+        with an absolute spread for zero-valued parameters, inside the
+        bounds, using the caller's seed for reproducibility.
+        """
+        kws.setdefault("is_weighted", weights is not None)
+        if "pos" in kws:
+            return
+        rng = np.random.default_rng(kws.get("seed"))
+        names = [n for n, p in self._params.items() if p.vary and not p.expr]
+        values = [self._params[n].value for n in names]
+        lows = [self._params[n].min for n in names]
+        highs = [self._params[n].max for n in names]
+        if not kws["is_weighted"] and "__lnsigma" not in self._params:
+            names.append("__lnsigma")
+            values.append(0.01)
+            lows.append(-np.inf)
+            highs.append(np.inf)
+        nwalkers = int(kws.get("nwalkers", 100))
+        values = np.asarray(values, dtype=float)
+        spread = np.where(values != 0, 1e-4 * np.abs(values), 1e-4)
+        pos = values + spread * rng.standard_normal((nwalkers, len(values)))
+        lo = np.asarray(lows, dtype=float)
+        hi = np.asarray(highs, dtype=float)
+        margin = np.where(np.isfinite(hi - lo), 1e-6 * np.abs(hi - lo), 0.0)
+        pos = np.clip(pos, lo + margin, hi - margin)
+        kws["pos"] = pos
 
     def _reset_to_start_values(self):
         """Reset each varying parameter to its remembered starting value so
@@ -423,13 +743,15 @@ class FitManager:
         models = [self._build_component_model(c) for c in self.components]
         self._model = self._assemble_model(models)
         self._params = self._model.make_params()
+        self._finalize_params()
 
-        # ExpressionModel params default to -inf; set to 1.0 so fits don't NaN
+    def _finalize_params(self):
+        """Last step of a rebuild: give ExpressionModel parameters (which
+        default to -inf) a finite start, then re-apply the stored hints so
+        user edits survive the rebuild."""
         for par in self._params.values():
             if par.value == float("-inf"):
                 par.set(value=1.0)
-
-        # Re-apply stored parameter hints so edits survive rebuilds
         for name, hints in self._param_hints.items():
             if name in self._params:
                 self._params[name].set(**hints)
@@ -454,14 +776,7 @@ class FitManager:
                         value=par.value, min=par.min, max=par.max,
                         vary=par.vary, expr=par.expr,
                     )
-        for par in self._params.values():
-            if par.value == float("-inf"):
-                par.set(value=1.0)
-
-        # Re-apply stored parameter hints so edits survive rebuilds
-        for name, hints in self._param_hints.items():
-            if name in self._params:
-                self._params[name].set(**hints)
+        self._finalize_params()
 
     @property
     def _has_spline(self) -> bool:
@@ -470,6 +785,11 @@ class FitManager:
     @property
     def model(self) -> Model | None:
         return self._model
+
+    @property
+    def last_result(self) -> ModelResult | None:
+        """The lmfit ModelResult of the last fit, for the analysis tools."""
+        return self._last_result
 
     @property
     def params(self) -> Parameters | None:
@@ -502,10 +822,17 @@ class FitManager:
             try:
                 guessed = m.guess(target, x=x)
                 for pname, par in guessed.items():
-                    if pname in self._params:
-                        self._params[pname].set(
-                            value=par.value, min=par.min, max=par.max
-                        )
+                    if pname not in self._params:
+                        continue
+                    if self._params[pname].expr:
+                        # A derived parameter (fwhm, height, or a user tie)
+                        # takes its value from its expression. Parameter.set
+                        # with a value clears the expression, which would
+                        # freeze it at the guess and drop it from the fit.
+                        continue
+                    self._params[pname].set(
+                        value=par.value, min=par.min, max=par.max
+                    )
                 if is_additive:
                     try:
                         residual = residual - m.eval(guessed, x=x)
@@ -540,24 +867,50 @@ class FitManager:
             key=lambda pair: len(pair[0]),
             reverse=True,
         )
-        for name, hints in self._param_hints.items():
+        def remap(name):
             for old_prefix, new_prefix in prefix_pairs:
                 if name.startswith(old_prefix):
-                    target.set_param_hint(new_prefix + name[len(old_prefix):], **hints)
-                    break
+                    return new_prefix + name[len(old_prefix):]
+            return None
+
+        for name, hints in self._param_hints.items():
+            new_name = remap(name)
+            if new_name is not None:
+                target.set_param_hint(new_name, **hints)
+        # The start values travel too, so the clone's first fit begins where
+        # the source's would, not from the model defaults.
+        for name, value in self._start_values.items():
+            new_name = remap(name)
+            if new_name is not None and new_name in (target.params or {}):
+                target._start_values[new_name] = value
 
     def set_param_hint(self, name: str, **kwargs):
-        """Store a parameter hint that survives model rebuilds."""
+        """Store a parameter hint that survives model rebuilds.
+
+        A value given here also becomes the fit's starting value; see
+        set_param.
+        """
         self._param_hints[name] = {**self._param_hints.get(name, {}), **kwargs}
         if self._model is not None:
             self._model.set_param_hint(name, **kwargs)
         if self._params is not None and name in self._params:
             self._params[name].set(**kwargs)
+        if "value" in kwargs:
+            self._start_values[name] = kwargs["value"]
 
     def set_param(self, name: str, **kwargs):
-        """Set parameter attributes (value, min, max, vary)."""
+        """Set parameter attributes (value, min, max, vary, expr).
+
+        A value set this way is a deliberate choice of where the next fit
+        should start, so it is recorded as the start value here rather than
+        relying on every caller to remember set_start_value: run_fit resets
+        to the start values, and a caller that forgot would have its edit
+        silently discarded.
+        """
         if self._params is not None and name in self._params:
             self._params[name].set(**kwargs)
+        if "value" in kwargs:
+            self._start_values[name] = kwargs["value"]
 
     def model_description(self) -> str:
         """Compact one-line description, e.g. 'Gaussian + Linear'."""
@@ -613,13 +966,16 @@ class FitManager:
         """
         if weight_mode == WEIGHT_NONE:
             return None
-        if weight_mode == WEIGHT_INV_YERR2 and yerr is not None:
-            safe_yerr = np.maximum(np.abs(yerr), MIN_ERROR)
-            return 1.0 / (safe_yerr * safe_yerr)
         if weight_mode == WEIGHT_INV_Y:
-            return 1.0 / np.maximum(np.abs(y), MIN_ERROR)
-        if weight_mode == WEIGHT_YERR and yerr is not None:
-            return yerr
+            # sigma proportional to |y|. A zero y would get an infinite
+            # weight, so zeros are floored at the smallest non-zero |y|:
+            # they count like the smallest measured magnitude, not like an
+            # exact constraint.
+            abs_y = np.abs(y)
+            positive = abs_y[abs_y > 0]
+            if positive.size == 0:
+                return None
+            return 1.0 / np.maximum(abs_y, positive.min())
         # Default: WEIGHT_INV_YERR
         if yerr is not None:
             return 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
@@ -659,19 +1015,24 @@ class FitManager:
 
         # Start from the remembered guess/user values, not the previous
         # result, so repeated fits are reproducible and don't drift along a
-        # degenerate direction.
-        self._reset_to_start_values()
+        # degenerate direction. emcee is the exception: it samples the
+        # posterior around wherever the parameters are, and the useful place
+        # is the least-squares optimum the user has just found.
+        if method != "emcee":
+            self._reset_to_start_values()
 
         # Snapshot initial parameter values before fitting
         init_values = {name: par.value for name, par in self._params.items()}
 
         weights = self._compute_weights(y, yerr, weight_mode)
 
+        iterate_weights = False
         if weight_mode == WEIGHT_EFFECTIVE_VARIANCE:
             if xerr is not None and yerr is not None:
                 weights = self._effective_variance_weights(
                     lambda xv: self._model.eval(self._params, x=xv), x, yerr, xerr
                 )
+                iterate_weights = True
             elif yerr is not None:
                 weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
             else:
@@ -682,6 +1043,10 @@ class FitManager:
             kws["reduce_fcn"] = reduce_fcn
         if objective_kws:
             kws.update(objective_kws)
+        if method == "emcee":
+            self._prepare_emcee_kws(kws, weights)
+        elif method in SEEDED_METHODS:
+            kws.setdefault("seed", DEFAULT_GLOBAL_SEED)
 
         fit_kwargs = dict(
             method=method, nan_policy="omit",
@@ -695,6 +1060,27 @@ class FitManager:
             y, self._params, x=x, weights=weights,
             **fit_kwargs,
         )
+
+        if iterate_weights:
+            # The effective-variance weights depend on df/dx, which was
+            # evaluated at the starting parameters. Left there, the answer
+            # depends on the initial guess. Re-evaluate at the fitted
+            # parameters and refit until the parameters stop moving (Orear's
+            # iterated scheme), so the weights and the fit are consistent.
+            for _ in range(EFFECTIVE_VARIANCE_MAX_ROUNDS):
+                prev = np.array([p.value for p in self._last_result.params.values() if p.vary])
+                fitted = self._last_result.params
+                weights = self._effective_variance_weights(
+                    lambda xv: self._model.eval(fitted, x=xv), x, yerr, xerr
+                )
+                self._last_result = self._model.fit(
+                    y, fitted, x=x, weights=weights, **fit_kwargs,
+                )
+                new = np.array([p.value for p in self._last_result.params.values() if p.vary])
+                scale = np.maximum(np.abs(new), np.abs(prev))
+                scale[scale == 0] = 1.0
+                if np.all(np.abs(new - prev) / scale < EFFECTIVE_VARIANCE_RTOL):
+                    break
 
         # Dense x-grid for smooth curve
         x_dense = np.linspace(x.min(), x.max(), n_dense)
@@ -715,16 +1101,39 @@ class FitManager:
                 component_curves[key] = vals
 
         params_info = self.params_to_info(self._last_result.params)
+        correlated = strong_correlations(self._last_result.params)
+        success = bool(getattr(self._last_result, "success", True))
+        message = str(getattr(self._last_result, "message", "") or "")
+        nfev = getattr(self._last_result, "nfev", None)
+        # nan_policy="omit" silently drops points where the model is NaN
+        # (an Expression with log or sqrt of a negative, say). The fit then
+        # ran on fewer points than the user gave it, and chi-square, AIC
+        # and BIC refer to that smaller set.
+        n_omitted = int(len(y) - self._last_result.ndata) if self._last_result.ndata else 0
+        if n_omitted > 0:
+            message = (message + " | " if message else "") + (
+                f"{n_omitted} point(s) where the model is not finite were "
+                f"omitted; statistics refer to the remaining {self._last_result.ndata}")
 
-        # Update internal params with fitted values
-        self._params = self._last_result.params
+        # Update internal params with fitted values. An unweighted emcee run
+        # adds __lnsigma (the fitted noise scale) to the result's params; it
+        # is reported with the result but must not become a model parameter
+        # that every later fit carries along.
+        self._params = self._last_result.params.copy()
+        self._params.pop("__lnsigma", None)
 
+        objective = objective_value(self._last_result.residual, kws)
         gof = make_gof(
             chisqr=self._last_result.chisqr,
             redchi=self._last_result.redchi,
             rsquared=self._last_result.rsquared,
-            aic=self._last_result.aic,
-            bic=self._last_result.bic,
+            # AIC/BIC are functions of chi-square, so after a robust or
+            # reduce-function fit they describe a quantity that was not
+            # minimized and would rank an outlier-dominated chi-square fit
+            # above the robust one. Left out in that case.
+            aic=self._last_result.aic if objective is None else None,
+            bic=self._last_result.bic if objective is None else None,
+            objective=objective,
         )
 
         # Capture brute-force candidates
@@ -738,10 +1147,12 @@ class FitManager:
                 }
                 candidates.append(entry)
 
-        # Capture emcee flatchain
+        # Capture emcee flatchain and sampling diagnostics
         flatchain = None
+        mcmc = None
         if hasattr(self._last_result, "flatchain") and self._last_result.flatchain is not None:
             flatchain = self._last_result.flatchain
+            mcmc = emcee_diagnostics(self._last_result, kws)
 
         return FitResult(
             x_dense=x_dense,
@@ -751,32 +1162,85 @@ class FitManager:
             y_fit_data=self._last_result.best_fit,
             yerr_data=yerr,
             params=params_info,
-            report=self._last_result.fit_report(),
+            report="\n".join(
+                convergence_lines(success, message, nfev, params_info, correlated)
+                + (emcee_lines(mcmc) if mcmc else [])
+                + ["", self._last_result.fit_report()]),
             gof=gof,
             component_curves=component_curves,
             y_uncertainty=y_uncertainty,
             candidates=candidates,
             flatchain=flatchain,
+            mcmc=mcmc,
             init_params=init_values,
             errorbars=bool(getattr(self._last_result, "errorbars", True)),
+            success=success,
+            message=message,
+            nfev=nfev,
+            n_omitted=n_omitted,
+            strong_correlations=correlated,
+            xerr_data=xerr,
+            fit_weights=None if weights is None else np.asarray(weights, dtype=float),
+            fit_options={
+                "method": method,
+                "weight_mode": weight_mode,
+                "objective": _objective_to_serializable(kws),
+                "scale_covar": scale_covar,
+            },
         )
 
     def refit_from_result(self, result: FitResult) -> None:
-        """Re-run the fit using stored result data to reconstruct _last_result.
+        """Re-run the fit from a stored result to reconstruct _last_result.
 
-        This is used after loading a workspace to make analysis tools
-        (CIs, contours, profiles, etc.) available without manual re-fitting.
+        Used after loading a workspace so the analysis tools (CIs, contours,
+        profiles, ...) work without a manual refit. The refit starts from
+        the saved best-fit values with the saved method, weights, objective
+        and scale_covar, so it lands on the same optimum and the analysis
+        describes the fit the table shows. Results from before the options
+        were recorded, and methods that cannot be re-run in place (emcee,
+        the global optimizers, ODR), fall back to the default least-squares
+        method with default weights from the saved values; for a chi-square
+        fit that is the same optimum, for emcee it is the least-squares fit
+        nearest the posterior medians.
         """
         if self._model is None or self._params is None:
             return
         x, y = result.x_data, result.y_data
-        yerr = result.yerr_data
-        weights = self._compute_weights(y, yerr, DEFAULT_WEIGHT_MODE)
+        yerr, xerr = result.yerr_data, result.xerr_data
         if self._has_spline:
             self._rebuild_model_with_data(x)
+
+        # Start at the saved optimum.
+        for name, info in (result.params or {}).items():
+            if name in self._params and not self._params[name].expr:
+                self._params[name].set(value=info["value"])
+
+        opts = result.fit_options or {}
+        method = opts.get("method", DEFAULT_FIT_METHOD)
+        if method in SLOW_METHODS or method == "odr" or method not in METHOD_CAPS:
+            method = DEFAULT_FIT_METHOD
+        weight_mode = opts.get("weight_mode", DEFAULT_WEIGHT_MODE)
+        if weight_mode not in WEIGHT_MODES:
+            weight_mode = DEFAULT_WEIGHT_MODE
+        scale_covar = bool(opts.get("scale_covar", True))
+        fit_kws = _objective_from_serializable(opts.get("objective"))
+
+        weights = self._compute_weights(y, yerr, weight_mode)
+        if weight_mode == WEIGHT_EFFECTIVE_VARIANCE:
+            if xerr is not None and yerr is not None:
+                params = self._params
+                weights = self._effective_variance_weights(
+                    lambda xv: self._model.eval(params, x=xv), x, yerr, xerr
+                )
+            elif yerr is not None:
+                weights = 1.0 / np.maximum(np.abs(yerr), MIN_ERROR)
+            else:
+                weights = None
+
         self._last_result = self._model.fit(
             y, self._params, x=x, weights=weights,
-            method=DEFAULT_FIT_METHOD, nan_policy="omit",
+            method=method, nan_policy="omit", fit_kws=fit_kws,
+            scale_covar=scale_covar,
         )
         self._params = self._last_result.params
 
@@ -787,26 +1251,65 @@ class FitManager:
         method: str = DEFAULT_FIT_METHOD,
         max_nfev: int | None = None,
         weight_mode: str = DEFAULT_WEIGHT_MODE,
+        objective_kws: dict | None = None,
+        scale_covar: bool = True,
+        iter_cb=None,
     ) -> list[FitResult]:
         """Run a global fit across multiple datasets with shared parameters.
 
-        Each dataset is a tuple of (x, y, yerr, xerr).
+        Each dataset is a tuple of (x, y, yerr, xerr). objective_kws,
+        scale_covar and iter_cb mean the same as for run_fit, so the
+        Objective and Scale-covariance controls and the abort button apply
+        to a global fit too. Like run_fit, the fit starts from the
+        remembered start values.
         Parameters that are in *shared_params* get one entry in the combined
         Parameters object.  Non-shared params get per-dataset prefixed entries
         (s0_, s1_, ...).  Returns one FitResult per dataset.
+
+        A derived parameter (one with an expression, such as fwhm or height)
+        is not a free parameter, so *shared_params* is ignored for it: it is
+        shared exactly when every parameter its expression refers to is
+        shared, and otherwise gets per-dataset entries whose expressions are
+        rewritten to the per-dataset names.
         """
         from lmfit import Parameters, minimize
 
         if self._model is None or self._params is None:
             raise ValueError("No model defined")
 
+        # Same start as a single fit, so repeated global fits are
+        # reproducible instead of chaining from the previous result.
+        self._reset_to_start_values()
+
         n = len(datasets)
         base_params = self._params
+        base_names = list(base_params.keys())
+
+        # Resolve which names are shared, letting derived parameters follow
+        # their dependencies. Iterate because an expression may refer to
+        # another derived parameter.
+        shared = {nm for nm in base_names
+                  if nm in shared_params and not base_params[nm].expr}
+        derived = [nm for nm in base_names if base_params[nm].expr]
+        changed = True
+        while changed:
+            changed = False
+            for nm in derived:
+                deps = _expr_names(base_params[nm].expr) & set(base_names)
+                if nm not in shared and deps <= shared:
+                    shared.add(nm)
+                    changed = True
+        shared_params = shared
+
+        def per_dataset_expr(expr: str, i: int) -> str | None:
+            if not expr:
+                return None
+            return _rewrite_expr_names(
+                expr, {nm: f"s{i}_{nm}" for nm in base_names if nm not in shared_params}
+            )
 
         # Build combined Parameters
         combined = Parameters()
-        base_names = list(base_params.keys())
-
         for name in base_names:
             bp = base_params[name]
             if name in shared_params:
@@ -816,7 +1319,22 @@ class FitManager:
                 for i in range(n):
                     pname = f"s{i}_{name}"
                     combined.add(pname, value=bp.value, min=bp.min, max=bp.max,
-                                 vary=bp.vary, expr=bp.expr or None)
+                                 vary=bp.vary, expr=per_dataset_expr(bp.expr, i))
+
+        # Every dataset must be weighted on the same footing: a dataset
+        # without yerr gets unit weights, i.e. residuals in y units, which
+        # concatenated with another dataset's 1/sigma residuals lets one of
+        # them dominate silently and makes the combined chi-square a sum of
+        # unlike quantities.
+        if weight_mode in _YERR_WEIGHT_MODES:
+            have = [yerr is not None for _, _, yerr, _ in datasets]
+            if any(have) and not all(have):
+                missing = [i + 1 for i, h in enumerate(have) if not h]
+                raise ValueError(
+                    f"Weight mode '{weight_mode}' needs y-errors on every "
+                    f"dataset, but dataset(s) {missing} of {n} have none. "
+                    "Give every series y-errors, or choose 'No weights'."
+                )
 
         # Pre-compute constant weights (everything except Effective variance
         # with xerr, which depends on the model derivative per iteration)
@@ -850,12 +1368,18 @@ class FitManager:
                 all_resid.append(resid)
             return np.concatenate(all_resid)
 
-        kws = {}
+        # objective_kws holds either a reduce_fcn (a Minimizer argument) or
+        # a scipy loss/f_scale (forwarded by minimize as fit keywords).
+        kws = dict(objective_kws or {})
         if max_nfev is not None:
             kws["max_nfev"] = max_nfev
 
         mini_result = minimize(objective, combined, method=method,
-                               nan_policy="omit", **kws)
+                               nan_policy="omit", scale_covar=scale_covar,
+                               iter_cb=iter_cb, **kws)
+
+        # The combined objective, when it was not chi-square (see run_fit).
+        global_objective = objective_value(mini_result.residual, kws)
 
         # Build per-dataset FitResults
         results = []
@@ -869,8 +1393,9 @@ class FitManager:
                     p = mini_result.params[name]
                 else:
                     p = mini_result.params[f"s{i}_{name}"]
+                # Report the user's expression, not the s{i}_-rewritten one.
                 params_info[name] = param_info(
-                    p.value, p.stderr, p.min, p.max, p.vary, p.expr or ""
+                    p.value, p.stderr, p.min, p.max, p.vary, bp.expr or ""
                 )
                 init_values[name] = bp.value
 
@@ -884,12 +1409,17 @@ class FitManager:
                 chisqr=mini_result.chisqr,
                 redchi=mini_result.redchi,
                 rsquared=1 - np.sum((y - y_fit_data) ** 2) / np.sum((y - y.mean()) ** 2),
-                aic=mini_result.aic,
-                bic=mini_result.bic,
+                aic=mini_result.aic if global_objective is None else None,
+                bic=mini_result.bic if global_objective is None else None,
+                objective=global_objective,
             )
 
             # Generate a report string
-            lines = [f"Global Fit — Dataset {i + 1}/{n}"]
+            lines = convergence_lines(
+                bool(getattr(mini_result, "success", True)),
+                str(getattr(mini_result, "message", "") or ""),
+                getattr(mini_result, "nfev", None), params_info) + [""]
+            lines.append(f"Global Fit — Dataset {i + 1}/{n}")
             lines.append(f"  Method: {method}")
             lines.append(f"  chi-squared = {gof['chi-squared']:.6g}")
             lines.append(f"  reduced chi-squared = {gof['reduced chi-squared']:.6g}")
@@ -912,33 +1442,151 @@ class FitManager:
                 report=report,
                 gof=gof,
                 init_params=init_values,
+                success=bool(getattr(mini_result, "success", True)),
+                message=str(getattr(mini_result, "message", "") or ""),
+                nfev=getattr(mini_result, "nfev", None),
+                xerr_data=xerr,
+                fit_weights=(None if precomputed_weights[i] is None
+                             else np.asarray(precomputed_weights[i], dtype=float)),
             ))
 
         return results
 
-    def compute_confidence_intervals(self, sigmas=None) -> str:
-        """Compute confidence intervals and return a CI report string."""
+    def ci_minimizer(self):
+        """The last result, prepared for lmfit's confidence-interval tools.
+
+        conf_interval, conf_interval2d and the profile traces re-minimize
+        with ``Minimizer.leastsq``, which forwards the stored fit keywords
+        to scipy's leastsq. Keywords that belong to another method (a
+        robust ``loss``/``f_scale`` for least_squares, ``is_weighted`` for
+        emcee) make that call raise, and a raise part-way through leaves
+        parameters with vary=False. So hand the tools a shallow copy with
+        those keywords cleared. The intervals are chi-square based in any
+        case, whatever objective the fit itself used.
+        """
         if self._last_result is None:
             raise ValueError("No fit result available")
+        if self._last_result.method == "emcee":
+            # The tools profile chi-square from result.chisqr, but an emcee
+            # result's "best" values are posterior medians, not a chi-square
+            # minimum, so the profile never brackets the target and the
+            # root finder fails. The posterior already carries the answer.
+            raise ValueError(
+                "Profile-likelihood confidence intervals are not defined for "
+                "an emcee result. Use the posterior errors in the parameter "
+                "table (16th-84th percentile half-width), or refit with a "
+                "least-squares method first."
+            )
+        mini = copy.copy(self._last_result)
+        mini.kws = {}
+        return mini
+
+    # --- Confidence intervals -------------------------------------------
+    #
+    # lmfit's conf_interval profiles one parameter at a time and turns each
+    # profile point into a probability with prob_func. Its default,
+    # f_compare, is an F-test on chi2_new/chi2_best, which rescales the
+    # threshold by reduced chi-square: the interval then matches a StdErr
+    # computed with scale_covar=True. When the user has turned Scale
+    # covariance off (real sigma), the matching threshold is a plain
+    # delta-chi2, otherwise the CI and the StdErr disagree silently.
+
+    def _ci_scaled(self) -> bool:
+        """Whether the last fit's errors are reduced-chi-square scaled."""
+        return bool(getattr(self._last_result, "scale_covar", True))
+
+    def _ci_prob_func(self):
+        """prob_func for lmfit's CI tools matching the fit's scale_covar."""
+        if self._ci_scaled():
+            return None                      # lmfit's f_compare
+        from scipy.stats import chi2
+
+        def delta_chi2_compare(best_fit, new_fit):
+            nfix = best_fit.nvarys - new_fit.nvarys
+            return chi2.cdf(max(new_fit.chisqr - best_fit.chisqr, 0.0), nfix)
+        return delta_chi2_compare
+
+    def _prob_to_chi2(self, probs, best_chi2, nfree):
+        """Invert the CI probability back to the profile's chi-square:
+        exactly the inverse of the prob_func in use."""
+        from scipy.stats import chi2, f
+        probs = np.clip(np.asarray(probs, dtype=float), 0.0, 1.0 - 1e-12)
+        if self._ci_scaled():
+            return best_chi2 * (1.0 + f.ppf(probs, 1, nfree) / nfree)
+        return best_chi2 + chi2.ppf(probs, 1)
+
+    def ci_threshold(self, sigma: float = 1.0) -> float:
+        """The delta-chi2 above the minimum that marks the sigma-level
+        interval under the prob_func in use: sigma^2 for a plain delta-chi2
+        (scale_covar off), chi2_best * F_ppf(p, 1, nu) / nu for the F-test
+        (scale_covar on), which is close to sigma^2 * chi2_nu."""
+        from scipy.stats import chi2, f, norm
+        if self._last_result is None:
+            raise ValueError("No fit result available")
+        prob = 2.0 * norm.cdf(sigma) - 1.0
+        if self._ci_scaled():
+            nfree = self._last_result.nfree
+            return float(self._last_result.chisqr * f.ppf(prob, 1, nfree) / nfree)
+        return float(chi2.ppf(prob, 1))
+
+    def joint_ci_thresholds(self, nfix: int = 2, sigmas=(1, 2, 3)) -> dict[str, float]:
+        """delta-chi2 levels marking the joint sigma-level regions for nfix
+        parameters varied together, under the CI method in use (see
+        ci_threshold): chi2.ppf(p, nfix) unscaled, or the F-test level
+        chi2_best * nfix * F_ppf(p, nfix, nu) / nu when scale_covar is on.
+        Joint regions are wider than one-parameter intervals: 1-sigma for
+        two parameters is delta-chi2 = 2.30, not 1."""
+        from scipy.stats import chi2, f, norm
+        if self._last_result is None:
+            raise ValueError("No fit result available")
+        levels = {}
+        for sigma in sigmas:
+            prob = 2.0 * norm.cdf(sigma) - 1.0
+            if self._ci_scaled():
+                nfree = self._last_result.nfree
+                levels[f"{sigma}\u03c3"] = float(
+                    self._last_result.chisqr * nfix * f.ppf(prob, nfix, nfree) / nfree)
+            else:
+                levels[f"{sigma}\u03c3"] = float(chi2.ppf(prob, nfix))
+        return levels
+
+    def compute_ci_contour(self, x_name: str, y_name: str, nx: int = 10, ny: int = 10):
+        """delta-chi2 surface over two parameters, the others re-optimized
+        at each grid point. Returns (x_values, y_values, delta_chi2_grid,
+        levels) where levels are the joint 1/2/3-sigma thresholds from
+        joint_ci_thresholds, so a caller can draw labeled contours."""
+        from lmfit import conf_interval2d
+        mini = self.ci_minimizer()
+        xs, ys, chi2_grid = conf_interval2d(mini, mini, x_name, y_name, nx=nx, ny=ny,
+                                            chi2_out=True)
+        best = min(float(mini.chisqr), float(np.nanmin(chi2_grid)))
+        return xs, ys, np.asarray(chi2_grid) - best, self.joint_ci_thresholds(2)
+
+    def compute_confidence_intervals(self, sigmas=None) -> str:
+        """Compute confidence intervals and return a CI report string."""
         from lmfit import conf_interval, ci_report
-        ci = conf_interval(self._last_result, self._last_result, sigmas=sigmas)
-        return ci_report(ci)
+        mini = self.ci_minimizer()
+        ci = conf_interval(mini, mini, sigmas=sigmas, prob_func=self._ci_prob_func())
+        note = ("Intervals from an F-test on chi-square ratios, i.e. scaled by "
+                "reduced chi-square (Scale covariance on)."
+                if self._ci_scaled() else
+                "Intervals from delta chi-square, unscaled (Scale covariance off).")
+        return note + "\n\n" + ci_report(ci)
 
     def compute_ci_profiles(self, sigmas=None) -> dict[str, list[tuple[float, float]]]:
         """Compute profile likelihood traces for each parameter.
 
-        Returns {param_name: [(param_value, chi_squared), ...]}.
+        Returns {param_name: [(param_value, chi_squared), ...]}, where the
+        chi-square is the profile's own re-minimized chi-square, recovered by
+        inverting the CI probability exactly.
         """
-        if self._last_result is None:
-            raise ValueError("No fit result available")
         from lmfit import conf_interval
-        from scipy.stats import chi2
 
-        ci_result, trace = conf_interval(
-            self._last_result, self._last_result,
-            sigmas=sigmas, trace=True,
-        )
-        best_chi2 = self._last_result.chisqr
+        mini = self.ci_minimizer()
+        ci_result, trace = conf_interval(mini, mini, sigmas=sigmas, trace=True,
+                                         prob_func=self._ci_prob_func())
+        best_chi2 = mini.chisqr
+        nfree = mini.nfree
 
         profiles = {}
         for pname, tdata in trace.items():
@@ -946,10 +1594,8 @@ class FitManager:
                 continue
             param_vals = np.asarray(tdata[pname])
             probs = np.asarray(tdata["prob"])
-            # Convert probability to delta-chi2, then to absolute chi2
-            # prob=0 -> delta=0 (best fit), prob=0.68 -> delta~1 (1-sigma)
-            delta_chi2 = np.where(probs > 0, chi2.ppf(probs, 1), 0.0)
-            chi2_vals = best_chi2 + delta_chi2
+            chi2_vals = np.where(probs > 0, self._prob_to_chi2(probs, best_chi2, nfree),
+                                 best_chi2)
             # Sort by parameter value for clean plotting
             order = np.argsort(param_vals)
             profiles[pname] = list(zip(param_vals[order], chi2_vals[order]))
@@ -966,7 +1612,10 @@ class FitManager:
     ) -> FitResult:
         """Run orthogonal distance regression using the odrpack package.
 
-        Requires both xerr and yerr for proper ODR weighting.
+        xerr is required: odrpack treats a missing x weight as an x-error of
+        1 in data units, which lets the x-adjustments absorb the residuals
+        and makes the fit and its errors meaningless. yerr is optional
+        (unit y weights then), as for the other methods.
         """
         try:
             from odrpack import odr_fit
@@ -977,6 +1626,11 @@ class FitManager:
 
         if self._model is None or self._params is None:
             raise ValueError("No model defined")
+        if xerr is None:
+            raise ValueError(
+                "Orthogonal distance regression needs x-errors; this series "
+                "has none. Add an x-error column, or use a least-squares method."
+            )
 
         if self._has_spline:
             self._rebuild_model_with_data(x)
@@ -996,9 +1650,10 @@ class FitManager:
         lower = np.array([self._params[n].min for n in param_names])
         upper = np.array([self._params[n].max for n in param_names])
         has_bounds = np.any(np.isfinite(lower)) or np.any(np.isfinite(upper))
-        # Replace -inf/inf with None-compatible values
-        lower = np.where(np.isfinite(lower), lower, -1e308)
-        upper = np.where(np.isfinite(upper), upper, 1e308)
+        # odrpack has no notion of an open bound, so an infinite one is
+        # emulated with the largest finite double.
+        lower = np.where(np.isfinite(lower), lower, -ODR_UNBOUNDED)
+        upper = np.where(np.isfinite(upper), upper, ODR_UNBOUNDED)
 
         # Fix non-varied parameters
         fix_beta = np.array([0 if v else 1 for v in vary_mask], dtype=float)
@@ -1045,26 +1700,30 @@ class FitManager:
         y_fit_dense = model.eval(x=x_dense, **best_kw)
         y_fit_data = model.eval(x=x, **best_kw)
 
-        # Confidence band via error propagation (numerical)
+        # Confidence band by linear error propagation through the full
+        # parameter covariance: var(y) = J C J^T with J = df/dbeta on the
+        # dense grid. odrpack's cov_beta is unscaled; the covariance that
+        # matches sd_beta is cov_beta * res_var. Using only the diagonal
+        # (sd_beta) would drop the parameter correlations, which for a line
+        # fitted away from x = 0 are close to -1 and make the band several
+        # times too wide.
         y_uncertainty = None
-        if any(result.sd_beta[i] > 0 for i in range(len(param_names)) if vary_mask[i]):
+        varied = [i for i, v in enumerate(vary_mask) if v]
+        if varied and np.any(result.sd_beta[varied] > 0):
             try:
-                # Simple numerical uncertainty propagation
-                var_y = np.zeros(n_dense)
-                for i, name in enumerate(param_names):
-                    if not vary_mask[i] or result.sd_beta[i] <= 0:
-                        continue
-                    h = max(abs(result.beta[i]) * 1e-6, 1e-10)
-                    kw_plus = dict(best_kw)
-                    kw_plus[name] = result.beta[i] + h
-                    kw_minus = dict(best_kw)
-                    kw_minus[name] = result.beta[i] - h
-                    dy = (model.eval(x=x_dense, **kw_plus) -
-                          model.eval(x=x_dense, **kw_minus)) / (2 * h)
-                    var_y += (dy * result.sd_beta[i]) ** 2
-                y_uncertainty = band_sigma * np.sqrt(var_y)
-            except Exception:
-                pass
+                cov = np.asarray(result.cov_beta)[np.ix_(varied, varied)] * result.res_var
+                jac = np.empty((n_dense, len(varied)))
+                for col, i in enumerate(varied):
+                    name = param_names[i]
+                    h = max(abs(result.beta[i]) * ODR_JAC_REL_STEP, ODR_JAC_MIN_STEP)
+                    kw_plus = dict(best_kw, **{name: result.beta[i] + h})
+                    kw_minus = dict(best_kw, **{name: result.beta[i] - h})
+                    jac[:, col] = (model.eval(x=x_dense, **kw_plus)
+                                   - model.eval(x=x_dense, **kw_minus)) / (2 * h)
+                var_y = np.einsum("ij,jk,ik->i", jac, cov, jac)
+                y_uncertainty = band_sigma * np.sqrt(np.maximum(var_y, 0.0))
+            except Exception as e:
+                warnings.warn(f"ODR confidence band not computed: {e}", RuntimeWarning)
 
         # Component curves
         component_curves = {}
@@ -1074,8 +1733,8 @@ class FitManager:
                     for comp in model.components:
                         comp_kw = {n: best_kw[n] for n in comp.param_names if n in best_kw}
                         component_curves[comp.prefix] = comp.eval(x=x_dense, **comp_kw)
-            except Exception:
-                pass
+            except Exception as e:
+                warnings.warn(f"ODR component curves not computed: {e}", RuntimeWarning)
 
         # Build params info
         params_info = {}
@@ -1098,9 +1757,12 @@ class FitManager:
 
         gof = make_gof(chisqr=chisqr, redchi=redchi, rsquared=r_squared)
 
-        # Report
-        lines = ["Orthogonal Distance Regression (odrpack)"]
-        lines.append(f"  Stop reason: {result.stopreason}")
+        # Report (run_odr raised above if odrpack reported failure)
+        stop_reason = " / ".join(result.stopreason) if isinstance(
+            result.stopreason, (list, tuple)) else str(result.stopreason)
+        lines = convergence_lines(True, stop_reason, result.nfev, params_info) + [""]
+        lines.append("Orthogonal Distance Regression (odrpack)")
+        lines.append(f"  Stop reason: {stop_reason}")
         lines.append(f"  Function evals: {result.nfev}")
         lines.append(f"  Iterations: {result.niter}")
         lines.append(f"  Sum of squares: {chisqr:.6g}")
@@ -1124,6 +1786,9 @@ class FitManager:
             component_curves=component_curves,
             y_uncertainty=y_uncertainty,
             init_params=init_values,
+            xerr_data=xerr,
+            message=stop_reason,
+            nfev=result.nfev,
         )
 
     def run_bootstrap(
@@ -1135,38 +1800,66 @@ class FitManager:
         method: str = DEFAULT_FIT_METHOD,
         boot_type: str = "residual",
         weight_mode: str = DEFAULT_WEIGHT_MODE,
+        seed: int | None = None,
     ) -> tuple[dict[str, np.ndarray], int]:
         """Run bootstrap resampling and return parameter distributions.
 
         boot_type:
-          - "residual": Resample residuals and add to fitted values
-          - "case": Resample (x, y, yerr) rows with replacement
+          - "residual": resample the residuals and add them to the fitted
+            curve. For a weighted fit the residuals are resampled in
+            *weighted* form (r_i w_i, of order one everywhere) and scaled
+            back by each target point's 1/w_j: raw residuals from
+            low-sigma points would otherwise land on high-sigma points and
+            vice versa, distorting the distributions.
+          - "case": resample (x, y, yerr) rows with replacement.
+
+        Each resample is refitted with the last fit's objective (robust
+        loss or reduce function) and scale_covar, so the distributions
+        describe the fit the user ran. seed makes the resampling
+        reproducible; None draws a fresh sequence.
 
         Returns ({param_name: array of successful resample values}, n_failed),
-        where n_failed is the number of resamples whose fit didn't converge
-        or raised (dropped from the distributions -- a high count means the
-        reported confidence intervals are based on fewer samples than
-        n_boot and may be unreliable).
+        where n_failed counts resamples whose fit raised or reported
+        success=False (dropped from the distributions -- a high count means
+        the reported confidence intervals rest on fewer samples than n_boot
+        and may be unreliable).
         """
         if self._last_result is None or self._model is None:
             raise ValueError("Run a fit first")
 
-        best_params = self._last_result.params
-        y_fit = self._last_result.best_fit
+        rng = np.random.default_rng(seed)
+        last = self._last_result
+        best_params = last.params
+        y_fit = last.best_fit
         residuals = y - y_fit
+        fit_weights = last.weights if last.weights is not None else None
+        # The objective the fit used: a scipy loss travels in the stored
+        # keywords, a reduce function in the result's reduce_fcn attribute
+        # (lmfit's default there is reduce_chisquare, i.e. none).
+        fit_kws = {k: v for k, v in (last.kws or {}).items() if k in ("loss", "f_scale")}
+        reduce_fcn = getattr(last, "reduce_fcn", None)
+        if reduce_fcn is not None and reduce_fcn is not reduce_chisquare:
+            fit_kws["reduce_fcn"] = reduce_fcn
+        scale_covar = bool(getattr(last, "scale_covar", True))
 
         param_names = [n for n, p in best_params.items() if p.vary]
         distributions: dict[str, list[float]] = {n: [] for n in param_names}
         n_failed = 0
+        n_pts = len(x)
 
         for _ in range(n_boot):
             if boot_type == "case":
-                idx = np.random.randint(0, len(x), size=len(x))
+                idx = rng.integers(0, n_pts, size=n_pts)
                 x_b, y_b = x[idx], y[idx]
                 yerr_b = yerr[idx] if yerr is not None else None
             else:
-                idx = np.random.randint(0, len(residuals), size=len(residuals))
-                x_b, y_b = x, y_fit + residuals[idx]
+                idx = rng.integers(0, n_pts, size=n_pts)
+                if fit_weights is not None:
+                    w = np.asarray(fit_weights, dtype=float)
+                    y_b = y_fit + (residuals * w)[idx] / w
+                else:
+                    y_b = y_fit + residuals[idx]
+                x_b = x
                 yerr_b = yerr
 
             weights = self._compute_weights(y_b, yerr_b, weight_mode)
@@ -1174,8 +1867,12 @@ class FitManager:
                 params_copy = best_params.copy()
                 result = self._model.fit(
                     y_b, params_copy, x=x_b, weights=weights,
-                    method=method, nan_policy="omit",
+                    method=method, nan_policy="omit", fit_kws=fit_kws,
+                    scale_covar=scale_covar,
                 )
+                if not getattr(result, "success", True):
+                    n_failed += 1
+                    continue
                 for n in param_names:
                     distributions[n].append(result.params[n].value)
             except Exception:
@@ -1227,6 +1924,8 @@ class FitManager:
         }
         if self._param_hints:
             data["param_hints"] = self._param_hints
+        if self._start_values:
+            data["start_values"] = dict(self._start_values)
         return data
 
     @classmethod
@@ -1242,4 +1941,9 @@ class FitManager:
         # Restore parameter hints
         for name, hints in data.get("param_hints", {}).items():
             fm.set_param_hint(name, **hints)
+        # Restore the start values (after the hints, which also set starts).
+        # Workspaces from before this field simply have none recorded.
+        for name, value in data.get("start_values", {}).items():
+            if fm.params is not None and name in fm.params:
+                fm._start_values[name] = float(value)
         return fm

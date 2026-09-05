@@ -59,6 +59,22 @@ def prepare_fit_data(
         xerr = xerr[finite_mask] if xerr is not None else None
         warnings.append(f"Removed {n_dropped} point(s) with NaN/inf values.")
 
+    # 3b. Drop points with a non-positive y error. A zero error means an
+    # infinite weight: the fit is forced through the point and every other
+    # point's influence, and the reported uncertainties, become meaningless.
+    # (A zero x error is left alone: it simply says x is exact.)
+    if yerr is not None:
+        bad = yerr <= 0
+        n_bad = int(bad.sum())
+        if n_bad > 0:
+            keep = ~bad
+            x, y, yerr = x[keep], y[keep], yerr[keep]
+            xerr = xerr[keep] if xerr is not None else None
+            warnings.append(
+                f"Removed {n_bad} point(s) with zero or negative y error; "
+                "a zero error would force the fit through the point."
+            )
+
     # 4. Sort by x
     order = np.argsort(x)
     x, y = x[order], y[order]

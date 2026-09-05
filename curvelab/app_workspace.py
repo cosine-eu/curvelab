@@ -12,7 +12,9 @@ import pandas as pd
 from tkinter import messagebox, filedialog
 
 from .data_manager import DataManager
-from .fit_manager import DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE
+from .fit_manager import (
+    DEFAULT_EMCEE_SETTINGS, DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, WEIGHT_MODES,
+)
 from .workspace import (
     WorkspaceEncoder, decode_workspace,
     serialize_series_records, deserialize_series_record,
@@ -168,6 +170,7 @@ class WorkspaceMixin:
                 "objective": self.fit_panel.objective_var.get(),
                 "f_scale": self.fit_panel.f_scale_var.get(),
                 "weight_mode": self.fit_panel.weight_var.get(),
+                "emcee_settings": dict(self._emcee_settings),
                 "max_nfev": self.fit_panel.max_nfev_var.get(),
                 "xlabel": self.plot_controls.xlabel_var.get(),
                 "ylabel": self.plot_controls.ylabel_var.get(),
@@ -203,6 +206,8 @@ class WorkspaceMixin:
 
     def _load_workspace(self, event=None):
         """Load a workspace from a .clw JSON file."""
+        if self._refuse_while_fitting():
+            return
         filepath = filedialog.askopenfilename(
             filetypes=[("CurveLab Workspace", "*.clw"), ("All files", "*.*")],
             title="Load Workspace",
@@ -216,8 +221,13 @@ class WorkspaceMixin:
             messagebox.showerror("Load Error", str(e))
             return
 
-        dataset_name_map = self._load_workspace_datasets(ws)
-        self._load_workspace_series(ws, dataset_name_map)
+        # Anything that cannot be restored is collected and reported once
+        # at the end, rather than dropped silently or shown as a stream of
+        # dialogs: a series whose columns are gone, a file that moved, a fit
+        # that could not be reconstructed.
+        problems: list[str] = []
+        dataset_name_map = self._load_workspace_datasets(ws, problems)
+        self._load_workspace_series(ws, dataset_name_map, problems)
 
         # Restore active series
         self._active_series_id = ws.get("active_series_id")
@@ -226,10 +236,11 @@ class WorkspaceMixin:
 
         self._load_workspace_plot_controls(ws)
         self._load_workspace_fonts(ws)
-        self._load_workspace_refit()
+        self._load_workspace_refit(problems)
 
         # Replot everything and sync UI
         self._refresh_all_ui()
+        self._report_collected_warnings("Workspace Load Warnings", problems)
 
     def _sqlite_dataset_index(self) -> dict[tuple[str, str], str]:
         """(filepath, table name) -> dataset name, for loaded SQLite tables."""
@@ -238,8 +249,11 @@ class WorkspaceMixin:
             for ds_name, table in self.data_mgr.table_names.items()
         }
 
-    def _load_workspace_datasets(self, ws) -> dict:
-        """Reload datasets from saved filepaths; return {old name -> new name}."""
+    def _load_workspace_datasets(self, ws, problems: list[str] | None = None) -> dict:
+        """Reload datasets from saved filepaths; return {old name -> new name}.
+        Files that cannot be reloaded are appended to problems."""
+        if problems is None:
+            problems = []
         self.data_mgr = DataManager()
         dataset_name_map = {}  # old name -> new name (may differ on reload)
         loaded_sqlite_files: set[str] = set()  # avoid loading same .sqlite/.db twice
@@ -261,9 +275,9 @@ class WorkspaceMixin:
                     new_name, columns = self.data_mgr.load(fpath)
                     dataset_name_map[name] = new_name
             except Exception as e:
-                messagebox.showwarning(
-                    "Missing File",
-                    f"Could not reload '{fpath}':\n{e}\n\nSeries from this dataset will be skipped.",
+                problems.append(
+                    f"Could not reload '{fpath}': {e}. "
+                    f"Series from this dataset were skipped."
                 )
 
         self.data_panel.set_datasets(self.data_mgr.dataset_names)
@@ -272,8 +286,11 @@ class WorkspaceMixin:
             self.data_panel.set_columns(self.data_mgr.column_names(first))
         return dataset_name_map
 
-    def _load_workspace_series(self, ws, dataset_name_map):
-        """Reconstruct SeriesRecord objects and populate the DataPanel series list."""
+    def _load_workspace_series(self, ws, dataset_name_map, problems: list[str] | None = None):
+        """Reconstruct SeriesRecord objects and populate the DataPanel series list.
+        Series that cannot be rebuilt are appended to problems."""
+        if problems is None:
+            problems = []
         self._series_records.clear()
         self._simulated_counter = 0
         self.data_panel.clear_series_entries()
@@ -281,15 +298,19 @@ class WorkspaceMixin:
             ds_name = sdata.get("dataset_name", "")
             actual_ds = dataset_name_map.get(ds_name)
             if actual_ds is None:
+                # The dataset's file failed to load; that was reported by
+                # _load_workspace_datasets.
                 continue
 
             style = sdata.get("style", {})
+            label = style.get("label") or sid
             try:
                 x = self.data_mgr.get_column(actual_ds, style.get("x", ""))
                 y = self.data_mgr.get_column(actual_ds, style.get("y", ""))
                 yerr = self.data_mgr.get_column(actual_ds, style.get("yerr")) if style.get("yerr") else None
                 xerr = self.data_mgr.get_column(actual_ds, style.get("xerr")) if style.get("xerr") else None
-            except Exception:
+            except Exception as e:
+                problems.append(f"Series '{label}' skipped: {e}")
                 continue
 
             rec = deserialize_series_record(sdata, x, y, yerr, xerr, actual_ds)
@@ -317,8 +338,16 @@ class WorkspaceMixin:
         self.plot_controls.data_var.set(pc.get("data", True))
         self.fit_panel.scale_covar_var.set(pc.get("scale_covar", True))
         self.fit_panel.method_var.set(pc.get("fit_method", DEFAULT_FIT_METHOD))
-        self.fit_panel.weight_var.set(pc.get("weight_mode", DEFAULT_WEIGHT_MODE))
+        # A weight mode that no longer exists (e.g. the removed "1/yerr^2")
+        # falls back to the default rather than lingering as a stale label.
+        weight_mode = pc.get("weight_mode", DEFAULT_WEIGHT_MODE)
+        if weight_mode not in WEIGHT_MODES:
+            weight_mode = DEFAULT_WEIGHT_MODE
+        self.fit_panel.weight_var.set(weight_mode)
         self.fit_panel.max_nfev_var.set(pc.get("max_nfev", ""))
+        saved = pc.get("emcee_settings")
+        if isinstance(saved, dict):
+            self._emcee_settings = {**DEFAULT_EMCEE_SETTINGS, **saved}
         # Objective replaces the old reduce_fcn key; fall back to it for
         # workspaces written before the change. set_objective must run after
         # method_var is set, since the valid objectives depend on the method.
@@ -355,12 +384,22 @@ class WorkspaceMixin:
                 plot_size=fonts.get("plot_size", self._plot_size),
             )
 
-    def _load_workspace_refit(self):
-        """Reconstruct lmfit ModelResult for each session so analysis tools work."""
-        for rec in self._series_records.values():
+    def _load_workspace_refit(self, problems: list[str] | None = None):
+        """Reconstruct lmfit ModelResult for each session so analysis tools work.
+        Sessions whose fit could not be reconstructed are appended to problems;
+        their saved table stays, but the analysis tools need a new fit."""
+        if problems is None:
+            problems = []
+        for sid, rec in self._series_records.items():
+            label = rec.style.get("label") or sid
             for sess in rec.fit_sessions.values():
                 if sess.result is not None and sess.fit_manager.model is not None:
                     try:
                         sess.fit_manager.refit_from_result(sess.result)
-                    except Exception:
-                        pass  # Analysis tools will show "run a fit first"
+                    except Exception as e:
+                        problems.append(
+                            f"Series '{label}', session '{sess.name}': the fit "
+                            f"could not be reconstructed ({e}). The saved "
+                            f"result is shown, but the analysis tools need a "
+                            f"new fit."
+                        )

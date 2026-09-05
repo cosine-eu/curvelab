@@ -720,7 +720,7 @@ class FitPanel(ttk.LabelFrame):
         self._f_scale_entry = ttk.Entry(obj_frame, textvariable=self.f_scale_var, width=6)
         self._f_scale_entry.pack(side=tk.LEFT, padx=2)
         # Remembers the chosen label for each objective kind across method
-        # switches, keyed by the first choice of that kind.
+        # switches, keyed by the kind (METHOD_CAPS[method].objective).
         self._objective_memory: dict[str, str] = {}
 
         # --- Weights ---
@@ -1123,6 +1123,9 @@ class FitResultsPanel(ttk.LabelFrame):
             val = f"{info['value']:.6g}" if info["value"] is not None else ""
             init_val = f"{info['init_value']:.6g}" if info.get("init_value") is not None else ""
             stderr = f"{info['stderr']:.6g}" if info.get("stderr") is not None else ""
+            if info.get("at_bound"):
+                # The curvature at a bound is not this parameter's uncertainty.
+                stderr = f"{stderr} (at {info['at_bound']})".strip()
             mn = f"{info['min']:.6g}" if info["min"] not in (None, float("-inf")) else "-inf"
             mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
             vary = "Yes" if info.get("vary", True) else "No"
@@ -1130,8 +1133,10 @@ class FitResultsPanel(ttk.LabelFrame):
             tag = row_tag(i)
             self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=(tag,))
 
-    def set_gof(self, gof: dict | None):
-        """Update the goodness-of-fit summary line."""
+    def set_gof(self, gof: dict | None, strong_correlations=()):
+        """Update the goodness-of-fit summary line. Strongly correlated
+        parameter pairs are appended as a flag, since their individual
+        values and errors are poorly determined."""
         if not gof:
             self.gof_var.set("")
             return
@@ -1146,6 +1151,11 @@ class FitResultsPanel(ttk.LabelFrame):
             parts.append(f"AIC={gof['AIC']:.4g}")
         if "BIC" in gof and gof["BIC"] is not None:
             parts.append(f"BIC={gof['BIC']:.4g}")
+        if gof.get("objective") is not None:
+            # A robust loss or reduce function was minimized, not chi-square.
+            parts.append(f"objective={gof['objective']:.4g}")
+        for a, b, rho in strong_correlations:
+            parts.append(f"\u26a0 {a}/{b} \u03c1={rho:+.2f}")
         self.gof_var.set("  ".join(parts))
 
     def set_report(self, report: str):

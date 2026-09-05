@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 
 from .data_manager import DataManager
-from .fit_manager import FitManager
+from .fit_manager import DEFAULT_EMCEE_SETTINGS, FitManager
 from .plot_manager import PlotManager
 from .session import (
     FitSession, ParamEdit, SeriesRecord,
@@ -81,6 +81,9 @@ class CurveLabApp(
         # Threading state for async fits
         self._fit_thread: threading.Thread | None = None
         self._fit_abort = threading.Event()
+        # emcee sampler settings (Analysis > MCMC Settings), saved with the
+        # workspace.
+        self._emcee_settings: dict = dict(DEFAULT_EMCEE_SETTINGS)
 
         self._build_layout()
         self._build_menu()
@@ -150,7 +153,7 @@ class CurveLabApp(
         if sess is None:
             return None
         fm = sess.fit_manager
-        if fm._last_result is None:
+        if fm.last_result is None:
             messagebox.showwarning("No Fit", "Run a fit first.")
             return None
         return fm
@@ -390,17 +393,24 @@ class CurveLabApp(
         else:
             self.fit_results.clear()
 
+    @staticmethod
+    def _params_with_init(params: dict, init: dict | None) -> dict:
+        """Parameter-table rows with an init_value column filled from init
+        (a {name: value} mapping) where available."""
+        rows = {}
+        for name, info in params.items():
+            entry = dict(info)
+            if init and name in init:
+                entry["init_value"] = init[name]
+            rows[name] = entry
+        return rows
+
     def _display_result(self, result):
         """Push a fit result to the results panel, enriching the parameter
         table with each parameter's initial value when available."""
-        params_display = {}
-        for name, info in result.params.items():
-            entry = dict(info)
-            if result.init_params and name in result.init_params:
-                entry["init_value"] = result.init_params[name]
-            params_display[name] = entry
-        self.fit_results.set_params(params_display)
-        self.fit_results.set_gof(result.gof)
+        self.fit_results.set_params(
+            self._params_with_init(result.params, result.init_params))
+        self.fit_results.set_gof(result.gof, result.strong_correlations)
         self.fit_results.set_report(result.report)
 
     def _update_component_list_from(self, fit_mgr: FitManager):
@@ -488,10 +498,6 @@ class CurveLabApp(
         except ValueError:
             self._refresh_param_display()
             return
-        # A manually edited value becomes the fit's new starting point, so
-        # the reset-to-guess in run_fit doesn't discard it.
-        if field == "value":
-            fm.set_start_value(param_name, new_value)
         sess.undo_stack.append(ParamEdit(
             param_name=param_name, field=field,
             old_value=old_value, new_value=new_value,
@@ -522,13 +528,8 @@ class CurveLabApp(
             return
         fm.capture_start_values()
         # Reflect the adopted start in the Initial column as feedback.
-        params_display = {}
-        for name, info in sess.result.params.items():
-            entry = dict(info)
-            if name in fm.params:
-                entry["init_value"] = fm.params[name].value
-            params_display[name] = entry
-        self.fit_results.set_params(params_display)
+        self.fit_results.set_params(self._params_with_init(
+            sess.result.params, {n: p.value for n, p in fm.params.items()}))
 
     def _refresh_param_display(self):
         """Refresh the parameter table from the live FitManager params."""
@@ -538,6 +539,8 @@ class CurveLabApp(
         self.fit_results.set_params(FitManager.params_to_info(fm.params))
 
     def _undo_param_edit(self, event=None):
+        if self._refuse_while_fitting():
+            return
         sess = self._active_session
         fm = self._active_fit_mgr
         if sess is None or fm is None or not sess.undo_stack:
@@ -546,12 +549,12 @@ class CurveLabApp(
         fm.set_param_hint(
             edit.param_name, **self._param_field_kwargs(edit.field, edit.old_value)
         )
-        if edit.field == "value":
-            fm.set_start_value(edit.param_name, edit.old_value)
         sess.redo_stack.append(edit)
         self._refresh_param_display()
 
     def _redo_param_edit(self, event=None):
+        if self._refuse_while_fitting():
+            return
         sess = self._active_session
         fm = self._active_fit_mgr
         if sess is None or fm is None or not sess.redo_stack:
@@ -560,8 +563,6 @@ class CurveLabApp(
         fm.set_param_hint(
             edit.param_name, **self._param_field_kwargs(edit.field, edit.new_value)
         )
-        if edit.field == "value":
-            fm.set_start_value(edit.param_name, edit.new_value)
         sess.undo_stack.append(edit)
         self._refresh_param_display()
 

@@ -10,16 +10,17 @@ This project is also [an experiment in AI-assisted coding](docs/ai_assisted_codi
 
 ## Features
 
-- **34 built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, and more, plus Bose and Fermi when lmfit >= 1.3 is installed. Custom expressions supported.
+- **36 built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, Bose, Fermi, and more. Custom expressions supported.
 - **Composite models** -- combine components with `+`, `*`, `-`, `/` operators
-- **14 fitting methods** -- Trust Region Reflective (default), Levenberg-Marquardt, Nelder-Mead, differential evolution, basin-hopping, MCMC (emcee), brute-force grid search, ODR, and more
+- **14 fitting methods** -- Trust Region Reflective (default), Levenberg-Marquardt, Nelder-Mead, differential evolution, basin-hopping, MCMC (emcee), brute-force grid search, ODR, and more; robust losses (Huber, Cauchy, soft-L1, arctan) on the default method; effective-variance weighting for x-errors
+- **Honest statistics** -- every report starts with a convergence block; parameters at a bound and strongly correlated pairs are flagged; confidence intervals and contours follow the Scale-covariance setting; AIC/BIC are shown only for chi-square fits and compared only between fits of the same weighted data
 - **9 file formats** -- CSV, TSV, TXT/DAT, Excel, ODS, JSON, Parquet, HDF5, SQLite, plus clipboard paste
 - **Multi-series / multi-session** -- plot multiple datasets, run multiple fit sessions per series, batch fit across all series
 - **Statistical analysis** -- confidence intervals, correlation/covariance matrices, diagnostic plots, bootstrap CI, profile likelihood, F-test, model comparison (AIC/BIC), uncertainty propagation, 2D confidence contours
 - **Data tools** -- auto peak detection, derivative/integral, Savitzky-Golay smoothing, outlier detection (MAD-based sigma-clipping), point exclusion, column calculator, data simulation
 - **Export** -- parameters (CSV), fit reports, curve data, plots (PNG/PDF/SVG), lmfit ModelResult (.sav)
 - **Workspace persistence** -- save/load entire sessions as `.clw` files
-- **Jupyter support** -- full-featured `CurveLabWidget` with ipywidgets
+- **Jupyter support** -- `CurveLabWidget` with ipywidgets (fitting and model comparison; the analysis dialogs and the newer fit controls are desktop-only for now)
 
 ## Quick Start
 
@@ -66,12 +67,12 @@ Core logic is GUI-agnostic. The two frontends (`app.py` for Tkinter, `notebook.p
 
 | Module | Role |
 |--------|------|
-| `fit_manager.py` | Composite model building, auto-guess, fitting, GOF metrics |
+| `fit_manager.py` | Composite model building, auto-guess, fitting (single, global, ODR, bootstrap), confidence intervals, GOF metrics |
 | `data_manager.py` | Tabular data loading with auto-detection |
 | `models.py` | Registry of the built-in lmfit models |
 | `session.py` | Dataclasses: SeriesRecord, FitSession, FitResult |
-| `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, sort) |
-| `analysis_tools.py` | Dialog numerics (peaks, smoothing, outliers, F-test) |
+| `preprocessing.py` | Data cleaning (mask, range filter, NaN/inf, non-positive y-errors, sort) |
+| `analysis_tools.py` | Dialog numerics (peaks, smoothing, outliers, F-test, residual diagnostics, derivative/integral, data simulation) |
 | `workspace.py` | JSON serialization for save/load |
 | `plot_manager.py` | Matplotlib figure management (dual-axis, error bars, bands) |
 

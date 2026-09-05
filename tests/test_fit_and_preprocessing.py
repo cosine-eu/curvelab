@@ -5,6 +5,10 @@ import unittest
 
 import numpy as np
 
+from curvelab.fit_manager import (
+    WEIGHT_EFFECTIVE_VARIANCE, WEIGHT_INV_YERR, WEIGHT_NONE,
+)
+
 
 class ResultBuilderTests(unittest.TestCase):
     """make_gof and param_info are the single definition of the result
@@ -49,7 +53,7 @@ class MethodCapabilityTests(unittest.TestCase):
         self.assertEqual(objective_choices("least_squares")[0], "Least squares")
         self.assertIn("Cauchy", objective_choices("least_squares"))
         # ...scalar methods offer the reduce functions...
-        self.assertIn("Neg. entropy", objective_choices("nelder"))
+        self.assertIn("Cauchy log-pdf", objective_choices("nelder"))
         # ...and fixed-objective methods offer exactly one label.
         self.assertEqual(objective_choices("leastsq"), ["Least squares"])
         self.assertEqual(objective_choices("emcee"), ["Log-posterior"])
@@ -63,9 +67,9 @@ class MethodCapabilityTests(unittest.TestCase):
                          {"loss": "cauchy", "f_scale": 2.5})
 
     def test_scalar_kwargs_map_to_reduce_fcn(self):
-        from curvelab.fit_manager import objective_kwargs, _reduce_negentropy
-        self.assertEqual(objective_kwargs("nelder", "Neg. entropy"),
-                         {"reduce_fcn": _reduce_negentropy})
+        from curvelab.fit_manager import objective_kwargs, _reduce_cauchylogpdf
+        self.assertEqual(objective_kwargs("nelder", "Cauchy log-pdf"),
+                         {"reduce_fcn": _reduce_cauchylogpdf})
         # The default (Chi-square) means "no reduce_fcn", not None-injected.
         self.assertEqual(objective_kwargs("nelder", "Chi-square (default)"), {})
 
@@ -77,7 +81,7 @@ class MethodCapabilityTests(unittest.TestCase):
     def test_stale_label_falls_back_to_default(self):
         from curvelab.fit_manager import objective_kwargs
         # A label left over from another method must not inject a bad arg.
-        self.assertEqual(objective_kwargs("least_squares", "Neg. entropy"),
+        self.assertEqual(objective_kwargs("least_squares", "Cauchy log-pdf"),
                          {"loss": "linear"})
         self.assertEqual(objective_kwargs("nelder", "Cauchy"), {})
 
@@ -109,7 +113,7 @@ class ObjectiveKwargsRunFitTests(unittest.TestCase):
         fm = FitManager()
         fm.add_component("Linear")
         fm.auto_guess(x, y)
-        return fm.run_fit(x, y, weight_mode="No weights", **run_kw)
+        return fm.run_fit(x, y, weight_mode=WEIGHT_NONE, **run_kw)
 
     def test_robust_loss_resists_outlier(self):
         from curvelab.fit_manager import objective_kwargs
@@ -146,7 +150,7 @@ class ObjectiveKwargsRunFitTests(unittest.TestCase):
         # A scalar method with a reduce_fcn must still complete and fit well.
         res = self._fit_line(
             x, y, method="nelder",
-            objective_kws=objective_kwargs("nelder", "Neg. entropy"))
+            objective_kws=objective_kwargs("nelder", "Cauchy log-pdf"))
         self.assertAlmostEqual(res.params["slope"]["value"], 2.0, delta=0.1)
 
 
@@ -167,7 +171,7 @@ class ValidateFitSetupTests(unittest.TestCase):
         from curvelab.fit_manager import validate_fit_setup
         errors, warnings = validate_fit_setup(
             "least_squares", self._params(), has_xerr=False,
-            weight_mode="1/yerr (default)")
+            weight_mode=WEIGHT_INV_YERR)
         self.assertEqual(errors, [])
         self.assertEqual(warnings, [])
 
@@ -175,7 +179,7 @@ class ValidateFitSetupTests(unittest.TestCase):
         from curvelab.fit_manager import validate_fit_setup
         errors, _ = validate_fit_setup(
             "differential_evolution", self._params(bounded=False),
-            has_xerr=False, weight_mode="No weights")
+            has_xerr=False, weight_mode=WEIGHT_NONE)
         self.assertEqual(len(errors), 1)
         self.assertIn("finite", errors[0])
         self.assertIn("a", errors[0])
@@ -184,20 +188,29 @@ class ValidateFitSetupTests(unittest.TestCase):
         from curvelab.fit_manager import validate_fit_setup
         errors, _ = validate_fit_setup(
             "differential_evolution", self._params(bounded=True),
-            has_xerr=False, weight_mode="No weights")
+            has_xerr=False, weight_mode=WEIGHT_NONE)
         self.assertEqual(errors, [])
+
+    def test_odr_without_xerr_is_an_error(self):
+        from curvelab.fit_manager import validate_fit_setup, WEIGHT_INV_YERR
+        errors, _ = validate_fit_setup("odr", None, has_xerr=False,
+                                       weight_mode=WEIGHT_INV_YERR)
+        self.assertTrue(any("x-errors" in e for e in errors))
+        errors, _ = validate_fit_setup("odr", None, has_xerr=True,
+                                       weight_mode=WEIGHT_INV_YERR)
+        self.assertFalse(any("x-errors" in e for e in errors))
 
     def test_effective_variance_without_xerr_warns(self):
         from curvelab.fit_manager import validate_fit_setup
         errors, warnings = validate_fit_setup(
             "least_squares", self._params(), has_xerr=False,
-            weight_mode="Effective variance")
+            weight_mode=WEIGHT_EFFECTIVE_VARIANCE)
         self.assertEqual(errors, [])
         self.assertEqual(len(warnings), 1)
         # With x-errors present it's silent.
         _, warnings2 = validate_fit_setup(
             "least_squares", self._params(), has_xerr=True,
-            weight_mode="Effective variance")
+            weight_mode=WEIGHT_EFFECTIVE_VARIANCE)
         self.assertEqual(warnings2, [])
 
     def test_missing_package_is_an_error(self):
@@ -206,7 +219,7 @@ class ValidateFitSetupTests(unittest.TestCase):
         # ODR needs odrpack; simulate it being absent.
         with mock.patch("importlib.util.find_spec", return_value=None):
             errors, _ = validate_fit_setup(
-                "odr", self._params(), has_xerr=True, weight_mode="No weights")
+                "odr", self._params(), has_xerr=True, weight_mode=WEIGHT_NONE)
         self.assertEqual(len(errors), 1)
         self.assertIn("odrpack", errors[0])
 
@@ -225,7 +238,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Gaussian")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         center = result.params["center"]["value"]
         self.assertAlmostEqual(center, 0.5, delta=0.15)
@@ -238,7 +251,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         slope = result.params["slope"]["value"]
         intercept = result.params["intercept"]["value"]
@@ -253,7 +266,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Gaussian")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, yerr=yerr, weight_mode="1/yerr (default)")
+        result = self.fm.run_fit(x, y, yerr=yerr, weight_mode=WEIGHT_INV_YERR)
 
         self.assertIsNotNone(result.params["center"]["stderr"])
         self.assertAlmostEqual(result.params["center"]["value"], 0.0, delta=0.2)
@@ -264,7 +277,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         for key in ("chi-squared", "reduced chi-squared", "R-squared", "AIC", "BIC"):
             self.assertIn(key, result.gof)
@@ -276,7 +289,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Exponential")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights", n_dense=200)
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE, n_dense=200)
 
         self.assertEqual(len(result.x_dense), 200)
         self.assertEqual(len(result.y_fit_dense), 200)
@@ -288,7 +301,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(x, y)
-        self.fm.run_fit(x, y, weight_mode="No weights")
+        self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         x_eval = np.array([0.0, 5.0, 10.0])
         y_eval = self.fm.evaluate(x_eval)
@@ -312,7 +325,7 @@ class FitManagerRunFitTests(unittest.TestCase):
         self.fm.set_param("gaussian1_amplitude", value=2.0)
         self.fm.set_param("linear1_slope", value=0.3)
         self.fm.set_param("linear1_intercept", value=1.0)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         self.assertGreater(result.gof["R-squared"], 0.99)
         self.assertIn("component_curves", dir(result))
@@ -372,7 +385,7 @@ class WorkspaceRoundTripTests(unittest.TestCase):
         fm = FitManager()
         fm.add_component("Gaussian")
         fm.auto_guess(x, y)
-        result = fm.run_fit(x, y, weight_mode="No weights")
+        result = fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         rec = SeriesRecord(
             x=x, y=y,
@@ -398,6 +411,80 @@ class WorkspaceRoundTripTests(unittest.TestCase):
             result.gof["R-squared"],
             places=6,
         )
+
+    def test_reload_refit_reproduces_a_robust_unscaled_fit(self):
+        # The reload refit used to run leastsq with default weights and
+        # scale_covar=True from the hints: the table showed the saved fit
+        # while the analysis dialogs described a different one.
+        import warnings
+        from curvelab.fit_manager import FitManager, objective_kwargs, WEIGHT_NONE
+        from curvelab.session import SeriesRecord, FitSession
+        from curvelab.workspace import (
+            WorkspaceEncoder, serialize_series_records,
+            deserialize_series_record, decode_workspace,
+        )
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 60)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 60)
+        y[30] += 20.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            result = fm.run_fit(
+                x, y, weight_mode=WEIGHT_NONE, method="least_squares",
+                objective_kws=objective_kwargs("least_squares", "Cauchy", 1.0),
+                scale_covar=False)
+        self.assertEqual(result.fit_options["objective"], {"loss": "cauchy", "f_scale": 1.0})
+
+        rec = SeriesRecord(x=x, y=y, style={"x": "x", "y": "y"}, dataset_name="d")
+        rec.fit_sessions["fit1"] = FitSession(name="fit1", fit_manager=fm, result=result)
+        blob = json.loads(json.dumps(serialize_series_records({"s": rec}), cls=WorkspaceEncoder),
+                          object_hook=decode_workspace)
+        rec2 = deserialize_series_record(blob["s"], x, y, None, None, "d")
+        sess2 = rec2.fit_sessions["fit1"]
+        self.assertEqual(sess2.result.fit_options, result.fit_options)
+
+        fm2 = FitManager.deserialize(fm.serialize())
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            fm2.refit_from_result(sess2.result)
+        refit = fm2._last_result
+        self.assertEqual(refit.method, "least_squares")
+        self.assertEqual(refit.kws, {"loss": "cauchy", "f_scale": 1.0})
+        self.assertAlmostEqual(refit.params["slope"].value, result.params["slope"]["value"], places=6)
+        self.assertAlmostEqual(refit.params["slope"].stderr, result.params["slope"]["stderr"], places=6)
+
+    def test_reload_refit_maps_reduce_fcn_by_name(self):
+        from curvelab.fit_manager import FitManager, objective_kwargs, WEIGHT_NONE, _reduce_cauchylogpdf
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        result = fm.run_fit(x, y, weight_mode=WEIGHT_NONE, method="nelder",
+                            objective_kws=objective_kwargs("nelder", "Cauchy log-pdf"))
+        self.assertEqual(result.fit_options["objective"], {"reduce_fcn": "_reduce_cauchylogpdf"})
+        fm2 = FitManager.deserialize(fm.serialize())
+        fm2.refit_from_result(result)
+        self.assertEqual(fm2._last_result.method, "Nelder-Mead")   # lmfit's name for nelder
+        self.assertIs(fm2._last_result.reduce_fcn, _reduce_cauchylogpdf)
+
+    def test_reload_refit_without_recorded_options_uses_defaults(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        result = fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
+        result.fit_options = None                      # a pre-0.11.5 workspace
+        fm2 = FitManager.deserialize(fm.serialize())
+        fm2.refit_from_result(result)
+        from curvelab.fit_manager import DEFAULT_FIT_METHOD
+        self.assertEqual(fm2._last_result.method, DEFAULT_FIT_METHOD)
+        self.assertAlmostEqual(fm2._last_result.params["slope"].value, 2.0, places=6)
 
     def test_special_float_round_trip(self):
         from curvelab.workspace import encode_value, decode_workspace
@@ -437,12 +524,12 @@ class BootstrapTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(self.x, self.y)
-        self.fm.run_fit(self.x, self.y, weight_mode="No weights")
+        self.fm.run_fit(self.x, self.y, weight_mode=WEIGHT_NONE)
 
     def test_residual_bootstrap_returns_distributions(self):
         dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="residual",
-            weight_mode="No weights",
+            weight_mode=WEIGHT_NONE,
         )
         self.assertIn("slope", dists)
         self.assertIn("intercept", dists)
@@ -452,7 +539,7 @@ class BootstrapTests(unittest.TestCase):
     def test_case_bootstrap_returns_distributions(self):
         dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="case",
-            weight_mode="No weights",
+            weight_mode=WEIGHT_NONE,
         )
         self.assertIn("slope", dists)
         self.assertGreater(len(dists["slope"]), 30)
@@ -461,10 +548,90 @@ class BootstrapTests(unittest.TestCase):
     def test_bootstrap_slope_near_true_value(self):
         dists, _n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=100, boot_type="residual",
-            weight_mode="No weights",
+            weight_mode=WEIGHT_NONE,
         )
         mean_slope = np.mean(dists["slope"])
         self.assertAlmostEqual(mean_slope, 2.0, delta=0.3)
+
+
+class BootstrapCorrectnessTests(unittest.TestCase):
+    """The residual bootstrap resampled raw residuals across points with
+    different sigma, refitted with plain chi-square whatever the fit's
+    objective, was unseeded, and counted non-converged refits as successes."""
+
+    def test_seed_makes_the_run_reproducible(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.3, 40)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
+        a, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode=WEIGHT_NONE, seed=7)
+        b, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode=WEIGHT_NONE, seed=7)
+        c, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode=WEIGHT_NONE, seed=8)
+        np.testing.assert_array_equal(a["slope"], b["slope"])
+        self.assertFalse(np.array_equal(a["slope"], c["slope"]))
+
+    def test_weighted_residual_bootstrap_respects_each_points_sigma(self):
+        # sigma grows tenfold across the range. Resampling raw residuals
+        # puts large residuals from the noisy end onto the quiet end, which
+        # inflates the intercept spread far beyond its stderr; resampling
+        # weighted residuals keeps the spread consistent with the fit.
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(3)
+        x = np.linspace(0, 10, 60)
+        sigma = 0.05 + 0.5 * x / 10
+        y = 2.0 * x + 1.0 + rng.normal(0, 1, 60) * sigma
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, yerr=sigma, scale_covar=False)
+        dists, n_failed = fm.run_bootstrap(x, y, yerr=sigma, n_boot=200, seed=0)
+        self.assertEqual(n_failed, 0)
+        boot_sd = dists["intercept"].std()
+        stderr = r.params["intercept"]["stderr"]
+        self.assertLess(boot_sd, 1.6 * stderr)
+        self.assertGreater(boot_sd, 0.6 * stderr)
+
+    def test_refits_use_the_fits_objective(self):
+        from unittest import mock
+        from curvelab.fit_manager import FitManager, objective_kwargs, WEIGHT_NONE
+        rng = np.random.default_rng(1)
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 40)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        fm.run_fit(x, y, weight_mode=WEIGHT_NONE, method="least_squares",
+                   objective_kws=objective_kwargs("least_squares", "Cauchy", 2.0),
+                   scale_covar=False)
+        with mock.patch.object(fm._model, "fit", wraps=fm._model.fit) as spy:
+            fm.run_bootstrap(x, y, n_boot=3, weight_mode=WEIGHT_NONE, seed=0)
+        kw = spy.call_args.kwargs
+        self.assertEqual(kw["fit_kws"], {"loss": "cauchy", "f_scale": 2.0})
+        self.assertFalse(kw["scale_covar"])
+
+    def test_non_converged_refits_are_counted_as_failed(self):
+        from unittest import mock
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 40)
+        y = 2.0 * x + 1.0
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
+        real_fit = fm._model.fit
+
+        def flaky(*a, **k):
+            res = real_fit(*a, **k)
+            res.success = False
+            return res
+        with mock.patch.object(fm._model, "fit", side_effect=flaky):
+            dists, n_failed = fm.run_bootstrap(x, y, n_boot=5, weight_mode=WEIGHT_NONE, seed=0)
+        self.assertEqual(n_failed, 5)
+        self.assertEqual(len(dists["slope"]), 0)
 
 
 class PreprocessingTests(unittest.TestCase):
@@ -493,6 +660,41 @@ class PreprocessingTests(unittest.TestCase):
 
         xo, yo, _, _, warnings = prepare_fit_data(rec)
         self.assertEqual(len(xo), 2)
+
+    def test_zero_or_negative_yerr_points_are_dropped_with_warning(self):
+        # A zero error is an infinite weight: the fit is forced through the
+        # point with a tiny, wrong stderr while chi2/nu looks fine. Such
+        # points are removed up front and reported.
+        from curvelab.preprocessing import prepare_fit_data
+        x = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
+        y = 2.0 * x
+        yerr = np.array([0.1, 0.0, 0.1, -0.2, 0.1])
+        xerr = np.full(5, 0.05)
+        rec = self._make_rec(x, y, yerr=yerr, xerr=xerr)
+
+        xo, yo, yeo, xeo, warnings = prepare_fit_data(rec)
+        np.testing.assert_array_equal(xo, [1.0, 3.0, 5.0])
+        self.assertTrue(np.all(yeo > 0))
+        self.assertEqual(len(xeo), 3)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("2 point(s) with zero or negative y error", warnings[0])
+
+    def test_zero_xerr_is_kept(self):
+        # x exact is a legitimate statement, not a degenerate weight.
+        from curvelab.preprocessing import prepare_fit_data
+        x = np.array([1.0, 2.0, 3.0])
+        rec = self._make_rec(x, 2 * x, yerr=np.full(3, 0.1), xerr=np.array([0.0, 0.1, 0.1]))
+        xo, _, _, _, warnings = prepare_fit_data(rec)
+        self.assertEqual(len(xo), 3)
+        self.assertEqual(warnings, [])
+
+    def test_inverse_y_weights_floor_zeros_at_smallest_magnitude(self):
+        from curvelab.fit_manager import FitManager, WEIGHT_INV_Y
+        y = np.array([0.0, 0.5, 2.0, -4.0])
+        w = FitManager._compute_weights(y, None, WEIGHT_INV_Y)
+        # The zero counts like the smallest measured |y|, not like 1e12.
+        np.testing.assert_allclose(w, [2.0, 2.0, 0.5, 0.25])
+        self.assertIsNone(FitManager._compute_weights(np.zeros(3), None, WEIGHT_INV_Y))
 
     def test_sorting_by_x(self):
         from curvelab.preprocessing import prepare_fit_data

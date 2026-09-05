@@ -1,6 +1,6 @@
 # CurveLab User Manual
 
-*Version 0.11.4 -- A comprehensive guide to interactive curve fitting and statistical analysis*
+*Version 0.12.0 -- A comprehensive guide to interactive curve fitting and statistical analysis*
 
 ---
 
@@ -72,9 +72,8 @@ performing post-fit statistical diagnostics.
 
 ### Key features
 
-- 34 built-in model components (peaks, polynomials, decay, step functions,
-  splines, and user-defined expressions), plus 2 additional models
-  (Bose, Fermi) when lmfit >= 1.3 is installed
+- 36 built-in model components (peaks, polynomials, decay, step functions,
+  thermal distributions, splines, and user-defined expressions)
 - 14 fitting methods (local, global, grid, Bayesian, and ODR)
 - Multi-series and multi-session architecture for systematic model
   comparison
@@ -128,7 +127,7 @@ Four menus are available in the menu bar:
 | Menu | Items |
 |------|-------|
 | **File** | Save/Load Workspace, Paste Data, Export Parameters/Report/Curve Data, Export/Import Model Result, Save Plot, Quit |
-| **Analysis** | Confidence Intervals, Correlation/Covariance Matrix, Diagnostic Plots, 2D Contours, Profile Likelihood, Bootstrap CI, Global Fit, Uncertainty Propagation, Model Comparison, F-Test, Simulate Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier Detection, Clear Exclusions (Active Series), Clear Exclusions (All Series) |
+| **Analysis** | Confidence Intervals, Correlation/Covariance Matrix, Diagnostic Plots, 2D Contours, Profile Likelihood, Bootstrap CI, Global Fit, MCMC Settings, Uncertainty Propagation, Model Comparison, F-Test, Simulate Data, Evaluate Model, Find Peaks, Derivative/Integral, Smooth/Outlier Detection, Clear Exclusions (Active Series), Clear Exclusions (All Series) |
 | **Settings** | Fonts, Show numeric warnings |
 | **Help** | About CurveLab |
 
@@ -250,7 +249,7 @@ The operator dropdown next to the model selector controls how the new
 component combines with the existing model. The first component's
 operator is always ignored.
 
-### Built-in models (34 + 2 conditional)
+### Built-in models (36)
 
 #### Peak and line-shape models
 
@@ -296,8 +295,8 @@ operator is always ignored.
 |-------|-------------|
 | **Lognormal** | Log-normal distribution |
 | **ThermalDistribution** | Bose-Einstein, Fermi-Dirac, or Maxwell-Boltzmann distribution |
-| **Bose** | Bose-Einstein distribution (requires lmfit >= 1.3) |
-| **Fermi** | Fermi-Dirac step function (requires lmfit >= 1.3) |
+| **Bose** | Bose-Einstein distribution |
+| **Fermi** | Fermi-Dirac step function |
 | **Step** | Step function (linear, arctan, error function, or logistic forms) |
 | **Rectangle** | Product of two step functions (box shape) |
 
@@ -405,6 +404,16 @@ parameter lacks a finite min *and* max, CurveLab reports which parameters need
 bounds instead of letting the fit fail partway through. Set the bounds in the
 Fit Results table (the **Min**/**Max** columns) first.
 
+The stochastic global methods (`differential_evolution`, `basinhopping`,
+`dual_annealing`) are run with a fixed random seed, so repeating a fit
+gives the same answer; `brute` and `shgo` are deterministic. emcee's seed
+is set in **Analysis > MCMC Settings** (Section 15).
+
+If the model is not finite at some data points (a logarithm or square root
+of a negative value, a division by zero), those points are left out of the
+fit. The `[[Convergence]]` block and the post-fit warning report how many;
+chi-squared, AIC and BIC then refer to the remaining points.
+
 The Fit panel also disables the controls a method doesn't use — for example
 ODR ignores the Weights, Max nfev, and Scale-covariance controls, so they grey
 out while it is selected. A method whose backend package isn't installed (only
@@ -456,6 +465,13 @@ minimizes vertical distances), ODR minimizes the orthogonal distances from
 data points to the model curve, weighted by the measurement uncertainties
 in both variables.
 
+The series must have an X-error column; the fit is refused without one.
+Without x-errors odrpack would assume an x-error of 1 in data units and
+absorb the residuals into x, giving a meaningless fit. Y-errors are optional
+(unit y weights are used when absent). The reported parameter errors are
+always scaled by the residual variance, the equivalent of Scale covariance
+being on.
+
 Requires installation of the optional `odr` dependency:
 
 ```bash
@@ -474,9 +490,13 @@ This helps avoid confusion when the fit curve appears without any data.
 ### Slow methods and threading
 
 Methods that tend to be slow (differential evolution, basin-hopping,
-dual annealing, shgo, ampgo, emcee, brute) run in a background thread so
-the UI remains responsive. The **Fit** button changes to an **Abort**
-button during the fit, allowing early termination.
+dual annealing, shgo, ampgo, emcee, brute), and every global fit, run in
+a background thread so the UI remains responsive. The **Fit** button
+changes to an **Abort** button during the fit, allowing early termination.
+While a fit runs, the controls that would change the model or its
+parameters are disabled, and menu items or shortcuts that would do the
+same (undo/redo, Global Fit, Load Workspace, Import Model Result) answer
+with a "Busy" notice.
 
 ### Max function evaluations
 
@@ -500,8 +520,10 @@ Each fit starts from the current parameter values — the Auto Guess result,
 or whatever you have typed into the **Value** column — and clicking **Fit**
 again starts from those same values, not from the previous fit's output. So
 repeated fits are reproducible: the answer doesn't drift when you fit twice.
-This applies to ordinary and ODR fits alike. Fixed (Vary = No) parameters
-keep the value you set; only the varying parameters are reset to the start.
+This applies to ordinary, global and ODR fits alike; emcee is the exception
+(Section 15). Fixed (Vary = No) parameters keep the value you set; only the
+varying parameters are reset to the start. The start values are saved with
+the workspace and copied along with the model by Batch Fit.
 
 To deliberately refine — start the next fit from the last result — click
 **Use as Start** below the parameter table. It copies the current fitted
@@ -510,14 +532,37 @@ next **Fit** continues from there. Repeat Use as Start → Fit to iterate. This
 is the opt-in replacement for the old automatic chaining; raising **Max nfev**
 is the other way to push a slow fit further.
 
-### When a fit reports no uncertainties
+### How the fit ended
 
-If the **StdErr** column comes back empty, CurveLab warns you that the fit
-could not estimate uncertainties. This means the covariance matrix is
-singular — the parameters are not all identifiable from the data. The fitted
-*curve* can still look excellent (good chi-squared and R-squared) while
-individual parameter values are meaningless, because the model can trade one
-parameter off against another with no change to the curve.
+Every fit report starts with a `[[Convergence]]` block: whether the
+minimizer converged, its own termination message, the number of function
+evaluations, and any varying parameter that ended on a bound. After a fit,
+CurveLab shows one warning dialog if any of the following applies:
+
+- **The fit did not converge.** The minimizer stopped early (Max nfev
+  reached, Abort pressed, or a tolerance failure). The parameter values are
+  where it stopped, not a best fit. Raise **Max nfev**, improve the start
+  (**Auto Guess**), or try another method.
+- **A parameter is at a bound.** The StdErr column shows `(at min)` or
+  `(at max)` next to it. A parameter on a bound is not at an interior
+  minimum, so the curvature there is not its uncertainty. Loosen the bound
+  if it was a guess, or fix the parameter if the bound is physical.
+- **No uncertainties from a scalar method.** Methods such as `nelder` or
+  `powell` do not produce a covariance matrix; lmfit estimates one
+  afterwards only if the `numdifftools` package is installed.
+- **Strongly correlated parameters** (|rho| > 0.9) are not a dialog, but
+  they are listed in the `[[Convergence]]` block and flagged at the end of
+  the goodness-of-fit line. Such a pair trades off against each other: the
+  data determine a combination of the two well, but not each one alone, so
+  their individual errors are large and move together. A line fitted far
+  from `x = 0` has a slope/intercept correlation near -1 for exactly this
+  reason. Fixing one, or reparameterizing (centering x), removes it.
+- **No uncertainties because the covariance is singular.** The StdErr
+  column is empty although the fit converged: the parameters are not all
+  identifiable from the data. The fitted *curve* can still look excellent
+  (good chi-squared and R-squared) while individual parameter values are
+  meaningless, because the model can trade one parameter off against
+  another with no change to the curve.
 
 A classic example is fitting a **Breit-Wigner (Fano)** line to a symmetric
 peak: the amplitude and the asymmetry parameter `q` are degenerate (only their
@@ -539,11 +584,14 @@ The residual vector passed to the optimizer is element-wise
 | Mode | Weight `w_i` | Use case |
 |------|-------------|----------|
 | **1/yerr (default)** | `1 / sigma_i` | Standard weighted least squares when Y-errors represent 1-sigma uncertainties. Minimizes chi-squared. |
-| **1/yerr^2** | `1 / sigma_i^2` | Occasionally used in spectroscopic fitting conventions. |
-| **1/y** | `1 / y_i` | Relative-error weighting; useful for data spanning several orders of magnitude. |
+| **1/y** | `1 / |y_i|` | Relative-error weighting (sigma proportional to y); useful for data spanning several orders of magnitude. Points with `y = 0` are weighted like the smallest non-zero `|y|`. |
 | **No weights** | `1` | Unweighted (ordinary) least squares. All points contribute equally. |
-| **yerr as weights** | `sigma_i` | Passes errors directly as weights (for specialized cost functions). |
-| **Effective variance** | `1 / sqrt(sigma_y^2 + (df/dx * sigma_x)^2)` | Accounts for X-errors via error propagation. The model derivative df/dx is estimated numerically at each iteration. |
+| **Effective variance** | `1 / sqrt(sigma_y^2 + (df/dx * sigma_x)^2)` | Accounts for X-errors via error propagation. The model derivative df/dx is estimated numerically at the fitted parameters, and the fit is repeated with updated weights until the parameters stop changing, so the result does not depend on the starting values. |
+
+Points whose Y-error is zero or negative are removed before fitting and
+reported in the data warnings. A zero error would mean an infinite weight,
+forcing the fit through that point and making the other points and the
+reported uncertainties meaningless.
 
 **Effective variance weighting** (Orear, 1982) is the correct approach when
 both X and Y have measurement errors and the model has significant slope.
@@ -588,7 +636,6 @@ vector to a single number the optimizer minimizes:
 | Objective | Formula | Properties |
 |-----------|---------|------------|
 | **Chi-square (default)** | `sum(r_i^2)` | Maximum likelihood for Gaussian errors. Sensitive to outliers. |
-| **Neg. entropy** | `-sum(r_i * log(|r_i|))` | Robust to outliers; encourages smooth residual distributions. |
 | **Cauchy log-pdf** | `sum(log(1 + r_i^2))` | Heavy-tailed loss. Strongly down-weights large residuals. |
 
 **`leastsq`, `emcee`, and `odr`** each have a single fixed objective
@@ -612,7 +659,10 @@ See:
 
 After a fit, the results panel shows three sections:
 
-1. **GOF summary line** -- key statistics displayed at the top
+1. **GOF summary line** -- key statistics displayed at the top: chi2,
+   chi2/nu, R2, AIC and BIC (or the minimized objective in their place,
+   see below), followed by a warning flag for any strongly correlated
+   parameter pair
 2. **Parameter table** -- one row per parameter with columns:
 
 | Column | Description |
@@ -620,30 +670,37 @@ After a fit, the results panel shows three sections:
 | **Name** | Parameter name (prefixed by component, e.g., `gaussian1_center`) |
 | **Value** | Best-fit value |
 | **Initial** | Value before the fit (for comparison) |
-| **StdErr** | Standard error from the covariance matrix |
+| **StdErr** | Standard error from the covariance matrix. Marked `(at min)` or `(at max)` when the parameter ended on a bound, where the number is not its uncertainty. For an emcee fit, half the 16th-84th percentile range. |
 | **Min** | Lower bound |
 | **Max** | Upper bound |
 | **Vary** | Whether the parameter was free (Yes/No) |
 | **Expr** | Constraint expression, if any |
 
-3. **Fit report** -- the full lmfit fit report text
+3. **Fit report** -- a `[[Convergence]]` block (how the minimizer ended,
+   function evaluations, parameters at a bound, strongly correlated pairs,
+   points omitted for a non-finite model), an `[[MCMC (emcee)]]` block
+   after an emcee fit, then the full lmfit fit report text
 
 ### Goodness-of-fit statistics
 
 | Statistic | Symbol | Description |
 |-----------|--------|-------------|
-| Chi-squared | chi2 | Sum of squared weighted residuals. |
-| Reduced chi-squared | chi2/nu | chi2 divided by degrees of freedom (N_data - N_params). Should be approximately 1 for a good fit with correct error bars. |
-| R-squared | R2 | Coefficient of determination. Measures the fraction of variance explained by the model. |
+| Chi-squared | chi2 | Sum of squared weighted residuals, `sum((w_i (y_i - f_i))^2)`. |
+| Reduced chi-squared | chi2/nu | chi2 divided by the degrees of freedom `nu = N_data - N_varied` (fixed and derived parameters do not count). Approximately 1 for a good fit with correct error bars. |
+| R-squared | R2 | Coefficient of determination from the raw (unweighted) residuals. Measures the fraction of variance explained by the model. |
 | AIC | AIC | Akaike Information Criterion: `N * ln(chi2/N) + 2k`. Lower is better. |
 | BIC | BIC | Bayesian Information Criterion: `N * ln(chi2/N) + k * ln(N)`. Penalizes complexity more heavily than AIC for large N. |
+| Objective | objective | Shown only when the fit minimized something other than chi-squared (a robust loss or a reduce function): the minimized value. AIC and BIC are then omitted, because they are functions of chi-squared, which was not minimized, and would rank an outlier-dominated chi-squared fit above the robust one. Chi-squared is still reported as a description of the residuals. |
 
-**Interpreting reduced chi-squared**:
+**Interpreting reduced chi-squared** (only when real Y-errors were used;
+without them chi2 is in arbitrary units and chi2/nu says nothing about the
+model, and the reported parameter errors are scaled by it):
 - chi2/nu >> 1: the model does not describe the data, or the error bars are
   underestimated.
 - chi2/nu ~ 1: good fit with correctly estimated errors.
-- chi2/nu << 1: the model is over-fitting, or the error bars are
-  overestimated.
+- chi2/nu << 1: the error bars are overestimated, or the data points are
+  correlated (fewer independent measurements than N). A small chi2/nu is
+  not evidence of over-fitting.
 
 See: Bevington, P.R. & Robinson, D.K. (2003), *Data Reduction and Error
 Analysis for the Physical Sciences*, 3rd edition, McGraw-Hill.
@@ -724,10 +781,23 @@ profile likelihood intervals trace the actual chi-squared surface.
 **How it works**: For each parameter, the algorithm fixes the parameter at
 a series of values, re-optimizes all other parameters, and records the
 chi-squared. The confidence limits are the parameter values where the
-chi-squared exceeds the minimum by an amount determined by the F-distribution.
+chi-squared exceeds the minimum by a threshold.
 
-By default, 1-sigma (68.3%), 2-sigma (95.4%), and 3-sigma (99.7%) intervals
-are computed.
+The threshold follows the **Scale covariance** setting of the fit, so the
+intervals agree with the StdErr column:
+
+- Scale covariance **on** (the default, for data without reliable error
+  bars): lmfit's F-test on the chi-squared ratio, which scales the
+  threshold by reduced chi-squared, just as the StdErr are scaled.
+- Scale covariance **off** (real 1-sigma errors): a plain delta
+  chi-squared threshold, `1` for 1-sigma, `4` for 2-sigma, `9` for
+  3-sigma, on one parameter at a time.
+
+The CI report states which was used. By default, 1-sigma (68.3%), 2-sigma
+(95.4%), and 3-sigma (99.7%) intervals are computed. The intervals are
+always chi-squared based, whatever objective the fit itself used, and are
+not available for an emcee result, whose posterior errors already carry
+the answer.
 
 **When to use**: When you suspect the chi-squared surface is asymmetric
 (e.g., near parameter bounds, or for parameters in non-linear positions
@@ -807,9 +877,16 @@ After fitting, the Diagnostic Plots dialog opens a four-panel figure plus
 residual statistics. These plots are standard tools in regression analysis
 for assessing whether the assumptions underlying the fit are satisfied.
 
+For a weighted fit every panel and statistic uses the **weighted
+residuals** `w_i (y_i - f(x_i))` (`(y_i - f_i)/sigma_i` in the default
+mode), and the axis labels and the statistics box say so. The question the
+diagnostics answer is whether the residuals look like the noise the fit
+assumed, and the assumed noise is `sigma_i`; raw residuals would show the
+heteroscedasticity the weights already account for as if it were misfit.
+
 ### Panel 1: Residuals vs. Fitted Values
 
-Plots `y_i - f(x_i)` against `f(x_i)`.
+Plots the (weighted) residuals against `f(x_i)`.
 
 - **Random scatter around zero**: The model is adequate.
 - **Systematic patterns**: The model is missing a systematic effect.
@@ -872,7 +949,13 @@ method.
 
 CurveLab uses `lmfit.conf_interval2d()` to compute the chi-squared surface
 on a 2D grid. For each grid point, the two selected parameters are fixed
-and all other parameters are re-optimized.
+and all other parameters are re-optimized. The plot shows the increase
+over the minimum, `delta chi2`, as a color map with a colorbar, and draws
+labeled contours at the **joint** 1-, 2-, and 3-sigma levels for two
+parameters varied together. These are wider than one-parameter intervals:
+with Scale covariance off they are `delta chi2 = 2.30, 6.18, 11.8`; with it
+on they are the F-test levels, scaled by reduced chi-squared, like the
+1D intervals of Section 9. The title states which.
 
 ### Usage
 
@@ -903,9 +986,12 @@ the profile shows how chi-squared varies as that parameter is moved away
 from its best-fit value while all other parameters are re-optimized.
 
 The plot shows:
-- The chi-squared profile (blue circles connected by lines)
+- The chi-squared profile (blue circles connected by lines): the actual
+  re-minimized chi-squared at each fixed value of the parameter
 - The minimum chi-squared (red dashed line)
-- The 1-sigma threshold at chi2_min + 1 (orange dotted line)
+- The 1-sigma threshold (orange dotted line), labeled with the method in
+  use: `chi2_min + 1` when Scale covariance is off, or the F-test level
+  (about `chi2_min + chi2/nu`) when it is on (see Section 9)
 
 The points where the profile crosses the threshold define the 1-sigma
 confidence interval for that parameter. This method is more reliable than
@@ -930,7 +1016,7 @@ chi-squared surface.
 
 | Type | Method |
 |------|--------|
-| **Residual bootstrap** | Resamples the residuals (with replacement), adds them to the fitted curve, and refits. Assumes the residual distribution is correct but the specific ordering does not matter. |
+| **Residual bootstrap** | Resamples the residuals (with replacement), adds them to the fitted curve, and refits. Assumes the residuals are independent and identically distributed once weighted, i.e. that the noise model is right; for a weighted fit the residuals are resampled as `r_i w_i` and scaled back by each target point's `1/w_j`, so a residual from a noisy point does not land on a quiet one at full size. |
 | **Case bootstrap** | Resamples (x, y, yerr) rows with replacement and refits. Makes fewer assumptions but may break structure in the data. |
 
 ### Usage
@@ -939,7 +1025,14 @@ chi-squared surface.
 2. Open the Bootstrap CI dialog.
 3. Set the number of bootstrap resamples (default: 200).
 4. Select the bootstrap type.
-5. Click **Run**.
+5. Set the random seed (default 0, so a rerun reproduces the same
+   intervals; clear the field for a fresh draw).
+6. Click **Run**.
+
+Each resample is refitted with the objective (robust loss or reduce
+function) and the Scale-covariance setting of the fit being bootstrapped.
+Resamples whose refit does not converge are dropped and counted in the
+status line.
 
 ### Output
 
@@ -981,19 +1074,46 @@ ensemble sampler of Goodman & Weare (2010).
 ### Workflow
 
 1. First run a standard fit (e.g., `least_squares`) to find a good starting
-   point.
-2. Select **emcee** as the method and click **Fit**.
-3. The fit runs in a background thread (can be aborted).
-4. After completion, the **MCMC Summary** dialog appears automatically,
-   showing for each parameter: Median, Mean, Standard deviation, 2.5% and
-   97.5% quantiles (95% credible interval).
+   point. emcee is the one method that does not reset to the start values:
+   it samples around wherever the parameters are, which after that fit is
+   the least-squares optimum.
+2. Optionally open **Analysis > MCMC Settings** to set the number of
+   walkers, steps, burn-in, thinning, and the random seed (defaults: 100
+   walkers, 1000 steps, burn-in 200, thin 1, seed 0). The settings are
+   saved with the workspace.
+3. Select **emcee** as the method and click **Fit**.
+4. The fit runs in a background thread (can be aborted).
+5. After completion, the **MCMC Summary** dialog appears automatically. It
+   starts with the sampling diagnostics, then lists for each parameter:
+   Median, Mean, Standard deviation, 2.5% and 97.5% quantiles (95% credible
+   interval).
 
-### Practical considerations
+### Reading the result
 
-- Ensure convergence by running enough steps.
-- A good starting point from a prior least-squares fit is essential.
-- If Y-errors are provided, the likelihood is Gaussian with known
-  variances. Without errors, a uniform likelihood is used.
+- In the parameter table, **Value** is the posterior median and **StdErr**
+  is half the 16th-84th percentile range: a credible interval, not a
+  covariance-based error. The fit report says so in its `[[MCMC (emcee)]]`
+  block.
+- **Acceptance fraction** (mean over walkers) should lie between 0.2 and
+  0.5. Lower means the walkers rarely move (proposals too wide, or a
+  parameter stuck at a bound); higher means they move too freely (the
+  chain explores slowly).
+- **Autocorrelation time** tau, per parameter, is the number of steps
+  between independent samples. The chain should be at least 50 tau long;
+  the summary reports `steps / longest tau` and says when it is too short
+  to trust. When tau cannot be estimated at all, the chain is far too
+  short.
+- **Burn-in** removes the walkers' approach to the posterior; use at least
+  2 tau. **Thinning** keeps every n-th step and mainly saves memory.
+- The likelihood is Gaussian. With the default `1/yerr` weighting the
+  residuals are already `(y - f)/sigma` and the errors are taken as known.
+  With **No weights** (or no Y-errors) emcee fits the noise scale as an
+  extra parameter, `__lnsigma`, the log of the data's sigma; it appears in
+  the table and the summary but is not a model parameter and is dropped
+  after the run.
+- Profile-likelihood confidence intervals are not available for an emcee
+  result (there is no chi-squared minimum to profile); the posterior
+  quantiles are the interval.
 
 See:
 - Foreman-Mackey, D. et al. (2013), *emcee: The MCMC Hammer*, PASP
@@ -1054,13 +1174,20 @@ Displays a table comparing all fit sessions on the active series:
 |--------|-------------|
 | Session | Session name |
 | Model | Composite model description |
-| N params | Number of free parameters |
+| N params | Number of varying parameters (the `k` in AIC/BIC; fixed and derived parameters do not count) |
 | chi2 | Chi-squared statistic |
 | chi2/nu | Reduced chi-squared |
 | AIC | Akaike Information Criterion |
 | BIC | Bayesian Information Criterion |
 
-The session with the lowest AIC is highlighted in green.
+The session with the lowest AIC is highlighted in green. Only sessions
+fitted to the same data (points and X range), with the same weight mode
+and the same objective as the first row take part: AIC and BIC differences
+are meaningful only between fits of the same weighted data. A session that
+differs is marked with a dagger and left out of the ranking, and a note
+under the table says so. A session fitted with a robust loss or reduce
+function shows no AIC/BIC at all (Section 7). The summary table after a
+Batch Fit lists different series, so it never highlights a best row.
 
 ### Information criteria
 
@@ -1108,7 +1235,9 @@ significantly improve the fit.
 ### Usage
 
 1. Fit at least two sessions on the same series (one with fewer parameters
-   than the other).
+   than the other), with the same fit range, weight mode, and a
+   chi-squared objective. The dialog refuses pairs that differ in any of
+   these, since the test compares chi-squares of the same weighted data.
 2. Open the F-Test dialog.
 3. Select the reduced model (fewer parameters) and the full model (more
    parameters).
@@ -1165,8 +1294,22 @@ cannot constrain all parameters, but jointly they can.
 5. Select which parameters to share across series (checkboxes).
    Checked parameters will have a single value across all series.
    Unchecked parameters get independent values per series (prefixed
-   `s0_`, `s1_`, etc.).
-6. Click **Fit**.
+   `s0_`, `s1_`, etc.). Derived parameters such as `fwhm` or `height` are
+   not free parameters: they are shared exactly when every parameter in
+   their expression is shared, whatever their checkbox says.
+6. Click **Fit**. The dialog closes and the fit runs in the background
+   like a slow single fit: the panel locks and the **Fit** button becomes
+   **Abort**. The Objective and Scale-covariance controls apply to a
+   global fit as they do to a single one.
+
+The selected series must be weighted on the same footing. With any
+Y-error based weight mode (the default `1/yerr` included), every series
+needs Y-errors, or none may have them; otherwise the fit is refused. A
+series without errors would enter with unit weights, its residuals in
+data units next to the others' `1/sigma` residuals, so one series would
+dominate silently and the combined chi-squared would add unlike
+quantities. Choose **No weights** to fit series with and without errors
+together.
 
 ### Example use cases
 
@@ -1421,10 +1564,19 @@ configurable noise. This is useful for:
 3. Configure:
    - **x_min, x_max, N points**: Range and number of points
    - **Gaussian noise**: Additive Gaussian noise with specified sigma
-   - **Poisson noise**: Poisson-distributed noise scaled by a factor
-     (appropriate for count data)
+   - **Poisson counting noise**: the model value is treated as an expected
+     count and `y` is drawn as `gain * Poisson(y / gain)`, so the variance
+     is `gain * y` (gain 1 is pure Poisson; a larger gain is coarser
+     counting). Real counts, not a Gaussian approximation: low values are
+     skewed and never negative, and model values below zero count as zero.
    - **X-jitter**: Gaussian perturbation of X values with specified sigma
+   - **Seed**: random seed (default 0, so Generate is reproducible; clear
+     the field for a fresh draw)
 4. Click **Generate**.
+
+The Y-error column holds the true 1-sigma of the applied noise (the
+Poisson part contributes `sqrt(gain * y_model)`), which is what a fit
+should be given.
 
 The simulated data appears as a new series (named "Simulated 1", etc.) and
 is automatically plotted. If the active series is an empty placeholder, the
@@ -1591,7 +1743,7 @@ fit sessions.
 | **Residuals** | Show residual subplot below the main plot |
 | **Conf. band** | Display confidence band around fit curves |
 | **n sigma** | Confidence band width: 1, 2, or 3 sigma |
-| **Wt. resid** | Show weighted residuals (divided by yerr) instead of raw residuals |
+| **Wt. resid** | Show weighted residuals, multiplied by the weights the fit used (divided by yerr in the default mode), instead of raw residuals |
 | **Exclude pts** | Enable click-to-exclude mode for data points |
 
 ### Title and axis labels
@@ -1672,8 +1824,11 @@ complete application state.
 | Model components and expressions | Yes |
 | Parameter values, bounds, expressions, hints | Yes |
 | Fit results (curves, params, GOF, report) | Yes |
+| Fit options of each result (method, weights, objective, Scale covariance) | Yes |
+| Fit weights, convergence status, at-bound and correlation flags | Yes |
 | Component curves | Yes |
-| Init param values | Yes |
+| Init param values and the start values for the next fit | Yes |
+| emcee sampler settings and sampling diagnostics | Yes |
 | Plot control settings | Yes |
 | Font settings | Yes |
 | Brute-force candidates | Yes |
@@ -1685,12 +1840,16 @@ complete application state.
 ### Immediate analysis after loading
 
 When you load a workspace, CurveLab automatically reconstructs the lmfit
-`ModelResult` object for each completed fit session. This means analysis
+`ModelResult` object for each completed fit session by refitting from the
+saved best-fit values with the saved method, weight mode, objective, and
+Scale-covariance setting, so it lands on the same optimum and the analysis
 tools (Confidence Intervals, Correlation Matrix, Diagnostic Plots, 2D
-Contours, Profile Likelihood, Uncertainty Propagation, etc.) are available
-immediately after loading -- you do not need to re-run the fit. The
-DataPanel series list is also fully populated so all series appear in the
-listbox.
+Contours, Profile Likelihood, Uncertainty Propagation, etc.) describe the
+fit shown in the table -- you do not need to re-run the fit. Fits made
+with `emcee`, the global optimizers, or ODR cannot be re-run in place; for
+those the reconstruction is a least-squares fit started from the saved
+values, and the parameter table keeps the saved result. The DataPanel
+series list is also fully populated so all series appear in the listbox.
 
 ### Portability
 
@@ -1745,8 +1904,11 @@ it lags behind in these respects:
 - The old **Reduce** dropdown is still present instead of the method-aware
   **Objective** control and its `f_scale` entry, so scipy's robust loss
   functions cannot be selected (see [Section 6](#6-weighting-and-objective-functions)).
-- No **Use as Start** button, and no warning when a fit reports no
-  uncertainties.
+- No **Use as Start** button, no post-fit warning dialog (convergence,
+  parameters at a bound, missing uncertainties), and no MCMC Settings; an
+  emcee fit uses the default sampler settings.
+- The fit setup is not validated before running (bounds for the global
+  methods, x-errors for ODR, matching y-errors in a global fit).
 - Of the analysis tools only **Model Comparison** is available; confidence
   intervals, contours, bootstrap, profile likelihood, F-test, global fit,
   uncertainty propagation and the data tools are desktop-only.

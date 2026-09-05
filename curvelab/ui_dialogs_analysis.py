@@ -4,7 +4,7 @@ import tkinter as tk
 from tkinter import ttk
 import tkinter.font as tkfont
 
-from .analysis_tools import compute_diagnostic_stats
+from .analysis_tools import autocorrelation, compute_diagnostic_stats, standardize_residuals
 from .ui_common import (
     BaseDialog, configure_row_tags, row_tag, set_readonly_text,
 )
@@ -92,28 +92,41 @@ class FontDialog(BaseDialog):
 
 
 def comparison_row(label: str, model_desc: str, result=None) -> dict:
-    """One ModelComparisonDialog row. result=None marks a failed fit."""
+    """One ModelComparisonDialog row. result=None marks a failed fit.
+
+    n_params counts the varying parameters, the k in AIC/BIC; fixed and
+    derived parameters are not free. key is the result's comparison_key,
+    so the dialog can tell which rows were fitted to the same data with
+    the same weights and objective.
+    """
     gof = result.gof if result is not None else {}
+    n_vary = (sum(1 for p in result.params.values() if p.get("vary", True) and not p.get("expr"))
+              if result is not None else 0)
     return {
         "session": label,
         "model": model_desc,
-        "n_params": len(result.params) if result is not None else 0,
+        "n_params": n_vary,
         "chisqr": gof.get("chi-squared"),
         "redchi": gof.get("reduced chi-squared"),
         "aic": gof.get("AIC"),
         "bic": gof.get("BIC"),
+        "key": result.comparison_key() if result is not None else None,
     }
 
 
 class ModelComparisonDialog(BaseDialog):
     """Side-by-side comparison of fit sessions: AIC, BIC, reduced chi-squared."""
 
-    def __init__(self, parent, rows: list[dict]):
-        """rows: list of dicts with keys session, model, n_params, chisqr, redchi, aic, bic."""
-        super().__init__(parent, "Model Comparison", size="700x300")
+    def __init__(self, parent, rows: list[dict], highlight_best: bool = True):
+        """rows: dicts from comparison_row. highlight_best marks the lowest
+        AIC among rows that are comparable with the first row (same data,
+        weights, objective); pass False when the rows are different series,
+        whose AICs cannot be compared at all."""
+        super().__init__(parent, "Model Comparison", size="700x340")
 
         columns = ("model", "n_params", "chisqr", "redchi", "aic", "bic")
-        tree = ttk.Treeview(self, columns=columns, show=("tree", "headings"), height=10)
+        body = ttk.Frame(self)
+        tree = ttk.Treeview(body, columns=columns, show=("tree", "headings"), height=10)
         tree.column("#0", width=120, stretch=False)
         tree.heading("#0", text="Session")
         tree.heading("model", text="Model")
@@ -131,15 +144,22 @@ class ModelComparisonDialog(BaseDialog):
 
         configure_row_tags(tree)
 
-        # Find best AIC for highlighting
-        aic_vals = [r["aic"] for r in rows if r["aic"] is not None]
+        # Best AIC only among rows comparable with the first (same data,
+        # weights and objective); anything else is marked, not ranked.
+        ref_key = next((r.get("key") for r in rows if r.get("key") is not None), None)
+        comparable = [r.get("key") is not None and r.get("key") == ref_key for r in rows]
+        aic_vals = [r["aic"] for r, ok in zip(rows, comparable)
+                    if ok and r["aic"] is not None] if highlight_best else []
         best_aic = min(aic_vals) if aic_vals else None
+        n_incomparable = sum(1 for ok, r in zip(comparable, rows)
+                             if not ok and r.get("key") is not None)
 
-        for i, r in enumerate(rows):
-            best = best_aic is not None and r["aic"] == best_aic
+        for i, (r, ok) in enumerate(zip(rows, comparable)):
+            best = best_aic is not None and ok and r["aic"] == best_aic
             tags = ["best" if best else row_tag(i)]
+            label = r["session"] if ok or r.get("key") is None else f"{r['session']} \u2020"
             tree.insert(
-                "", tk.END, text=r["session"],
+                "", tk.END, text=label,
                 values=(
                     r["model"],
                     r["n_params"],
@@ -151,11 +171,29 @@ class ModelComparisonDialog(BaseDialog):
                 tags=tuple(tags),
             )
 
-        scroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=tree.yview)
+        note = ""
+        if not highlight_best:
+            note = ("AIC/BIC are not compared across rows: each row is a "
+                    "different series, so the values are not commensurable.")
+        elif n_incomparable:
+            note = ("\u2020 fitted to different data, weights or objective than "
+                    "the first row; its AIC/BIC cannot be compared with the "
+                    "others and it is excluded from the 'best' highlight.")
+        if any(r["aic"] is None and r.get("key") is not None for r in rows):
+            note = (note + "\n" if note else "") + (
+                "A row without AIC/BIC was fitted with a robust loss or reduce "
+                "function; its chi-square was not the minimized quantity.")
+        self.note = note
+
+        scroll = ttk.Scrollbar(body, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scroll.set)
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
         scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+        body.pack(fill=tk.BOTH, expand=True)
 
+        if note:
+            ttk.Label(self, text=note, wraplength=660, justify=tk.LEFT).pack(
+                fill=tk.X, padx=10)
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
 
 
@@ -208,6 +246,24 @@ class FTestDialog(BaseDialog):
         p1, p2 = r["n_params"], f["n_params"]
         chi1, chi2 = r["chisqr"], f["chisqr"]
         n = r["n_data"]
+
+        # The F-test compares chi-squares of nested models on the same
+        # data with the same weights; anything else is not a test.
+        if r.get("key") is not None and r.get("key") != f.get("key"):
+            self._show_result(
+                "These sessions were fitted to different data (range or "
+                "points), with different weights, or with a different "
+                "objective. An F-test needs both models fitted to the same "
+                "weighted data."
+            )
+            return
+        if not (r.get("chi_square_objective", True) and f.get("chi_square_objective", True)):
+            self._show_result(
+                "One of the sessions used a robust loss or reduce function, "
+                "so its chi-square was not the minimized quantity. The F-test "
+                "applies to chi-square fits only."
+            )
+            return
 
         # Ensure reduced model has fewer params
         if p1 >= p2:
@@ -397,17 +453,87 @@ class BruteCandidatesDialog(BaseDialog):
             self.destroy()
 
 
-class EmceeSummaryDialog(BaseDialog):
-    """Display emcee MCMC summary statistics."""
+class EmceeSettingsDialog(BaseDialog):
+    """Sampler settings for the emcee method: walkers, steps, burn-in,
+    thinning, and the random seed. Applied to the next emcee fit."""
 
-    def __init__(self, parent, flatchain, params_info: dict):
-        super().__init__(parent, "MCMC (emcee) Summary", size="600x400")
+    FIELDS = (
+        ("nwalkers", "Walkers", "Ensemble size; at least twice the number of varying parameters."),
+        ("steps", "Steps", "Steps per walker. Aim for 50 times the autocorrelation time."),
+        ("burn", "Burn-in", "Steps discarded from the start of every walker."),
+        ("thin", "Thin", "Keep every n-th step."),
+        ("seed", "Seed", "Random seed for a reproducible run; empty for a fresh draw."),
+    )
+
+    def __init__(self, parent, settings: dict, on_apply=None):
+        super().__init__(parent, "MCMC Settings", resizable=(False, False))
+        self._on_apply = on_apply
+        self._vars: dict[str, tk.StringVar] = {}
+        body = ttk.Frame(self, padding=10)
+        body.pack(fill=tk.BOTH, expand=True)
+        for row, (key, label, hint) in enumerate(self.FIELDS):
+            ttk.Label(body, text=f"{label}:").grid(row=row, column=0, sticky=tk.W, pady=2)
+            value = settings.get(key)
+            var = tk.StringVar(value="" if value is None else str(value))
+            self._vars[key] = var
+            ttk.Entry(body, textvariable=var, width=10).grid(row=row, column=1, sticky=tk.W, padx=5)
+            ttk.Label(body, text=hint, foreground="gray").grid(row=row, column=2, sticky=tk.W)
+        self._status_var = tk.StringVar(value="")
+        ttk.Label(body, textvariable=self._status_var, foreground="red").grid(
+            row=len(self.FIELDS), column=0, columnspan=3, sticky=tk.W, pady=(6, 0))
+        btns = ttk.Frame(self, padding=(10, 0, 10, 10))
+        btns.pack(fill=tk.X)
+        ttk.Button(btns, text="Apply", command=self._apply).pack(side=tk.RIGHT, padx=(5, 0))
+        ttk.Button(btns, text="Cancel", command=self.destroy).pack(side=tk.RIGHT)
+
+    def parse(self) -> dict:
+        """The settings as typed, validated. Raises ValueError with a
+        message naming the offending field."""
+        out = {}
+        for key, label, _ in self.FIELDS:
+            text = self._vars[key].get().strip()
+            if key == "seed" and not text:
+                out[key] = None
+                continue
+            try:
+                value = int(text)
+            except ValueError:
+                raise ValueError(f"{label} must be a whole number.")
+            if key != "seed" and value < (0 if key == "burn" else 1):
+                raise ValueError(f"{label} must be positive.")
+            out[key] = value
+        if out["burn"] >= out["steps"]:
+            raise ValueError("Burn-in must be smaller than the number of steps.")
+        return out
+
+    def _apply(self):
+        try:
+            settings = self.parse()
+        except ValueError as e:
+            self._status_var.set(str(e))
+            return
+        if self._on_apply:
+            self._on_apply(settings)
+        self.destroy()
+
+
+class EmceeSummaryDialog(BaseDialog):
+    """Display emcee sampling diagnostics and posterior summary statistics."""
+
+    def __init__(self, parent, flatchain, params_info: dict, mcmc: dict | None = None):
+        super().__init__(parent, "MCMC (emcee) Summary", size="700x480")
 
         try:
             import pandas as pd
+            from .fit_manager import emcee_lines
+            lines = []
+            if mcmc:
+                lines.extend(emcee_lines(mcmc))
+                lines.append("")
+            lines.append("Posterior summary (after burn-in and thinning):")
             if isinstance(flatchain, pd.DataFrame):
-                lines = [f"{'Parameter':<20s} {'Median':>12s} {'Mean':>12s} "
-                         f"{'Std':>12s} {'2.5%':>12s} {'97.5%':>12s}"]
+                lines.append(f"{'Parameter':<20s} {'Median':>12s} {'Mean':>12s} "
+                             f"{'Std':>12s} {'2.5%':>12s} {'97.5%':>12s}")
                 lines.append("-" * 80)
                 for col in flatchain.columns:
                     data = flatchain[col]
@@ -418,7 +544,7 @@ class EmceeSummaryDialog(BaseDialog):
                     )
                 content = "\n".join(lines)
             else:
-                content = "Flatchain data not available as DataFrame."
+                content = "\n".join(lines + ["Flatchain data not available as DataFrame."])
         except Exception as e:
             content = f"Error processing emcee results: {e}"
 
@@ -437,14 +563,15 @@ class DiagnosticPlotsDialog(BaseDialog):
         import scipy.stats as stats
 
         r = fit_result
-        residuals = r.y_data - r.y_fit_data
+        # The diagnostics ask whether the residuals look like noise. For a
+        # weighted fit the noise model is sigma_i, so the question is about
+        # r_i / sigma_i: raw residuals would show heteroscedasticity that the
+        # weights already account for as if it were misfit.
+        weighted = r.is_weighted()
+        residuals = r.weighted_residuals() if weighted else r.residuals()
+        resid_label = "Weighted residuals (r\u00b7w)" if weighted else "Residuals"
         fitted = r.y_fit_data
-
-        # Standardize residuals
-        std_resid = residuals - residuals.mean()
-        s = residuals.std()
-        if s > 0:
-            std_resid = std_resid / s
+        std_resid = standardize_residuals(residuals)
 
         fig = Figure(figsize=(8, 6))
 
@@ -453,7 +580,7 @@ class DiagnosticPlotsDialog(BaseDialog):
         ax1.scatter(fitted, residuals, s=12, alpha=0.7)
         ax1.axhline(0, color="red", linestyle="--", linewidth=0.8)
         ax1.set_xlabel("Fitted values")
-        ax1.set_ylabel("Residuals")
+        ax1.set_ylabel(resid_label)
         ax1.set_title("Residuals vs Fitted")
 
         # 2. Normal Q-Q
@@ -471,17 +598,8 @@ class DiagnosticPlotsDialog(BaseDialog):
 
         # 4. Autocorrelation
         ax4 = fig.add_subplot(2, 2, 4)
-        n = len(residuals)
-        max_lag = min(20, n - 1)
-        mean_r = residuals.mean()
-        var_r = np.sum((residuals - mean_r) ** 2)
-        acf = []
-        for lag in range(max_lag + 1):
-            c = np.sum((residuals[:n - lag] - mean_r) * (residuals[lag:] - mean_r))
-            acf.append(c / var_r if var_r > 0 else 0.0)
-        lags = np.arange(max_lag + 1)
+        lags, acf, ci = autocorrelation(residuals)
         ax4.bar(lags, acf, width=0.4, color="steelblue")
-        ci = 1.96 / np.sqrt(n)
         ax4.axhline(ci, color="red", linestyle="--", linewidth=0.8)
         ax4.axhline(-ci, color="red", linestyle="--", linewidth=0.8)
         ax4.axhline(0, color="black", linewidth=0.5)
@@ -498,7 +616,8 @@ class DiagnosticPlotsDialog(BaseDialog):
         # --- Residual statistics summary ---
         stats_lines = compute_diagnostic_stats(residuals)
         if stats_lines:
-            stats_frame = ttk.LabelFrame(self, text="Residual Statistics", padding=5)
+            title = "Residual Statistics" + (" (weighted residuals)" if weighted else "")
+            stats_frame = ttk.LabelFrame(self, text=title, padding=5)
             stats_frame.pack(fill=tk.X, padx=5, pady=(0, 5))
             for line in stats_lines:
                 ttk.Label(stats_frame, text=line, wraplength=750,
@@ -508,13 +627,16 @@ class DiagnosticPlotsDialog(BaseDialog):
 
 
 class ConfidenceContourDialog(BaseDialog):
-    """Interactive 2D confidence contour plot using lmfit.conf_interval2d."""
+    """Interactive 2D confidence-region plot: the delta-chi2 surface over two
+    parameters (FitManager.compute_ci_contour) with labeled joint 1/2/3-sigma
+    contours, so the regions can be read off the plot."""
 
-    def __init__(self, parent, last_result, vary_params: list[str]):
+    def __init__(self, parent, fit_manager, vary_params: list[str]):
         super().__init__(parent, "2D Confidence Contours", size="700x600")
 
-        self._last_result = last_result
+        self._fm = fit_manager
         self._vary_params = vary_params
+        self._colorbar = None
 
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         from matplotlib.figure import Figure
@@ -568,16 +690,28 @@ class ConfidenceContourDialog(BaseDialog):
         self.update_idletasks()
 
         try:
-            from lmfit import conf_interval2d
-            x_arr, y_arr, grid = conf_interval2d(
-                self._last_result, self._last_result,
-                x_name, y_name, nx=nx, ny=ny,
-            )
+            x_arr, y_arr, dchi2, levels = self._fm.compute_ci_contour(
+                x_name, y_name, nx=nx, ny=ny)
             self._ax.clear()
-            self._ax.contourf(x_arr, y_arr, grid, cmap="coolwarm")
+            if self._colorbar is not None:
+                self._colorbar.remove()
+                self._colorbar = None
+            filled = self._ax.contourf(x_arr, y_arr, dchi2, levels=20, cmap="coolwarm")
+            self._colorbar = self._fig.colorbar(filled, ax=self._ax)
+            self._colorbar.set_label("\u0394\u03c7\u00b2")
+            # Joint sigma regions for the two parameters together.
+            values = list(levels.values())
+            lines = self._ax.contour(x_arr, y_arr, dchi2, levels=values,
+                                     colors="black", linewidths=0.8)
+            self._ax.clabel(lines, fmt={v: k for k, v in levels.items()}, fontsize=8)
             self._ax.set_xlabel(x_name)
             self._ax.set_ylabel(y_name)
-            self._ax.set_title(f"Confidence: {x_name} vs {y_name}")
+            scaled = self._fm._ci_scaled()
+            self._ax.set_title(
+                f"Joint confidence regions: {x_name} vs {y_name}\n"
+                + ("\u0394\u03c7\u00b2 thresholds from the F-test, scaled by \u03c7\u00b2/\u03bd"
+                   if scaled else "\u0394\u03c7\u00b2 = 2.30 / 6.18 / 11.8 for 1/2/3\u03c3 (2 parameters)"),
+                fontsize=9)
             self._fig.tight_layout()
             self._canvas.draw()
             self._status_var.set("Done.")
@@ -606,6 +740,12 @@ class BootstrapDialog(BaseDialog):
                      values=["residual", "case"], state="readonly",
                      width=10).pack(side=tk.LEFT, padx=5)
 
+        # A fixed default seed makes a rerun reproduce the same intervals;
+        # clear the field for a fresh random draw.
+        ttk.Label(ctrl, text="Seed:").pack(side=tk.LEFT, padx=(10, 0))
+        self._seed_var = tk.StringVar(value="0")
+        ttk.Entry(ctrl, textvariable=self._seed_var, width=6).pack(side=tk.LEFT, padx=5)
+
         self._run_btn = ttk.Button(ctrl, text="Run", command=self._run)
         self._run_btn.pack(side=tk.LEFT, padx=10)
         self._status_var = tk.StringVar(value="")
@@ -626,11 +766,17 @@ class BootstrapDialog(BaseDialog):
             self._status_var.set("Invalid N.")
             return
         boot_type = self._type_var.get()
+        seed_text = self._seed_var.get().strip()
+        try:
+            seed = int(seed_text) if seed_text else None
+        except ValueError:
+            self._status_var.set("Invalid seed.")
+            return
         self._run_btn.config(state=tk.DISABLED)
         self._status_var.set("Running...")
         self.update_idletasks()
         try:
-            distributions, n_failed = self._on_run(n_boot, boot_type)
+            distributions, n_failed = self._on_run(n_boot, boot_type, seed)
             self._show_results(distributions)
             if n_failed:
                 self._status_var.set(
@@ -703,7 +849,10 @@ class ProfileLikelihoodDialog(BaseDialog):
     """Plot chi-squared profiles for each parameter."""
 
     def __init__(self, parent, profiles: dict[str, list[tuple[float, float]]],
-                 best_chi2: float):
+                 best_chi2: float, threshold: float = 1.0,
+                 threshold_label: str = "\u03c7\u00b2_min + 1"):
+        """threshold is the delta-chi2 above the minimum marking the 1-sigma
+        interval under the CI method in use (see FitManager.ci_threshold)."""
         super().__init__(parent, "Profile Likelihood", size="900x600")
 
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -728,9 +877,9 @@ class ProfileLikelihoodDialog(BaseDialog):
             ax.plot(pvals, chi2s, "o-", markersize=3, color="steelblue")
             ax.axhline(best_chi2, color="red", linestyle="--", linewidth=0.8,
                        label=f"\u03c7\u00b2_min = {best_chi2:.4g}")
-            # 1-sigma threshold
-            ax.axhline(best_chi2 + 1, color="orange", linestyle=":",
-                       linewidth=0.8, label="\u03c7\u00b2_min + 1")
+            # 1-sigma threshold under the CI method actually used
+            ax.axhline(best_chi2 + threshold, color="orange", linestyle=":",
+                       linewidth=0.8, label=threshold_label)
             ax.set_xlabel(pname)
             ax.set_ylabel("\u03c7\u00b2")
             ax.set_title(pname)

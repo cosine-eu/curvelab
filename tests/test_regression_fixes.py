@@ -137,6 +137,40 @@ class EffectiveVarianceGuardTests(unittest.TestCase):
         self.assertTrue(math.isfinite(result.gof["reduced chi-squared"]))
 
 
+class EffectiveVarianceIterationTests(unittest.TestCase):
+    """The effective-variance weights depend on df/dx and were evaluated once
+    at the starting parameters, so the fitted slope and its stderr depended
+    on the initial guess. They are now iterated to self-consistency."""
+
+    def _fit_from(self, start_slope):
+        from curvelab.fit_manager import FitManager, WEIGHT_EFFECTIVE_VARIANCE
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 30)
+        xerr = np.full(30, 0.5)
+        yerr = np.full(30, 0.05)
+        y = 3.0 * (x + rng.normal(0, 0.5, 30)) + 1.0 + rng.normal(0, 0.05, 30)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.set_param_hint("slope", value=start_slope)
+        fm.set_param_hint("intercept", value=1.0)
+        return fm.run_fit(x, y, yerr=yerr, xerr=xerr, weight_mode=WEIGHT_EFFECTIVE_VARIANCE)
+
+    def test_result_does_not_depend_on_the_start(self):
+        a = self._fit_from(0.0)
+        b = self._fit_from(10.0)
+        self.assertAlmostEqual(a.params["slope"]["value"], b.params["slope"]["value"], places=5)
+        self.assertAlmostEqual(a.params["slope"]["stderr"], b.params["slope"]["stderr"], places=5)
+        self.assertAlmostEqual(a.gof["reduced chi-squared"], b.gof["reduced chi-squared"], places=5)
+
+    def test_weights_are_consistent_with_the_fit(self):
+        # With sigma_x = 0.5 on slope 3 the effective sigma is ~1.5, so the
+        # weighted chi2/nu must be of order 1, not the ~900 that sigma_y alone
+        # (the weights a start at slope 0 would give) implies.
+        r = self._fit_from(0.0)
+        self.assertLess(r.gof["reduced chi-squared"], 3.0)
+        self.assertGreater(r.gof["reduced chi-squared"], 0.2)
+
+
 class AutoGuessMultiPeakTests(unittest.TestCase):
     """e57e455: every component guessed against raw y, collapsing onto one peak."""
 
@@ -160,6 +194,30 @@ class AutoGuessMultiPeakTests(unittest.TestCase):
         self.assertEqual(len(set(centers)), 3, f"centers collapsed: {centers}")
 
 
+class AutoGuessDerivedParamTests(unittest.TestCase):
+    """Auto-guess used Parameter.set(value=...) on every guessed parameter,
+    which clears the expression on derived ones (fwhm, height): they froze
+    at the guess and no longer tracked the fit."""
+
+    def test_fwhm_keeps_its_expression_and_tracks_sigma(self):
+        from curvelab.fit_manager import FitManager
+
+        sigma_true = 2.5
+        x = np.linspace(-10, 10, 200)
+        y = 3.0 * np.exp(-x ** 2 / (2 * sigma_true ** 2))
+
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        self.assertEqual(fm.params["fwhm"].expr, "2.3548200*sigma")
+
+        fm.run_fit(x, y)
+        sigma = fm.params["sigma"].value
+        self.assertAlmostEqual(sigma, sigma_true, places=3)
+        self.assertAlmostEqual(fm.params["fwhm"].value, 2.3548200 * sigma, places=6)
+        self.assertAlmostEqual(fm.params["height"].value, 3.0, places=3)
+
+
 class CloneComponentsHintsTests(unittest.TestCase):
     """1e2bdb8: clone_components_to dropped fixed/bounded parameters."""
 
@@ -180,6 +238,43 @@ class CloneComponentsHintsTests(unittest.TestCase):
         self.assertFalse(target.params["slope"].vary)
         self.assertEqual(target.params["intercept"].min, 0.0)
         self.assertEqual(target.params["intercept"].max, 5.0)
+
+
+class StartValuePersistenceTests(unittest.TestCase):
+    """The auto-guessed start values were neither serialized nor cloned, so
+    after a workspace load (or a batch-fit clone) the first fit began from
+    the model defaults and captured its own output as the 'guess'."""
+
+    def _guessed_source(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(-5, 5, 100)
+        y = 4.0 * np.exp(-(x - 1.0) ** 2 / (2 * 0.8 ** 2))
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        return fm, x, y
+
+    def test_start_values_survive_serialize_round_trip(self):
+        from curvelab.fit_manager import FitManager
+        source, x, y = self._guessed_source()
+        restored = FitManager.deserialize(source.serialize())
+        self.assertEqual(restored._start_values, source._start_values)
+        r = restored.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], source._start_values["center"])
+
+    def test_old_payload_without_start_values_still_loads(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager.deserialize({"components": [
+            {"name": "Linear", "prefix": "", "operator": "+", "expression": ""}]})
+        self.assertIsNotNone(fm.model)
+
+    def test_start_values_follow_clone(self):
+        from curvelab.fit_manager import FitManager
+        source, x, y = self._guessed_source()
+        target = FitManager()
+        source.clone_components_to(target)
+        self.assertEqual(target._start_values["center"], source._start_values["center"])
+        self.assertEqual(target._start_values["sigma"], source._start_values["sigma"])
 
 
 class CloneComponentsSelfTests(unittest.TestCase):
@@ -224,6 +319,51 @@ class ParamHintPersistenceTests(unittest.TestCase):
         # Adding a third component rebuilds the model; the hint must persist.
         fm.add_component("Gaussian")
         self.assertEqual(fm.params["linear1_slope"].min, -5.0)
+
+
+class AddComponentHintsTests(unittest.TestCase):
+    """Adding a second component gives the first one a prefix. Its hints and
+    start values were keyed by the bare names and stopped applying, so a
+    user's fixed value or bound silently reverted to the model default."""
+
+    def test_first_component_hints_follow_new_prefix(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.set_param_hint("center", value=4.0, vary=False)
+        fm.set_param_hint("sigma", min=0.5, max=3.0)
+
+        fm.add_component("Linear")   # Gaussian becomes gaussian1_
+
+        self.assertEqual(fm.components[0].prefix, "gaussian1_")
+        self.assertNotIn("center", fm._param_hints)
+        self.assertEqual(fm.params["gaussian1_center"].value, 4.0)
+        self.assertFalse(fm.params["gaussian1_center"].vary)
+        self.assertEqual(fm.params["gaussian1_sigma"].min, 0.5)
+        self.assertEqual(fm.params["gaussian1_sigma"].max, 3.0)
+
+    def test_start_values_follow_prefix_and_do_not_resurrect(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 50)
+        y = 2 * x + 1
+
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.set_start_value("slope", 7.0)
+
+        fm.add_component("Constant")   # Linear becomes linear1_
+        self.assertNotIn("slope", fm._start_values)
+        self.assertEqual(fm._start_values["linear1_slope"], 7.0)
+
+        # Remove the Constant again: the start value must be moved back, and
+        # a stale bare-name entry must not be resurrected over a fresh edit.
+        fm.remove_component(1)
+        self.assertNotIn("linear1_slope", fm._start_values)
+        self.assertEqual(fm._start_values["slope"], 7.0)
+        fm.set_param("slope", value=1.5)
+        fm.set_start_value("slope", 1.5)
+        result = fm.run_fit(x, y)
+        self.assertAlmostEqual(result.init_params["slope"], 1.5)
 
 
 class RemoveComponentHintsTests(unittest.TestCase):
@@ -304,6 +444,23 @@ class RefitFromGuessTests(unittest.TestCase):
         r = fm.run_fit(x, y, weight_mode="No weights")
         self.assertAlmostEqual(r.init_params["center"], 7.5)
 
+    def test_set_param_value_becomes_the_start(self):
+        # set_param(value=...) is how the notebook and the Find Peaks dialog
+        # edit values; they did not call set_start_value, so run_fit's reset
+        # threw the edit away. The setter now records the start itself.
+        fm, x, y = self._fit_setup()
+        fm.run_fit(x, y, weight_mode="No weights")
+        fm.set_param("center", value=6.5)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], 6.5)
+
+    def test_set_param_hint_value_becomes_the_start(self):
+        fm, x, y = self._fit_setup()
+        fm.run_fit(x, y, weight_mode="No weights")
+        fm.set_param_hint("center", value=6.0)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertAlmostEqual(r.init_params["center"], 6.0)
+
     def test_fixed_parameter_is_not_reset(self):
         # A pinned (vary=False) value must survive the reset-to-start, not be
         # clobbered by a stale guess.
@@ -372,6 +529,138 @@ class FitErrorbarsFlagTests(unittest.TestCase):
         fm.add_component("Constant")
         fm.auto_guess(x, y)
         self.assertFalse(fm.run_fit(x, y, weight_mode="No weights").errorbars)
+
+
+class FitOutcomeTests(unittest.TestCase):
+    """How a fit ended used to reach the user only as a generic 'no
+    uncertainties' warning. The result now carries success/message/nfev and
+    marks parameters that sit on a bound, and the post-fit notes name the
+    actual cause."""
+
+    def _peak_data(self):
+        rng = np.random.default_rng(0)
+        x = np.linspace(-10, 10, 200)
+        y = 3.0 * np.exp(-(x - 1.0) ** 2 / (2 * 2.0 ** 2)) + rng.normal(0, 0.05, 200)
+        return x, y
+
+    def test_max_nfev_abort_is_reported_as_not_converged(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x, y = self._peak_data()
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.set_param_hint("center", value=-5.0)
+        fm.set_param_hint("sigma", value=0.5)
+        fm.set_param_hint("amplitude", value=1.0)
+        r = fm.run_fit(x, y, weight_mode="No weights", max_nfev=4)
+        self.assertFalse(r.success)
+        self.assertEqual(r.nfev, 4)
+        self.assertIn("aborted", r.message.lower())
+        self.assertTrue(r.report.startswith("[[Convergence]]\n    NOT converged"))
+        notes = fit_outcome_notes(r, "least_squares")
+        self.assertTrue(any(n.startswith("The fit did not converge after 4") for n in notes))
+        # The abort is not blamed on identifiability.
+        self.assertFalse(any("identifiable" in n for n in notes))
+
+    def test_converged_fit_reports_success(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x, y = self._peak_data()
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertTrue(r.success)
+        self.assertGreater(r.nfev, 0)
+        self.assertTrue(r.report.startswith("[[Convergence]]\n    converged"))
+        self.assertEqual(fit_outcome_notes(r, "least_squares"), [])
+
+    def test_parameter_at_bound_is_flagged(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x = np.linspace(0, 10, 40)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.set_param_hint("slope", value=1.0, min=0.0, max=1.5)   # truth is 2
+        fm.set_param_hint("intercept", value=1.0)
+        r = fm.run_fit(x, 2.0 * x + 1.0, weight_mode="No weights")
+        self.assertEqual(r.params["slope"]["at_bound"], "max")
+        self.assertIsNone(r.params["intercept"]["at_bound"])
+        self.assertIn("at a bound, stderr not meaningful: slope (at max)", r.report)
+        notes = fit_outcome_notes(r, "least_squares")
+        self.assertEqual(len(notes), 1)
+        self.assertIn("slope (at max)", notes[0])
+
+    def test_strong_correlation_is_flagged(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(10, 20, 30)                # far from x = 0: rho ~ -0.98
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 30)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertEqual(len(r.strong_correlations), 1)
+        a, b, rho = r.strong_correlations[0]
+        self.assertEqual({a, b}, {"slope", "intercept"})
+        self.assertLess(rho, -0.9)
+        self.assertIn("strongly correlated (|rho| > 0.9): intercept/slope", r.report)
+
+        # Centered x: slope and intercept are independent, nothing flagged.
+        xc = np.linspace(-5, 5, 30)
+        fm2 = FitManager()
+        fm2.add_component("Linear")
+        fm2.auto_guess(xc, 2 * xc + 1)
+        r2 = fm2.run_fit(xc, 2.0 * xc + 1.0 + rng.normal(0, 0.1, 30), weight_mode="No weights")
+        self.assertEqual(r2.strong_correlations, [])
+        self.assertNotIn("strongly correlated", r2.report)
+
+    def test_points_omitted_for_non_finite_model_are_reported(self):
+        # nan_policy="omit" drops points where the model is NaN; the user
+        # was never told the statistics refer to fewer points.
+        import warnings
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x = np.linspace(-2, 10, 50)                     # 9 points at x <= 0
+        y = np.log(np.maximum(x, 0.01)) + 1.0
+        fm = FitManager()
+        fm.add_component("Expression", expression="a*log(x)+b")
+        fm.set_param("a", value=1.0)
+        fm.set_param("b", value=1.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertEqual(r.n_omitted, 9)
+        self.assertIn("9 point(s) where the model is not finite were omitted", r.message)
+        self.assertTrue(any(n.startswith("9 data point(s) were left out") for n in fit_outcome_notes(r, "least_squares")))
+
+    def test_stochastic_global_methods_are_seeded_by_default(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 30)
+        y = 2.0 * x + 1.0
+        for method in ("differential_evolution", "dual_annealing"):
+            fm = FitManager()
+            fm.add_component("Linear")
+            fm.set_param_hint("slope", value=1.0, min=0.0, max=5.0)
+            fm.set_param_hint("intercept", value=0.0, min=-5.0, max=5.0)
+            a = fm.run_fit(x, y, weight_mode="No weights", method=method, max_nfev=200)
+            b = fm.run_fit(x, y, weight_mode="No weights", method=method, max_nfev=200)
+            self.assertEqual(a.params["slope"]["value"], b.params["slope"]["value"], method)
+            self.assertEqual(a.nfev, b.nfev, method)
+
+    def test_scalar_method_without_numdifftools_is_explained(self):
+        from unittest import mock
+        from curvelab.session import FitResult
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x = np.linspace(0, 1, 5)
+        r = FitResult(x_dense=x, y_fit_dense=x, x_data=x, y_data=x, y_fit_data=x,
+                      yerr_data=None, params={}, report="", errorbars=False)
+        with mock.patch("importlib.util.find_spec", return_value=None):
+            notes = fit_outcome_notes(r, "nelder")
+        self.assertIn("numdifftools", notes[0])
+        # With the package present (or a covariance method) it is identifiability.
+        notes = fit_outcome_notes(r, "least_squares")
+        self.assertIn("identifiable", notes[0])
 
 
 class OdsEngineTests(unittest.TestCase):

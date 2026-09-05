@@ -13,7 +13,7 @@ from .ui_dialogs_analysis import (
     ConfidenceIntervalDialog, CorrelationMatrixDialog, CovarianceMatrixDialog,
     DiagnosticPlotsDialog, ConfidenceContourDialog, ProfileLikelihoodDialog,
     BootstrapDialog, BruteCandidatesDialog, EmceeSummaryDialog,
-    UncertaintyPropagationDialog,
+    EmceeSettingsDialog, UncertaintyPropagationDialog,
 )
 
 
@@ -59,6 +59,8 @@ class AnalysisHandlersMixin:
                 "n_params": n_vary,
                 "chisqr": gof.get("chi-squared", 0),
                 "n_data": len(sess.result.x_data),
+                "key": sess.result.comparison_key(),
+                "chi_square_objective": gof.get("objective") is None,
             }
         if len(sessions) < 2:
             messagebox.showinfo("Need 2+ Fits", "Need at least two completed fits to compare.")
@@ -120,7 +122,7 @@ class AnalysisHandlersMixin:
             return
         # Collect varied parameters
         vary_params = [
-            name for name, par in fm._last_result.params.items()
+            name for name, par in fm.last_result.params.items()
             if par.vary
         ]
         if len(vary_params) < 2:
@@ -129,7 +131,7 @@ class AnalysisHandlersMixin:
                 "Need at least 2 varied parameters for contour plots.",
             )
             return
-        dlg = ConfidenceContourDialog(self, fm._last_result, vary_params)
+        dlg = ConfidenceContourDialog(self, fm, vary_params)
         dlg.title(self._analysis_title("2D Confidence Contours"))
 
     def _show_profile_likelihood(self):
@@ -142,8 +144,14 @@ class AnalysisHandlersMixin:
                 messagebox.showinfo("No Profiles",
                                     "Could not compute profile traces.")
                 return
-            best_chi2 = fm._last_result.chisqr
-            dlg = ProfileLikelihoodDialog(self, profiles, best_chi2)
+            best_chi2 = fm.last_result.chisqr
+            dlg = ProfileLikelihoodDialog(
+                self, profiles, best_chi2,
+                threshold=fm.ci_threshold(1.0),
+                threshold_label=(
+                    "1\u03c3 (F-test, scaled by \u03c7\u00b2/\u03bd)"
+                    if fm._ci_scaled() else "1\u03c3 (\u0394\u03c7\u00b2 = 1)"),
+            )
             dlg.title(self._analysis_title("Profile Likelihood"))
         except Exception as e:
             messagebox.showerror("Profile Error", str(e))
@@ -155,14 +163,14 @@ class AnalysisHandlersMixin:
         rec = self._active_record
         fm = sess.fit_manager
 
-        def on_run(n_boot, boot_type):
+        def on_run(n_boot, boot_type, seed):
             x, y, yerr, xerr = self._get_fit_data(rec)
             weight_mode = self.fit_panel.weight_var.get()
             method = self.fit_panel.method_var.get()
             return fm.run_bootstrap(
                 x, y, yerr=yerr, n_boot=n_boot,
                 method=method, boot_type=boot_type,
-                weight_mode=weight_mode,
+                weight_mode=weight_mode, seed=seed,
             )
 
         dlg = BootstrapDialog(self, on_run=on_run)
@@ -176,8 +184,7 @@ class AnalysisHandlersMixin:
         def on_select(params_dict):
             fm = sess.fit_manager
             for name, val in params_dict.items():
-                fm.set_param(name, value=val)
-                fm.set_start_value(name, val)  # loaded values become the start
+                fm.set_param(name, value=val)   # also becomes the start value
             self._refresh_param_display()
 
         dlg = BruteCandidatesDialog(self, sess.result.candidates, on_select=on_select)
@@ -187,8 +194,15 @@ class AnalysisHandlersMixin:
         """Show emcee MCMC summary dialog."""
         if sess.result is None or sess.result.flatchain is None:
             return
-        dlg = EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params)
+        dlg = EmceeSummaryDialog(self, sess.result.flatchain, sess.result.params,
+                                 mcmc=sess.result.mcmc)
         dlg.title(self._analysis_title("MCMC (emcee) Summary"))
+
+    def _show_emcee_settings(self):
+        """Edit the emcee sampler settings used by the next emcee fit."""
+        def on_apply(settings):
+            self._emcee_settings = settings
+        EmceeSettingsDialog(self, dict(self._emcee_settings), on_apply=on_apply)
 
     def _show_uncertainty_propagation(self):
         """Open Uncertainty Propagation dialog."""
@@ -196,7 +210,7 @@ class AnalysisHandlersMixin:
         if fm is None:
             return
         try:
-            uvars = fm._last_result.uvars
+            uvars = fm.last_result.uvars
         except Exception:
             messagebox.showwarning(
                 "No Uncertainties",
@@ -226,12 +240,14 @@ class AnalysisHandlersMixin:
             return
         try:
             from lmfit.model import save_modelresult
-            save_modelresult(fm._last_result, filepath)
+            save_modelresult(fm.last_result, filepath)
         except Exception as e:
             messagebox.showerror("Export Error", str(e))
 
     def _import_model_result(self):
         """Import lmfit ModelResult from a .sav file."""
+        if self._refuse_while_fitting():
+            return
         filepath = filedialog.askopenfilename(
             filetypes=[("lmfit Model Result", "*.sav"), ("All files", "*.*")],
             title="Import Model Result",

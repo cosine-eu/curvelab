@@ -264,6 +264,8 @@ class DataManager:
         df = self.datasets.get(dataset_name)
         if df is None:
             raise ValueError(f"No dataset named '{dataset_name}'")
+        if col_name not in df.columns:
+            raise ValueError(f"No column '{col_name}' in dataset '{dataset_name}'")
         return df[col_name].to_numpy(dtype=float)
 
     def remove_dataset(self, name: str):
