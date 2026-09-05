@@ -160,6 +160,30 @@ class AutoGuessMultiPeakTests(unittest.TestCase):
         self.assertEqual(len(set(centers)), 3, f"centers collapsed: {centers}")
 
 
+class AutoGuessDerivedParamTests(unittest.TestCase):
+    """Auto-guess used Parameter.set(value=...) on every guessed parameter,
+    which clears the expression on derived ones (fwhm, height): they froze
+    at the guess and no longer tracked the fit."""
+
+    def test_fwhm_keeps_its_expression_and_tracks_sigma(self):
+        from curvelab.fit_manager import FitManager
+
+        sigma_true = 2.5
+        x = np.linspace(-10, 10, 200)
+        y = 3.0 * np.exp(-x ** 2 / (2 * sigma_true ** 2))
+
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.auto_guess(x, y)
+        self.assertEqual(fm.params["fwhm"].expr, "2.3548200*sigma")
+
+        fm.run_fit(x, y)
+        sigma = fm.params["sigma"].value
+        self.assertAlmostEqual(sigma, sigma_true, places=3)
+        self.assertAlmostEqual(fm.params["fwhm"].value, 2.3548200 * sigma, places=6)
+        self.assertAlmostEqual(fm.params["height"].value, 3.0, places=3)
+
+
 class CloneComponentsHintsTests(unittest.TestCase):
     """1e2bdb8: clone_components_to dropped fixed/bounded parameters."""
 

@@ -502,10 +502,17 @@ class FitManager:
             try:
                 guessed = m.guess(target, x=x)
                 for pname, par in guessed.items():
-                    if pname in self._params:
-                        self._params[pname].set(
-                            value=par.value, min=par.min, max=par.max
-                        )
+                    if pname not in self._params:
+                        continue
+                    if self._params[pname].expr:
+                        # A derived parameter (fwhm, height, or a user tie)
+                        # takes its value from its expression. Parameter.set
+                        # with a value clears the expression, which would
+                        # freeze it at the guess and drop it from the fit.
+                        continue
+                    self._params[pname].set(
+                        value=par.value, min=par.min, max=par.max
+                    )
                 if is_additive:
                     try:
                         residual = residual - m.eval(guessed, x=x)
