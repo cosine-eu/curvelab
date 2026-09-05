@@ -143,7 +143,13 @@ class AnalysisHandlersMixin:
                                     "Could not compute profile traces.")
                 return
             best_chi2 = fm._last_result.chisqr
-            dlg = ProfileLikelihoodDialog(self, profiles, best_chi2)
+            dlg = ProfileLikelihoodDialog(
+                self, profiles, best_chi2,
+                threshold=fm.ci_threshold(1.0),
+                threshold_label=(
+                    "1\u03c3 (F-test, scaled by \u03c7\u00b2/\u03bd)"
+                    if fm._ci_scaled() else "1\u03c3 (\u0394\u03c7\u00b2 = 1)"),
+            )
             dlg.title(self._analysis_title("Profile Likelihood"))
         except Exception as e:
             messagebox.showerror("Profile Error", str(e))

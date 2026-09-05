@@ -138,6 +138,69 @@ class ConfidenceAfterOtherObjectivesTests(unittest.TestCase):
             self.fm.ci_minimizer()
 
 
+class ConfidenceIntervalScalingTests(unittest.TestCase):
+    """The profile chi-square axis was synthesized with chi2.ppf from lmfit's
+    F-test probability, so the 'chi2_min + 1' line met the CI by
+    construction whatever chi2/nu was; and the CIs were always F-test
+    (reduced-chi-square scaled) even with Scale covariance off, so CI and
+    StdErr disagreed. Both now follow the fit's scale_covar and the profile
+    chi-square is the real re-minimized value."""
+
+    def setUp(self):
+        rng = np.random.default_rng(0)
+        self.x = np.linspace(0, 10, 8)
+        self.y = 2.0 * self.x + 1.0 + rng.normal(0, 0.05, 8)
+        self.yerr = np.full(8, 0.3)                 # overestimated: chi2/nu ~ 0.01
+
+    def _fit(self, scale_covar):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(self.x, self.y)
+        fm.run_fit(self.x, self.y, yerr=self.yerr, scale_covar=scale_covar)
+        return fm
+
+    def _ci_halfwidth(self, fm):
+        text = fm.compute_confidence_intervals(sigmas=[1])
+        line = next(l for l in text.splitlines() if l.strip().startswith("slope"))
+        lo, best, hi = (float(v) for v in line.split(":")[1].split())
+        return -lo, hi
+
+    def test_profile_chi2_equals_a_direct_refit(self):
+        from curvelab.fit_manager import FitManager
+        for scale_covar in (True, False):
+            fm = self._fit(scale_covar)
+            pts = fm.compute_ci_profiles(sigmas=[1])["slope"]
+            value, chi2_profile = max(pts, key=lambda t: t[1])
+            direct = FitManager()
+            direct.add_component("Linear")
+            direct.set_param_hint("slope", value=value, vary=False)
+            direct.set_param_hint("intercept", value=1.0)
+            chi2_direct = direct.run_fit(self.x, self.y, yerr=self.yerr).gof["chi-squared"]
+            self.assertAlmostEqual(chi2_profile, chi2_direct, places=6)
+
+    def test_unscaled_ci_matches_stderr(self):
+        fm = self._fit(scale_covar=False)
+        se = fm._last_result.params["slope"].stderr
+        lo, hi = self._ci_halfwidth(fm)
+        self.assertAlmostEqual(lo, se, places=4)
+        self.assertAlmostEqual(hi, se, places=4)
+        self.assertAlmostEqual(fm.ci_threshold(1.0), 1.0, places=9)
+        self.assertIn("unscaled", fm.compute_confidence_intervals(sigmas=[1]))
+
+    def test_scaled_ci_is_reduced_chi2_scaled(self):
+        fm = self._fit(scale_covar=True)
+        r = fm._last_result
+        lo, hi = self._ci_halfwidth(fm)
+        # ~ stderr (which is chi2_nu-scaled), and far below the unscaled width.
+        self.assertAlmostEqual(lo, r.params["slope"].stderr, delta=0.15 * r.params["slope"].stderr)
+        self.assertLess(hi, 0.02)
+        thr = fm.ci_threshold(1.0)
+        self.assertLess(thr, 0.05)                  # ~ chi2_nu, not 1
+        self.assertGreater(thr, 0.0)
+        self.assertIn("scaled by", fm.compute_confidence_intervals(sigmas=[1]))
+
+
 class ProfileLikelihoodTests(LinearFitBase):
     def test_profiles_shape_and_minimum(self):
         profiles = self.fm.compute_ci_profiles()

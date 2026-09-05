@@ -1306,24 +1306,79 @@ class FitManager:
         mini.kws = {}
         return mini
 
+    # --- Confidence intervals -------------------------------------------
+    #
+    # lmfit's conf_interval profiles one parameter at a time and turns each
+    # profile point into a probability with prob_func. Its default,
+    # f_compare, is an F-test on chi2_new/chi2_best, which rescales the
+    # threshold by reduced chi-square: the interval then matches a StdErr
+    # computed with scale_covar=True. When the user has turned Scale
+    # covariance off (real sigma), the matching threshold is a plain
+    # delta-chi2, otherwise the CI and the StdErr disagree silently.
+
+    def _ci_scaled(self) -> bool:
+        """Whether the last fit's errors are reduced-chi-square scaled."""
+        return bool(getattr(self._last_result, "scale_covar", True))
+
+    def _ci_prob_func(self):
+        """prob_func for lmfit's CI tools matching the fit's scale_covar."""
+        if self._ci_scaled():
+            return None                      # lmfit's f_compare
+        from scipy.stats import chi2
+
+        def delta_chi2_compare(best_fit, new_fit):
+            nfix = best_fit.nvarys - new_fit.nvarys
+            return chi2.cdf(max(new_fit.chisqr - best_fit.chisqr, 0.0), nfix)
+        return delta_chi2_compare
+
+    def _prob_to_chi2(self, probs, best_chi2, nfree):
+        """Invert the CI probability back to the profile's chi-square:
+        exactly the inverse of the prob_func in use."""
+        from scipy.stats import chi2, f
+        probs = np.clip(np.asarray(probs, dtype=float), 0.0, 1.0 - 1e-12)
+        if self._ci_scaled():
+            return best_chi2 * (1.0 + f.ppf(probs, 1, nfree) / nfree)
+        return best_chi2 + chi2.ppf(probs, 1)
+
+    def ci_threshold(self, sigma: float = 1.0) -> float:
+        """The delta-chi2 above the minimum that marks the sigma-level
+        interval under the prob_func in use: sigma^2 for a plain delta-chi2
+        (scale_covar off), chi2_best * F_ppf(p, 1, nu) / nu for the F-test
+        (scale_covar on), which is close to sigma^2 * chi2_nu."""
+        from scipy.stats import chi2, f, norm
+        if self._last_result is None:
+            raise ValueError("No fit result available")
+        prob = 2.0 * norm.cdf(sigma) - 1.0
+        if self._ci_scaled():
+            nfree = self._last_result.nfree
+            return float(self._last_result.chisqr * f.ppf(prob, 1, nfree) / nfree)
+        return float(chi2.ppf(prob, 1))
+
     def compute_confidence_intervals(self, sigmas=None) -> str:
         """Compute confidence intervals and return a CI report string."""
         from lmfit import conf_interval, ci_report
         mini = self.ci_minimizer()
-        ci = conf_interval(mini, mini, sigmas=sigmas)
-        return ci_report(ci)
+        ci = conf_interval(mini, mini, sigmas=sigmas, prob_func=self._ci_prob_func())
+        note = ("Intervals from an F-test on chi-square ratios, i.e. scaled by "
+                "reduced chi-square (Scale covariance on)."
+                if self._ci_scaled() else
+                "Intervals from delta chi-square, unscaled (Scale covariance off).")
+        return note + "\n\n" + ci_report(ci)
 
     def compute_ci_profiles(self, sigmas=None) -> dict[str, list[tuple[float, float]]]:
         """Compute profile likelihood traces for each parameter.
 
-        Returns {param_name: [(param_value, chi_squared), ...]}.
+        Returns {param_name: [(param_value, chi_squared), ...]}, where the
+        chi-square is the profile's own re-minimized chi-square, recovered by
+        inverting the CI probability exactly.
         """
         from lmfit import conf_interval
-        from scipy.stats import chi2
 
         mini = self.ci_minimizer()
-        ci_result, trace = conf_interval(mini, mini, sigmas=sigmas, trace=True)
+        ci_result, trace = conf_interval(mini, mini, sigmas=sigmas, trace=True,
+                                         prob_func=self._ci_prob_func())
         best_chi2 = mini.chisqr
+        nfree = mini.nfree
 
         profiles = {}
         for pname, tdata in trace.items():
@@ -1331,10 +1386,8 @@ class FitManager:
                 continue
             param_vals = np.asarray(tdata[pname])
             probs = np.asarray(tdata["prob"])
-            # Convert probability to delta-chi2, then to absolute chi2
-            # prob=0 -> delta=0 (best fit), prob=0.68 -> delta~1 (1-sigma)
-            delta_chi2 = np.where(probs > 0, chi2.ppf(probs, 1), 0.0)
-            chi2_vals = best_chi2 + delta_chi2
+            chi2_vals = np.where(probs > 0, self._prob_to_chi2(probs, best_chi2, nfree),
+                                 best_chi2)
             # Sort by parameter value for clean plotting
             order = np.argsort(param_vals)
             profiles[pname] = list(zip(param_vals[order], chi2_vals[order]))

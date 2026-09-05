@@ -703,7 +703,10 @@ class ProfileLikelihoodDialog(BaseDialog):
     """Plot chi-squared profiles for each parameter."""
 
     def __init__(self, parent, profiles: dict[str, list[tuple[float, float]]],
-                 best_chi2: float):
+                 best_chi2: float, threshold: float = 1.0,
+                 threshold_label: str = "\u03c7\u00b2_min + 1"):
+        """threshold is the delta-chi2 above the minimum marking the 1-sigma
+        interval under the CI method in use (see FitManager.ci_threshold)."""
         super().__init__(parent, "Profile Likelihood", size="900x600")
 
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -728,9 +731,9 @@ class ProfileLikelihoodDialog(BaseDialog):
             ax.plot(pvals, chi2s, "o-", markersize=3, color="steelblue")
             ax.axhline(best_chi2, color="red", linestyle="--", linewidth=0.8,
                        label=f"\u03c7\u00b2_min = {best_chi2:.4g}")
-            # 1-sigma threshold
-            ax.axhline(best_chi2 + 1, color="orange", linestyle=":",
-                       linewidth=0.8, label="\u03c7\u00b2_min + 1")
+            # 1-sigma threshold under the CI method actually used
+            ax.axhline(best_chi2 + threshold, color="orange", linestyle=":",
+                       linewidth=0.8, label=threshold_label)
             ax.set_xlabel(pname)
             ax.set_ylabel("\u03c7\u00b2")
             ax.set_title(pname)

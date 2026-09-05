@@ -763,10 +763,23 @@ profile likelihood intervals trace the actual chi-squared surface.
 **How it works**: For each parameter, the algorithm fixes the parameter at
 a series of values, re-optimizes all other parameters, and records the
 chi-squared. The confidence limits are the parameter values where the
-chi-squared exceeds the minimum by an amount determined by the F-distribution.
+chi-squared exceeds the minimum by a threshold.
 
-By default, 1-sigma (68.3%), 2-sigma (95.4%), and 3-sigma (99.7%) intervals
-are computed.
+The threshold follows the **Scale covariance** setting of the fit, so the
+intervals agree with the StdErr column:
+
+- Scale covariance **on** (the default, for data without reliable error
+  bars): lmfit's F-test on the chi-squared ratio, which scales the
+  threshold by reduced chi-squared, just as the StdErr are scaled.
+- Scale covariance **off** (real 1-sigma errors): a plain delta
+  chi-squared threshold, `1` for 1-sigma, `4` for 2-sigma, `9` for
+  3-sigma, on one parameter at a time.
+
+The CI report states which was used. By default, 1-sigma (68.3%), 2-sigma
+(95.4%), and 3-sigma (99.7%) intervals are computed. The intervals are
+always chi-squared based, whatever objective the fit itself used, and are
+not available for an emcee result, whose posterior errors already carry
+the answer.
 
 **When to use**: When you suspect the chi-squared surface is asymmetric
 (e.g., near parameter bounds, or for parameters in non-linear positions
@@ -942,9 +955,12 @@ the profile shows how chi-squared varies as that parameter is moved away
 from its best-fit value while all other parameters are re-optimized.
 
 The plot shows:
-- The chi-squared profile (blue circles connected by lines)
+- The chi-squared profile (blue circles connected by lines): the actual
+  re-minimized chi-squared at each fixed value of the parameter
 - The minimum chi-squared (red dashed line)
-- The 1-sigma threshold at chi2_min + 1 (orange dotted line)
+- The 1-sigma threshold (orange dotted line), labeled with the method in
+  use: `chi2_min + 1` when Scale covariance is off, or the F-test level
+  (about `chi2_min + chi2/nu`) when it is on (see Section 9)
 
 The points where the profile crosses the threshold define the 1-sigma
 confidence interval for that parameter. This method is more reliable than
