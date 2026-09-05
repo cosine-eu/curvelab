@@ -1,6 +1,7 @@
 """Curve fitting logic using lmfit."""
 
 import ast
+import copy
 from dataclasses import dataclass
 
 import numpy as np
@@ -1000,12 +1001,40 @@ class FitManager:
 
         return results
 
-    def compute_confidence_intervals(self, sigmas=None) -> str:
-        """Compute confidence intervals and return a CI report string."""
+    def ci_minimizer(self):
+        """The last result, prepared for lmfit's confidence-interval tools.
+
+        conf_interval, conf_interval2d and the profile traces re-minimize
+        with ``Minimizer.leastsq``, which forwards the stored fit keywords
+        to scipy's leastsq. Keywords that belong to another method (a
+        robust ``loss``/``f_scale`` for least_squares, ``is_weighted`` for
+        emcee) make that call raise, and a raise part-way through leaves
+        parameters with vary=False. So hand the tools a shallow copy with
+        those keywords cleared. The intervals are chi-square based in any
+        case, whatever objective the fit itself used.
+        """
         if self._last_result is None:
             raise ValueError("No fit result available")
+        if self._last_result.method == "emcee":
+            # The tools profile chi-square from result.chisqr, but an emcee
+            # result's "best" values are posterior medians, not a chi-square
+            # minimum, so the profile never brackets the target and the
+            # root finder fails. The posterior already carries the answer.
+            raise ValueError(
+                "Profile-likelihood confidence intervals are not defined for "
+                "an emcee result. Use the posterior errors in the parameter "
+                "table (16th-84th percentile half-width), or refit with a "
+                "least-squares method first."
+            )
+        mini = copy.copy(self._last_result)
+        mini.kws = {}
+        return mini
+
+    def compute_confidence_intervals(self, sigmas=None) -> str:
+        """Compute confidence intervals and return a CI report string."""
         from lmfit import conf_interval, ci_report
-        ci = conf_interval(self._last_result, self._last_result, sigmas=sigmas)
+        mini = self.ci_minimizer()
+        ci = conf_interval(mini, mini, sigmas=sigmas)
         return ci_report(ci)
 
     def compute_ci_profiles(self, sigmas=None) -> dict[str, list[tuple[float, float]]]:
@@ -1013,16 +1042,12 @@ class FitManager:
 
         Returns {param_name: [(param_value, chi_squared), ...]}.
         """
-        if self._last_result is None:
-            raise ValueError("No fit result available")
         from lmfit import conf_interval
         from scipy.stats import chi2
 
-        ci_result, trace = conf_interval(
-            self._last_result, self._last_result,
-            sigmas=sigmas, trace=True,
-        )
-        best_chi2 = self._last_result.chisqr
+        mini = self.ci_minimizer()
+        ci_result, trace = conf_interval(mini, mini, sigmas=sigmas, trace=True)
+        best_chi2 = mini.chisqr
 
         profiles = {}
         for pname, tdata in trace.items():

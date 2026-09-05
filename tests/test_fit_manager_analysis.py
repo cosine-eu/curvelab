@@ -75,6 +75,69 @@ class ConfidenceIntervalTests(LinearFitBase):
             fm.compute_confidence_intervals()
 
 
+class ConfidenceAfterOtherObjectivesTests(unittest.TestCase):
+    """lmfit's CI tools re-minimize with leastsq and forward the stored
+    fit keywords to scipy. After a robust-loss or emcee fit those keywords
+    (loss, f_scale, is_weighted, steps, ...) made leastsq raise, and the
+    raise left parameters with vary=False. ci_minimizer hands the tools a
+    copy with the keywords cleared."""
+
+    def setUp(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(1)
+        self.x = np.linspace(0, 10, 60)
+        self.y = 2.0 * self.x + 1.0 + rng.normal(0, 0.1, 60)
+        self.y[30] += 20.0
+        self.fm = FitManager()
+        self.fm.add_component("Linear")
+        self.fm.auto_guess(self.x, self.y)
+
+    def _fit_cauchy(self):
+        from curvelab.fit_manager import objective_kwargs
+        self.fm.run_fit(self.x, self.y, weight_mode="No weights", method="least_squares",
+                        objective_kws=objective_kwargs("least_squares", "Cauchy", 1.0))
+
+    def test_ci_and_profiles_after_robust_loss(self):
+        self._fit_cauchy()
+        text = self.fm.compute_confidence_intervals()
+        self.assertIn("slope", text)
+        profiles = self.fm.compute_ci_profiles()
+        self.assertEqual(set(profiles), {"slope", "intercept"})
+        # The tools must not disturb the parameters or the stored result.
+        self.assertTrue(all(p.vary for p in self.fm.params.values()))
+        self.assertEqual(self.fm._last_result.kws, {"loss": "cauchy", "f_scale": 1.0})
+
+    def test_contour_grid_after_robust_loss(self):
+        from lmfit import conf_interval2d
+        self._fit_cauchy()
+        mini = self.fm.ci_minimizer()
+        _, _, grid = conf_interval2d(mini, mini, "slope", "intercept", nx=5, ny=5)
+        self.assertEqual(grid.shape, (5, 5))
+
+    def test_ci_after_emcee(self):
+        try:
+            import emcee  # noqa: F401
+        except ImportError:
+            self.skipTest("emcee not installed")
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            self.fm.run_fit(self.x, self.y, weight_mode="No weights", method="emcee",
+                            fit_kws={"is_weighted": False, "steps": 60,
+                                     "nwalkers": 12, "burn": 10})
+        # A posterior sample has no chi-square minimum to profile from; the
+        # user is pointed at the posterior errors instead of a cryptic
+        # root-finding failure.
+        with self.assertRaises(ValueError) as cm:
+            self.fm.compute_confidence_intervals()
+        self.assertIn("emcee", str(cm.exception))
+        self.assertTrue(all(p.vary for p in self.fm.params.values() if p.name != "__lnsigma"))
+
+    def test_ci_minimizer_raises_before_fit(self):
+        with self.assertRaises(ValueError):
+            self.fm.ci_minimizer()
+
+
 class ProfileLikelihoodTests(LinearFitBase):
     def test_profiles_shape_and_minimum(self):
         profiles = self.fm.compute_ci_profiles()
