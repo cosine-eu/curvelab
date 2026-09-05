@@ -102,3 +102,31 @@ Improvements, in suggested order:
    ndarray machinery already exists) for self-contained, shareable files
    at the cost of size. Could auto-embed datasets that lack a file path,
    which would also fix item 1 properly.
+
+## Poisson / Cash objective for counting data
+
+CurveLab's objectives are chi-square (with 1/sigma, 1/|y| or no weights)
+plus the robust losses. For low counts, chi-square with sigma = sqrt(y)
+biases parameters low and fails at y = 0; the right objective is the
+Poisson likelihood, C = 2 sum(f - y ln f) (Cash 1979), which needs f > 0.
+
+Sketch:
+
+- A new Objective choice "Poisson (Cash)" for the scalar methods, as a
+  reduce function is not enough: the residual must be replaced, so it is
+  an objective on the model value, `2 * (f - y * log(f))` summed, with
+  f floored at a small positive value and a warning when the model goes
+  non-positive.
+- Uncertainties from numdifftools' Hessian of C (lmfit does this for
+  scalar methods), or via a `least_squares` formulation with the
+  Anscombe-style residual `sqrt(2 (f - y - y ln(f/y)))` signed by f - y,
+  which lets the default method handle it.
+- Report C instead of chi-square (see the "objective" GOF entry), and
+  C_stat/nu as the goodness-of-fit analogue; AIC = C + 2k is valid.
+- Weights and yerr are ignored for this objective; refuse Effective
+  variance with it.
+- Simulate Data already produces true Poisson counts to test against.
+
+Decisions open: scalar-only (simple) vs the least_squares residual form
+(faster, gives a covariance without numdifftools).
+

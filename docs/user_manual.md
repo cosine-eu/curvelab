@@ -404,6 +404,16 @@ parameter lacks a finite min *and* max, CurveLab reports which parameters need
 bounds instead of letting the fit fail partway through. Set the bounds in the
 Fit Results table (the **Min**/**Max** columns) first.
 
+The stochastic global methods (`differential_evolution`, `basinhopping`,
+`dual_annealing`) are run with a fixed random seed, so repeating a fit
+gives the same answer; `brute` and `shgo` are deterministic. emcee's seed
+is set in **Analysis > MCMC Settings** (Section 15).
+
+If the model is not finite at some data points (a logarithm or square root
+of a negative value, a division by zero), those points are left out of the
+fit. The `[[Convergence]]` block and the post-fit warning report how many;
+chi-squared, AIC and BIC then refer to the remaining points.
+
 The Fit panel also disables the controls a method doesn't use — for example
 ODR ignores the Weights, Max nfev, and Scale-covariance controls, so they grey
 out while it is selected. A method whose backend package isn't installed (only

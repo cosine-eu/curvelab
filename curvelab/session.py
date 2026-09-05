@@ -57,6 +57,9 @@ class FitResult:
     success: bool = True
     message: str = ""
     nfev: int | None = None
+    # Points dropped by nan_policy="omit" because the model was not finite
+    # there; chi-square and AIC/BIC refer to the points that remained.
+    n_omitted: int = 0
     # Parameter pairs with |correlation| above STRONG_CORRELATION, as
     # [name_a, name_b, rho]: their individual values are poorly determined,
     # only a combination is.

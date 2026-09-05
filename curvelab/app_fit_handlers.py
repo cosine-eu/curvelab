@@ -37,6 +37,13 @@ def fit_outcome_notes(result, method: str) -> list[str]:
             "best fit. Raise Max nfev, improve the starting values (Auto "
             "Guess), or try another method."
         )
+    if getattr(result, "n_omitted", 0):
+        notes.append(
+            f"{result.n_omitted} data point(s) were left out because the model "
+            "is not finite there (a log or square root of a negative value, a "
+            "division by zero). Chi-square, AIC and BIC refer to the remaining "
+            "points; check the model or the fit range."
+        )
     at_bound = [f"{name} (at {info['at_bound']})" for name, info in result.params.items()
                 if info.get("at_bound")]
     if at_bound:

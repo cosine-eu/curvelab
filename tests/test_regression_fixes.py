@@ -615,6 +615,39 @@ class FitOutcomeTests(unittest.TestCase):
         self.assertEqual(r2.strong_correlations, [])
         self.assertNotIn("strongly correlated", r2.report)
 
+    def test_points_omitted_for_non_finite_model_are_reported(self):
+        # nan_policy="omit" drops points where the model is NaN; the user
+        # was never told the statistics refer to fewer points.
+        import warnings
+        from curvelab.fit_manager import FitManager
+        from curvelab.app_fit_handlers import fit_outcome_notes
+        x = np.linspace(-2, 10, 50)                     # 9 points at x <= 0
+        y = np.log(np.maximum(x, 0.01)) + 1.0
+        fm = FitManager()
+        fm.add_component("Expression", expression="a*log(x)+b")
+        fm.set_param("a", value=1.0)
+        fm.set_param("b", value=1.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertEqual(r.n_omitted, 9)
+        self.assertIn("9 point(s) where the model is not finite were omitted", r.message)
+        self.assertTrue(any(n.startswith("9 data point(s) were left out") for n in fit_outcome_notes(r, "least_squares")))
+
+    def test_stochastic_global_methods_are_seeded_by_default(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 30)
+        y = 2.0 * x + 1.0
+        for method in ("differential_evolution", "dual_annealing"):
+            fm = FitManager()
+            fm.add_component("Linear")
+            fm.set_param_hint("slope", value=1.0, min=0.0, max=5.0)
+            fm.set_param_hint("intercept", value=0.0, min=-5.0, max=5.0)
+            a = fm.run_fit(x, y, weight_mode="No weights", method=method, max_nfev=200)
+            b = fm.run_fit(x, y, weight_mode="No weights", method=method, max_nfev=200)
+            self.assertEqual(a.params["slope"]["value"], b.params["slope"]["value"], method)
+            self.assertEqual(a.nfev, b.nfev, method)
+
     def test_scalar_method_without_numdifftools_is_explained(self):
         from unittest import mock
         from curvelab.session import FitResult

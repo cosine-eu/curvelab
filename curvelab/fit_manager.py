@@ -240,6 +240,9 @@ EFFECTIVE_VARIANCE_RTOL = 1e-6
 # Central-difference step for the ODR band Jacobian (df/dbeta).
 ODR_JAC_REL_STEP = 1e-6
 ODR_JAC_MIN_STEP = 1e-10
+# Stand-in for an infinite parameter bound in odrpack, which needs finite
+# bounds: the largest finite double.
+ODR_UNBOUNDED = float(np.finfo(float).max)
 
 
 def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None,
@@ -348,6 +351,12 @@ def convergence_lines(success: bool, message: str, nfev, params: dict,
         lines.append(f"    strongly correlated (|rho| > {STRONG_CORRELATION}): {pairs}")
     return lines
 
+
+# Stochastic global optimizers accept a seed through fit_kws. A fixed
+# default makes a repeated fit reproduce itself; brute and shgo are
+# deterministic and take none.
+SEEDED_METHODS = {"differential_evolution", "basinhopping", "dual_annealing"}
+DEFAULT_GLOBAL_SEED = 0
 
 # Sampling diagnostics targets (Foreman-Mackey et al. 2013, emcee docs).
 EMCEE_ACCEPTANCE_RANGE = (0.2, 0.5)
@@ -1019,6 +1028,8 @@ class FitManager:
             kws.update(objective_kws)
         if method == "emcee":
             self._prepare_emcee_kws(kws, weights)
+        elif method in SEEDED_METHODS:
+            kws.setdefault("seed", DEFAULT_GLOBAL_SEED)
 
         fit_kwargs = dict(
             method=method, nan_policy="omit",
@@ -1077,6 +1088,15 @@ class FitManager:
         success = bool(getattr(self._last_result, "success", True))
         message = str(getattr(self._last_result, "message", "") or "")
         nfev = getattr(self._last_result, "nfev", None)
+        # nan_policy="omit" silently drops points where the model is NaN
+        # (an Expression with log or sqrt of a negative, say). The fit then
+        # ran on fewer points than the user gave it, and chi-square, AIC
+        # and BIC refer to that smaller set.
+        n_omitted = int(len(y) - self._last_result.ndata) if self._last_result.ndata else 0
+        if n_omitted > 0:
+            message = (message + " | " if message else "") + (
+                f"{n_omitted} point(s) where the model is not finite were "
+                f"omitted; statistics refer to the remaining {self._last_result.ndata}")
 
         # Update internal params with fitted values. An unweighted emcee run
         # adds __lnsigma (the fitted noise scale) to the result's params; it
@@ -1140,6 +1160,7 @@ class FitManager:
             success=success,
             message=message,
             nfev=nfev,
+            n_omitted=n_omitted,
             strong_correlations=correlated,
             xerr_data=xerr,
             fit_weights=None if weights is None else np.asarray(weights, dtype=float),
@@ -1612,9 +1633,10 @@ class FitManager:
         lower = np.array([self._params[n].min for n in param_names])
         upper = np.array([self._params[n].max for n in param_names])
         has_bounds = np.any(np.isfinite(lower)) or np.any(np.isfinite(upper))
-        # Replace -inf/inf with None-compatible values
-        lower = np.where(np.isfinite(lower), lower, -1e308)
-        upper = np.where(np.isfinite(upper), upper, 1e308)
+        # odrpack has no notion of an open bound, so an infinite one is
+        # emulated with the largest finite double.
+        lower = np.where(np.isfinite(lower), lower, -ODR_UNBOUNDED)
+        upper = np.where(np.isfinite(upper), upper, ODR_UNBOUNDED)
 
         # Fix non-varied parameters
         fix_beta = np.array([0 if v else 1 for v in vary_mask], dtype=float)
