@@ -885,10 +885,15 @@ class FitManager:
         method: str = DEFAULT_FIT_METHOD,
         max_nfev: int | None = None,
         weight_mode: str = DEFAULT_WEIGHT_MODE,
+        objective_kws: dict | None = None,
+        scale_covar: bool = True,
     ) -> list[FitResult]:
         """Run a global fit across multiple datasets with shared parameters.
 
-        Each dataset is a tuple of (x, y, yerr, xerr).
+        Each dataset is a tuple of (x, y, yerr, xerr). objective_kws and
+        scale_covar mean the same as for run_fit, so the Objective and
+        Scale-covariance controls apply to a global fit too. Like run_fit,
+        the fit starts from the remembered start values.
         Parameters that are in *shared_params* get one entry in the combined
         Parameters object.  Non-shared params get per-dataset prefixed entries
         (s0_, s1_, ...).  Returns one FitResult per dataset.
@@ -903,6 +908,10 @@ class FitManager:
 
         if self._model is None or self._params is None:
             raise ValueError("No model defined")
+
+        # Same start as a single fit, so repeated global fits are
+        # reproducible instead of chaining from the previous result.
+        self._reset_to_start_values()
 
         n = len(datasets)
         base_params = self._params
@@ -991,12 +1000,14 @@ class FitManager:
                 all_resid.append(resid)
             return np.concatenate(all_resid)
 
-        kws = {}
+        # objective_kws holds either a reduce_fcn (a Minimizer argument) or
+        # a scipy loss/f_scale (forwarded by minimize as fit keywords).
+        kws = dict(objective_kws or {})
         if max_nfev is not None:
             kws["max_nfev"] = max_nfev
 
         mini_result = minimize(objective, combined, method=method,
-                               nan_policy="omit", **kws)
+                               nan_policy="omit", scale_covar=scale_covar, **kws)
 
         # Build per-dataset FitResults
         results = []

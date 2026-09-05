@@ -275,6 +275,37 @@ class GlobalFitTests(unittest.TestCase):
         self.assertAlmostEqual(b2, 5.0, delta=0.2)
         self.assertGreater(abs(b1 - b2), 1.0)
 
+    def test_objective_and_scale_covar_are_honored(self):
+        # The Objective and Scale-covariance controls used to be dropped on
+        # the way into run_global_fit while the panel showed them enabled.
+        from curvelab.fit_manager import objective_kwargs, WEIGHT_NONE
+        y1 = self.y1.copy()
+        y1[20] += 30.0                                # gross outlier
+        ds = [(self.x1, y1, None, None), (self.x2, self.y2, None, None)]
+        plain = self.fm.run_global_fit(
+            ds, {"slope"}, method="least_squares", weight_mode=WEIGHT_NONE,
+            objective_kws=objective_kwargs("least_squares", "Least squares"))
+        robust = self.fm.run_global_fit(
+            ds, {"slope"}, method="least_squares", weight_mode=WEIGHT_NONE,
+            objective_kws=objective_kwargs("least_squares", "Cauchy", 1.0))
+        # The outlier drags the plain intercept up; the Cauchy loss ignores it.
+        self.assertGreater(plain[0].params["intercept"]["value"], 2.5)
+        self.assertAlmostEqual(robust[0].params["intercept"]["value"], 2.0, delta=0.2)
+
+        yerr = np.full_like(self.y1, 0.1)
+        ds = [(self.x1, self.y1, yerr, None), (self.x2, self.y2, yerr, None)]
+        scaled = self.fm.run_global_fit(ds, {"slope"}, scale_covar=True)
+        raw = self.fm.run_global_fit(ds, {"slope"}, scale_covar=False)
+        self.assertNotAlmostEqual(scaled[0].params["slope"]["stderr"],
+                                  raw[0].params["slope"]["stderr"], places=6)
+
+    def test_global_fit_starts_from_the_start_values(self):
+        ds = [(self.x1, self.y1, None, None), (self.x2, self.y2, None, None)]
+        r1 = self.fm.run_global_fit(ds, {"slope"})
+        r2 = self.fm.run_global_fit(ds, {"slope"})
+        # Not chained: both fits report the same initial values.
+        self.assertEqual(r1[0].init_params, r2[0].init_params)
+
     def test_mixed_yerr_is_refused_for_yerr_weight_modes(self):
         # One dataset with sigma = 0.01 and one without yerr: the unweighted
         # residuals are in y units next to 1/sigma ones, the first dataset

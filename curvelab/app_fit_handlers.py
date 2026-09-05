@@ -306,11 +306,12 @@ class FitHandlersMixin:
             options = self._fit_options_or_warn()
             if options is None:
                 return
-            _, weight_mode, max_nfev, _, _ = options
+            objective_kws, weight_mode, max_nfev, _, scale_covar = options
             method = self.fit_panel.method_var.get()
             results = fm.run_global_fit(
                 datasets, shared, method=method,
                 max_nfev=max_nfev, weight_mode=weight_mode,
+                objective_kws=objective_kws, scale_covar=scale_covar,
             )
 
             session_name = sess.name
