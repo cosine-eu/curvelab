@@ -972,18 +972,26 @@ class UseResultAsStartTests(GuiTestBase):
     """The 'Use as Start' button seeds the next fit from the current result,
     the opt-in way to chain a refinement now that fits restart from the guess."""
 
-    def test_button_transfers_result_into_start_values(self):
-        rec, sess = self._add_fitted_series(run=True)
+    def test_button_makes_the_next_fit_start_from_the_result(self):
+        rec, sess = self._add_fitted_series(run=False)
         fm = sess.fit_manager
-        # Move the live params off the fitted result, as a stray edit might.
-        fitted = fm.params["slope"].value
-        fm.set_param("slope", value=999.0)
+        # A deliberately poor start, so the guess and the result differ
+        # (the Linear auto-guess would already land on the optimum).
+        fm.set_param("slope", value=1.0)
+        sess.result = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        guess_slope = sess.result.init_params["slope"]
+        fitted_slope = sess.result.params["slope"]["value"]
+        self.assertEqual(guess_slope, 1.0)
+        self.assertNotAlmostEqual(guess_slope, fitted_slope, places=3)
 
+        # Without the button the next fit restarts from the guess...
+        again = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        self.assertAlmostEqual(again.init_params["slope"], guess_slope)
+
+        # ...with it, from the fitted result.
         self.app._on_use_result_as_start()
-
-        # capture_start_values grabbed the current params; the next fit starts
-        # from them. Here we assert the start now reflects the captured values.
-        self.assertEqual(fm._start_values["slope"], 999.0)
+        chained = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        self.assertAlmostEqual(chained.init_params["slope"], fitted_slope, places=8)
 
     def test_button_needs_a_result(self):
         rec, sess = self._add_fitted_series(run=False)  # no result yet

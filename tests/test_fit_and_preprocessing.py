@@ -5,6 +5,10 @@ import unittest
 
 import numpy as np
 
+from curvelab.fit_manager import (
+    WEIGHT_EFFECTIVE_VARIANCE, WEIGHT_INV_YERR, WEIGHT_NONE,
+)
+
 
 class ResultBuilderTests(unittest.TestCase):
     """make_gof and param_info are the single definition of the result
@@ -109,7 +113,7 @@ class ObjectiveKwargsRunFitTests(unittest.TestCase):
         fm = FitManager()
         fm.add_component("Linear")
         fm.auto_guess(x, y)
-        return fm.run_fit(x, y, weight_mode="No weights", **run_kw)
+        return fm.run_fit(x, y, weight_mode=WEIGHT_NONE, **run_kw)
 
     def test_robust_loss_resists_outlier(self):
         from curvelab.fit_manager import objective_kwargs
@@ -167,7 +171,7 @@ class ValidateFitSetupTests(unittest.TestCase):
         from curvelab.fit_manager import validate_fit_setup
         errors, warnings = validate_fit_setup(
             "least_squares", self._params(), has_xerr=False,
-            weight_mode="1/yerr (default)")
+            weight_mode=WEIGHT_INV_YERR)
         self.assertEqual(errors, [])
         self.assertEqual(warnings, [])
 
@@ -175,7 +179,7 @@ class ValidateFitSetupTests(unittest.TestCase):
         from curvelab.fit_manager import validate_fit_setup
         errors, _ = validate_fit_setup(
             "differential_evolution", self._params(bounded=False),
-            has_xerr=False, weight_mode="No weights")
+            has_xerr=False, weight_mode=WEIGHT_NONE)
         self.assertEqual(len(errors), 1)
         self.assertIn("finite", errors[0])
         self.assertIn("a", errors[0])
@@ -184,7 +188,7 @@ class ValidateFitSetupTests(unittest.TestCase):
         from curvelab.fit_manager import validate_fit_setup
         errors, _ = validate_fit_setup(
             "differential_evolution", self._params(bounded=True),
-            has_xerr=False, weight_mode="No weights")
+            has_xerr=False, weight_mode=WEIGHT_NONE)
         self.assertEqual(errors, [])
 
     def test_odr_without_xerr_is_an_error(self):
@@ -200,13 +204,13 @@ class ValidateFitSetupTests(unittest.TestCase):
         from curvelab.fit_manager import validate_fit_setup
         errors, warnings = validate_fit_setup(
             "least_squares", self._params(), has_xerr=False,
-            weight_mode="Effective variance")
+            weight_mode=WEIGHT_EFFECTIVE_VARIANCE)
         self.assertEqual(errors, [])
         self.assertEqual(len(warnings), 1)
         # With x-errors present it's silent.
         _, warnings2 = validate_fit_setup(
             "least_squares", self._params(), has_xerr=True,
-            weight_mode="Effective variance")
+            weight_mode=WEIGHT_EFFECTIVE_VARIANCE)
         self.assertEqual(warnings2, [])
 
     def test_missing_package_is_an_error(self):
@@ -215,7 +219,7 @@ class ValidateFitSetupTests(unittest.TestCase):
         # ODR needs odrpack; simulate it being absent.
         with mock.patch("importlib.util.find_spec", return_value=None):
             errors, _ = validate_fit_setup(
-                "odr", self._params(), has_xerr=True, weight_mode="No weights")
+                "odr", self._params(), has_xerr=True, weight_mode=WEIGHT_NONE)
         self.assertEqual(len(errors), 1)
         self.assertIn("odrpack", errors[0])
 
@@ -234,7 +238,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Gaussian")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         center = result.params["center"]["value"]
         self.assertAlmostEqual(center, 0.5, delta=0.15)
@@ -247,7 +251,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         slope = result.params["slope"]["value"]
         intercept = result.params["intercept"]["value"]
@@ -262,7 +266,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Gaussian")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, yerr=yerr, weight_mode="1/yerr (default)")
+        result = self.fm.run_fit(x, y, yerr=yerr, weight_mode=WEIGHT_INV_YERR)
 
         self.assertIsNotNone(result.params["center"]["stderr"])
         self.assertAlmostEqual(result.params["center"]["value"], 0.0, delta=0.2)
@@ -273,7 +277,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         for key in ("chi-squared", "reduced chi-squared", "R-squared", "AIC", "BIC"):
             self.assertIn(key, result.gof)
@@ -285,7 +289,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Exponential")
         self.fm.auto_guess(x, y)
-        result = self.fm.run_fit(x, y, weight_mode="No weights", n_dense=200)
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE, n_dense=200)
 
         self.assertEqual(len(result.x_dense), 200)
         self.assertEqual(len(result.y_fit_dense), 200)
@@ -297,7 +301,7 @@ class FitManagerRunFitTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(x, y)
-        self.fm.run_fit(x, y, weight_mode="No weights")
+        self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         x_eval = np.array([0.0, 5.0, 10.0])
         y_eval = self.fm.evaluate(x_eval)
@@ -321,7 +325,7 @@ class FitManagerRunFitTests(unittest.TestCase):
         self.fm.set_param("gaussian1_amplitude", value=2.0)
         self.fm.set_param("linear1_slope", value=0.3)
         self.fm.set_param("linear1_intercept", value=1.0)
-        result = self.fm.run_fit(x, y, weight_mode="No weights")
+        result = self.fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         self.assertGreater(result.gof["R-squared"], 0.99)
         self.assertIn("component_curves", dir(result))
@@ -381,7 +385,7 @@ class WorkspaceRoundTripTests(unittest.TestCase):
         fm = FitManager()
         fm.add_component("Gaussian")
         fm.auto_guess(x, y)
-        result = fm.run_fit(x, y, weight_mode="No weights")
+        result = fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
 
         rec = SeriesRecord(
             x=x, y=y,
@@ -474,7 +478,7 @@ class WorkspaceRoundTripTests(unittest.TestCase):
         fm = FitManager()
         fm.add_component("Linear")
         fm.auto_guess(x, y)
-        result = fm.run_fit(x, y, weight_mode="No weights")
+        result = fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
         result.fit_options = None                      # a pre-0.11.5 workspace
         fm2 = FitManager.deserialize(fm.serialize())
         fm2.refit_from_result(result)
@@ -520,12 +524,12 @@ class BootstrapTests(unittest.TestCase):
 
         self.fm.add_component("Linear")
         self.fm.auto_guess(self.x, self.y)
-        self.fm.run_fit(self.x, self.y, weight_mode="No weights")
+        self.fm.run_fit(self.x, self.y, weight_mode=WEIGHT_NONE)
 
     def test_residual_bootstrap_returns_distributions(self):
         dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="residual",
-            weight_mode="No weights",
+            weight_mode=WEIGHT_NONE,
         )
         self.assertIn("slope", dists)
         self.assertIn("intercept", dists)
@@ -535,7 +539,7 @@ class BootstrapTests(unittest.TestCase):
     def test_case_bootstrap_returns_distributions(self):
         dists, n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=50, boot_type="case",
-            weight_mode="No weights",
+            weight_mode=WEIGHT_NONE,
         )
         self.assertIn("slope", dists)
         self.assertGreater(len(dists["slope"]), 30)
@@ -544,7 +548,7 @@ class BootstrapTests(unittest.TestCase):
     def test_bootstrap_slope_near_true_value(self):
         dists, _n_failed = self.fm.run_bootstrap(
             self.x, self.y, n_boot=100, boot_type="residual",
-            weight_mode="No weights",
+            weight_mode=WEIGHT_NONE,
         )
         mean_slope = np.mean(dists["slope"])
         self.assertAlmostEqual(mean_slope, 2.0, delta=0.3)
@@ -563,10 +567,10 @@ class BootstrapCorrectnessTests(unittest.TestCase):
         fm = FitManager()
         fm.add_component("Linear")
         fm.auto_guess(x, y)
-        fm.run_fit(x, y, weight_mode="No weights")
-        a, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode="No weights", seed=7)
-        b, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode="No weights", seed=7)
-        c, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode="No weights", seed=8)
+        fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
+        a, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode=WEIGHT_NONE, seed=7)
+        b, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode=WEIGHT_NONE, seed=7)
+        c, _ = fm.run_bootstrap(x, y, n_boot=20, weight_mode=WEIGHT_NONE, seed=8)
         np.testing.assert_array_equal(a["slope"], b["slope"])
         self.assertFalse(np.array_equal(a["slope"], c["slope"]))
 
@@ -617,7 +621,7 @@ class BootstrapCorrectnessTests(unittest.TestCase):
         fm = FitManager()
         fm.add_component("Linear")
         fm.auto_guess(x, y)
-        fm.run_fit(x, y, weight_mode="No weights")
+        fm.run_fit(x, y, weight_mode=WEIGHT_NONE)
         real_fit = fm._model.fit
 
         def flaky(*a, **k):
@@ -625,7 +629,7 @@ class BootstrapCorrectnessTests(unittest.TestCase):
             res.success = False
             return res
         with mock.patch.object(fm._model, "fit", side_effect=flaky):
-            dists, n_failed = fm.run_bootstrap(x, y, n_boot=5, weight_mode="No weights", seed=0)
+            dists, n_failed = fm.run_bootstrap(x, y, n_boot=5, weight_mode=WEIGHT_NONE, seed=0)
         self.assertEqual(n_failed, 5)
         self.assertEqual(len(dists["slope"]), 0)
 
