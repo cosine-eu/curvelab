@@ -11,7 +11,7 @@ from lmfit.models import SplineModel
 
 from .models import create_expression_model, create_model, create_spline_model
 # Re-exports; canonical location is session.py
-from .session import FitResult, MIN_ERROR
+from .session import FitResult, MIN_ERROR, STRONG_CORRELATION
 
 
 def _reduce_cauchylogpdf(r):
@@ -329,9 +329,11 @@ def _at_bound(value, minimum, maximum) -> str | None:
     return None
 
 
-def convergence_lines(success: bool, message: str, nfev, params: dict) -> list[str]:
-    """Report lines describing how the minimizer ended and which varying
-    parameters sit on a bound, prepended to every fit report."""
+def convergence_lines(success: bool, message: str, nfev, params: dict,
+                      strong_correlations=()) -> list[str]:
+    """Report lines describing how the minimizer ended, which varying
+    parameters sit on a bound, and which pairs are strongly correlated;
+    prepended to every fit report."""
     status = "converged" if success else "NOT converged"
     detail = f" -- {message}" if message else ""
     evals = f" ({nfev} function evaluations)" if nfev is not None else ""
@@ -340,7 +342,29 @@ def convergence_lines(success: bool, message: str, nfev, params: dict) -> list[s
                if info.get("at_bound")]
     if bounded:
         lines.append("    at a bound, stderr not meaningful: " + ", ".join(bounded))
+    if strong_correlations:
+        pairs = ", ".join(f"{a}/{b} (rho = {rho:+.3f})" for a, b, rho in strong_correlations)
+        lines.append(f"    strongly correlated (|rho| > {STRONG_CORRELATION}): {pairs}")
     return lines
+
+
+def strong_correlations(params) -> list[list]:
+    """[name_a, name_b, rho] for each varying pair with |rho| above
+    STRONG_CORRELATION, strongest first. Such pairs trade off against each
+    other: only a combination is well determined by the data."""
+    seen = set()
+    out = []
+    for name, par in params.items():
+        if not par.vary or not par.correl:
+            continue
+        for other, rho in par.correl.items():
+            key = tuple(sorted((name, other)))
+            if key in seen or rho is None or abs(rho) <= STRONG_CORRELATION:
+                continue
+            seen.add(key)
+            out.append([key[0], key[1], float(rho)])
+    out.sort(key=lambda t: -abs(t[2]))
+    return out
 
 
 @dataclass
@@ -924,6 +948,7 @@ class FitManager:
                 component_curves[key] = vals
 
         params_info = self.params_to_info(self._last_result.params)
+        correlated = strong_correlations(self._last_result.params)
         success = bool(getattr(self._last_result, "success", True))
         message = str(getattr(self._last_result, "message", "") or "")
         nfev = getattr(self._last_result, "nfev", None)
@@ -970,7 +995,7 @@ class FitManager:
             yerr_data=yerr,
             params=params_info,
             report="\n".join(
-                convergence_lines(success, message, nfev, params_info)
+                convergence_lines(success, message, nfev, params_info, correlated)
                 + ["", self._last_result.fit_report()]),
             gof=gof,
             component_curves=component_curves,
@@ -982,6 +1007,7 @@ class FitManager:
             success=success,
             message=message,
             nfev=nfev,
+            strong_correlations=correlated,
             xerr_data=xerr,
             fit_options={
                 "method": method,

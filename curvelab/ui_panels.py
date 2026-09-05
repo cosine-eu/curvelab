@@ -1133,8 +1133,10 @@ class FitResultsPanel(ttk.LabelFrame):
             tag = row_tag(i)
             self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=(tag,))
 
-    def set_gof(self, gof: dict | None):
-        """Update the goodness-of-fit summary line."""
+    def set_gof(self, gof: dict | None, strong_correlations=()):
+        """Update the goodness-of-fit summary line. Strongly correlated
+        parameter pairs are appended as a flag, since their individual
+        values and errors are poorly determined."""
         if not gof:
             self.gof_var.set("")
             return
@@ -1152,6 +1154,8 @@ class FitResultsPanel(ttk.LabelFrame):
         if gof.get("objective") is not None:
             # A robust loss or reduce function was minimized, not chi-square.
             parts.append(f"objective={gof['objective']:.4g}")
+        for a, b, rho in strong_correlations:
+            parts.append(f"\u26a0 {a}/{b} \u03c1={rho:+.2f}")
         self.gof_var.set("  ".join(parts))
 
     def set_report(self, report: str):

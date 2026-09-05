@@ -400,7 +400,7 @@ class CurveLabApp(
                 entry["init_value"] = result.init_params[name]
             params_display[name] = entry
         self.fit_results.set_params(params_display)
-        self.fit_results.set_gof(result.gof)
+        self.fit_results.set_gof(result.gof, result.strong_correlations)
         self.fit_results.set_report(result.report)
 
     def _update_component_list_from(self, fit_mgr: FitManager):

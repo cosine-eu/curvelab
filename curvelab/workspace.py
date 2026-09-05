@@ -107,6 +107,7 @@ def serialize_series_records(
                     "success": r.success,
                     "message": r.message,
                     "nfev": r.nfev,
+                    "strong_correlations": r.strong_correlations,
                 })
             fit_sessions[sess_name] = sess_data
 
@@ -189,6 +190,7 @@ def deserialize_series_record(
                 success=bool(rdata.get("success", True)),
                 message=rdata.get("message", ""),
                 nfev=rdata.get("nfev"),
+                strong_correlations=list(rdata.get("strong_correlations") or []),
             )
 
         rec.fit_sessions[sess_name] = sess

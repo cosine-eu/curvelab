@@ -591,6 +591,30 @@ class FitOutcomeTests(unittest.TestCase):
         self.assertEqual(len(notes), 1)
         self.assertIn("slope (at max)", notes[0])
 
+    def test_strong_correlation_is_flagged(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(10, 20, 30)                # far from x = 0: rho ~ -0.98
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.1, 30)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertEqual(len(r.strong_correlations), 1)
+        a, b, rho = r.strong_correlations[0]
+        self.assertEqual({a, b}, {"slope", "intercept"})
+        self.assertLess(rho, -0.9)
+        self.assertIn("strongly correlated (|rho| > 0.9): intercept/slope", r.report)
+
+        # Centered x: slope and intercept are independent, nothing flagged.
+        xc = np.linspace(-5, 5, 30)
+        fm2 = FitManager()
+        fm2.add_component("Linear")
+        fm2.auto_guess(xc, 2 * xc + 1)
+        r2 = fm2.run_fit(xc, 2.0 * xc + 1.0 + rng.normal(0, 0.1, 30), weight_mode="No weights")
+        self.assertEqual(r2.strong_correlations, [])
+        self.assertNotIn("strongly correlated", r2.report)
+
     def test_scalar_method_without_numdifftools_is_explained(self):
         from unittest import mock
         from curvelab.session import FitResult

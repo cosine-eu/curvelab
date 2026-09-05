@@ -11,6 +11,10 @@ import numpy as np
 # errors/residuals can't produce inf weights or log-of-zero.
 MIN_ERROR = 1e-12
 
+# |rho| above this between two varying parameters is flagged in the report
+# and the results panel.
+STRONG_CORRELATION = 0.9
+
 
 def make_series_id(dataset: str, x_col: str, y_col: str) -> str:
     """Canonical id for a plotted series: 'dataset::x_col::y_col'."""
@@ -48,6 +52,10 @@ class FitResult:
     success: bool = True
     message: str = ""
     nfev: int | None = None
+    # Parameter pairs with |correlation| above STRONG_CORRELATION, as
+    # [name_a, name_b, rho]: their individual values are poorly determined,
+    # only a combination is.
+    strong_correlations: list = field(default_factory=list)
     # How the fit was run (method, weight_mode, objective, scale_covar), in a
     # JSON-safe form, so a workspace reload can reproduce it rather than
     # refit with defaults. None for results from before this was recorded.

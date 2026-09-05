@@ -538,6 +538,13 @@ CurveLab shows one warning dialog if any of the following applies:
 - **No uncertainties from a scalar method.** Methods such as `nelder` or
   `powell` do not produce a covariance matrix; lmfit estimates one
   afterwards only if the `numdifftools` package is installed.
+- **Strongly correlated parameters** (|rho| > 0.9) are not a dialog, but
+  they are listed in the `[[Convergence]]` block and flagged at the end of
+  the goodness-of-fit line. Such a pair trades off against each other: the
+  data determine a combination of the two well, but not each one alone, so
+  their individual errors are large and move together. A line fitted far
+  from `x = 0` has a slope/intercept correlation near -1 for exactly this
+  reason. Fixing one, or reparameterizing (centering x), removes it.
 - **No uncertainties because the covariance is singular.** The StdErr
   column is empty although the fit converged: the parameters are not all
   identifiable from the data. The fitted *curve* can still look excellent
