@@ -586,6 +586,34 @@ class ObjectiveControlTests(GuiTestBase):
         self.assertEqual(objective_kws["f_scale"], 1.0)
 
 
+class DerivativeIntegralDialogTests(GuiTestBase):
+    """The dialog opens on a fitted composite model. This is the only path
+    that computes component areas, and it crashed on NumPy 2 until the
+    numerics moved into analysis_tools."""
+
+    def test_dialog_opens_with_component_areas(self):
+        import tkinter as tk
+        self._add_fitted_series(run=False)
+        sess = self.app._active_session
+        fm = sess.fit_manager
+        fm.add_component("Constant")          # Linear + Constant -> component curves
+        rec = self.app._active_record
+        sess.result = fm.run_fit(rec.x, rec.y, weight_mode="No weights")
+        self.assertTrue(sess.result.component_curves)
+
+        before = set(self.app.winfo_children())
+        self.app._show_derivative_integral()
+        new = [w for w in self.app.winfo_children()
+               if w not in before and isinstance(w, tk.Toplevel)]
+        self.assertEqual(len(new), 1)
+        # First child is the info frame holding the area labels.
+        labels = new[0].winfo_children()[0].winfo_children()
+        texts = [str(w.cget("text")) for w in labels]
+        self.assertTrue(any(t.startswith("Total area") for t in texts))
+        self.assertEqual(sum(t.startswith("  ") for t in texts), 2)
+        new[0].destroy()
+
+
 class BadMaxNfevTests(GuiTestBase):
     """A Max nfev that is not a positive whole number used to raise from
     int() after the async path had already flipped the panel into Abort

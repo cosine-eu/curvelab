@@ -133,6 +133,31 @@ def f_test(chi_reduced: float, n_params_reduced: int,
     return f_stat, p_value, df1, df2
 
 
+def derivative_and_integral(
+    x: np.ndarray, y: np.ndarray, component_curves: dict[str, np.ndarray] | None = None,
+) -> tuple[np.ndarray, np.ndarray, float, dict[str, float]]:
+    """Numerical derivative and cumulative integral of a curve on a grid.
+
+    Returns (dy/dx, cumulative integral starting at 0, total area, area per
+    component curve). Meant for the dense fitted curve, not for raw data:
+    differencing noisy data amplifies the noise.
+    """
+    # scipy's trapezoid rather than numpy's: np.trapz was removed in NumPy
+    # 2 and np.trapezoid does not exist in NumPy 1.
+    from scipy.integrate import cumulative_trapezoid, trapezoid
+
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    dydx = np.gradient(y, x)
+    integral = cumulative_trapezoid(y, x, initial=0)
+    total = float(integral[-1]) if len(integral) else 0.0
+    areas = {
+        name: float(trapezoid(np.asarray(yc, dtype=float), x))
+        for name, yc in (component_curves or {}).items()
+    }
+    return dydx, integral, total, areas
+
+
 def parse_x_spec(text: str) -> np.ndarray | None:
     """Parse an x-values spec: 'start:stop:npoints' or comma/space-separated
     numbers. Returns None for empty input."""

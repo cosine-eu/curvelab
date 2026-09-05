@@ -3,7 +3,7 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-from .analysis_tools import FWHM_TO_SIGMA, SMOOTH_METHODS
+from .analysis_tools import FWHM_TO_SIGMA, SMOOTH_METHODS, derivative_and_integral
 from .ui_common import BaseDialog, set_readonly_text
 
 # Preview updates are deferred so sliders stay responsive, and run once
@@ -358,33 +358,20 @@ class DerivativeIntegralDialog(BaseDialog):
     def __init__(self, parent, fit_manager, result):
         super().__init__(parent, "Derivative / Integral", size="700x500")
 
-        import numpy as np
         from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
         from matplotlib.figure import Figure
 
         x = result.x_dense
         y = result.y_fit_dense
-
-        # Numerical derivative
-        dydx = np.gradient(y, x)
-
-        # Numerical integral (cumulative)
-        from scipy.integrate import cumulative_trapezoid
-        integral = cumulative_trapezoid(y, x, initial=0)
-
-        # Summary
-        total_area = integral[-1] if len(integral) > 0 else 0.0
+        dydx, integral, total_area, areas = derivative_and_integral(
+            x, y, result.component_curves)
 
         info_frame = ttk.Frame(self)
         info_frame.pack(fill=tk.X, padx=10, pady=5)
         ttk.Label(info_frame, text=f"Total area (integral): {total_area:.6g}",
                   font=("TkDefaultFont", 10, "bold")).pack(anchor=tk.W)
-
-        # Component areas if available
-        if result.component_curves:
-            for name, y_comp in result.component_curves.items():
-                area = np.trapz(y_comp, x)
-                ttk.Label(info_frame, text=f"  {name}: {area:.6g}").pack(anchor=tk.W)
+        for name, area in areas.items():
+            ttk.Label(info_frame, text=f"  {name}: {area:.6g}").pack(anchor=tk.W)
 
         fig = Figure(figsize=(7, 4))
         ax1 = fig.add_subplot(2, 1, 1)

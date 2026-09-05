@@ -11,6 +11,7 @@ import numpy as np
 
 from curvelab.analysis_tools import (
     SMOOTH_METHODS,
+    derivative_and_integral,
     detect_outliers,
     f_test,
     find_peaks_with_widths,
@@ -123,6 +124,31 @@ class FTestTests(unittest.TestCase):
             f_test(50.0, 2, 100.0, 4, 54)     # full model worse
         with self.assertRaises(ValueError):
             f_test(100.0, 2, 50.0, 4, 4)      # no residual DOF
+
+
+class DerivativeIntegralTests(unittest.TestCase):
+    """Backs the Derivative / Integral dialog. The component areas used
+    np.trapz, which NumPy 2 removed; the dialog was never exercised by a
+    test, so the suite stayed green while the dialog crashed."""
+
+    def test_line_derivative_integral_and_areas(self):
+        x = np.linspace(0.0, 2.0, 201)
+        y = 3.0 * x
+        comps = {"a_": np.full_like(x, 1.0), "b_": 3.0 * x - 1.0}
+        dydx, integral, total, areas = derivative_and_integral(x, y, comps)
+        np.testing.assert_allclose(dydx, 3.0)
+        self.assertEqual(integral[0], 0.0)
+        self.assertAlmostEqual(integral[-1], 6.0, places=9)   # ∫0..2 3x dx
+        self.assertAlmostEqual(total, 6.0, places=9)
+        self.assertAlmostEqual(areas["a_"], 2.0, places=9)
+        self.assertAlmostEqual(areas["b_"], 4.0, places=9)
+        self.assertIsInstance(total, float)
+
+    def test_no_components(self):
+        x = np.linspace(0.0, 1.0, 11)
+        _, _, total, areas = derivative_and_integral(x, x ** 2, None)
+        self.assertAlmostEqual(total, 1.0 / 3.0, places=2)
+        self.assertEqual(areas, {})
 
 
 class ParseXSpecTests(unittest.TestCase):
