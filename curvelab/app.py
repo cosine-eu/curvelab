@@ -153,7 +153,7 @@ class CurveLabApp(
         if sess is None:
             return None
         fm = sess.fit_manager
-        if fm._last_result is None:
+        if fm.last_result is None:
             messagebox.showwarning("No Fit", "Run a fit first.")
             return None
         return fm
@@ -393,16 +393,23 @@ class CurveLabApp(
         else:
             self.fit_results.clear()
 
+    @staticmethod
+    def _params_with_init(params: dict, init: dict | None) -> dict:
+        """Parameter-table rows with an init_value column filled from init
+        (a {name: value} mapping) where available."""
+        rows = {}
+        for name, info in params.items():
+            entry = dict(info)
+            if init and name in init:
+                entry["init_value"] = init[name]
+            rows[name] = entry
+        return rows
+
     def _display_result(self, result):
         """Push a fit result to the results panel, enriching the parameter
         table with each parameter's initial value when available."""
-        params_display = {}
-        for name, info in result.params.items():
-            entry = dict(info)
-            if result.init_params and name in result.init_params:
-                entry["init_value"] = result.init_params[name]
-            params_display[name] = entry
-        self.fit_results.set_params(params_display)
+        self.fit_results.set_params(
+            self._params_with_init(result.params, result.init_params))
         self.fit_results.set_gof(result.gof, result.strong_correlations)
         self.fit_results.set_report(result.report)
 
@@ -521,13 +528,8 @@ class CurveLabApp(
             return
         fm.capture_start_values()
         # Reflect the adopted start in the Initial column as feedback.
-        params_display = {}
-        for name, info in sess.result.params.items():
-            entry = dict(info)
-            if name in fm.params:
-                entry["init_value"] = fm.params[name].value
-            params_display[name] = entry
-        self.fit_results.set_params(params_display)
+        self.fit_results.set_params(self._params_with_init(
+            sess.result.params, {n: p.value for n, p in fm.params.items()}))
 
     def _refresh_param_display(self):
         """Refresh the parameter table from the live FitManager params."""

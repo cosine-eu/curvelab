@@ -2,6 +2,7 @@
 
 import ast
 import copy
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -49,14 +50,8 @@ DEFAULT_WEIGHT_MODE = WEIGHT_INV_YERR
 # weights when a dataset has none).
 _YERR_WEIGHT_MODES = {WEIGHT_INV_YERR, WEIGHT_EFFECTIVE_VARIANCE}
 
-# Minimizers offered in the UI. The slow ones run on a background thread.
-FIT_METHODS = [
-    "leastsq", "least_squares", "nelder", "powell",
-    "cobyla", "lbfgsb",
-    "differential_evolution", "basinhopping",
-    "dual_annealing", "shgo", "ampgo",
-    "brute", "emcee", "odr",
-]
+# The slow minimizers run on a background thread (FIT_METHODS is derived from
+# METHOD_CAPS below).
 SLOW_METHODS = {
     "emcee", "brute", "differential_evolution", "basinhopping",
     "dual_annealing", "shgo", "ampgo",
@@ -102,11 +97,11 @@ METHOD_CAPS: dict[str, MethodCaps] = {
     "powell": _SCALAR,
     "cobyla": _SCALAR,
     "lbfgsb": _SCALAR,
-    "basinhopping": _SCALAR,
-    "ampgo": _SCALAR,
     "differential_evolution": _SCALAR_BOUNDED,
+    "basinhopping": _SCALAR,
     "dual_annealing": _SCALAR_BOUNDED,
     "shgo": _SCALAR_BOUNDED,
+    "ampgo": _SCALAR,
     "brute": _SCALAR_BOUNDED,
     "emcee": MethodCaps(objective=OBJ_POSTERIOR),
     "odr": MethodCaps(
@@ -115,6 +110,9 @@ METHOD_CAPS: dict[str, MethodCaps] = {
         requires=("odrpack",),
     ),
 }
+# Minimizers offered in the UI, in menu order: exactly the METHOD_CAPS keys,
+# so there is one list to keep in sync.
+FIT_METHODS = list(METHOD_CAPS)
 
 
 # Objective choices per kind. For OBJ_SCALAR the label maps to a reduce_fcn
@@ -135,7 +133,7 @@ DEFAULT_F_SCALE = 1.0
 
 # Single-choice objective labels for the kinds that offer no alternatives.
 _FIXED_OBJECTIVE_CHOICES = {
-    OBJ_RESIDUAL: ["Least squares"],
+    OBJ_RESIDUAL: [LEAST_SQUARES_DEFAULT],
     OBJ_POSTERIOR: ["Log-posterior"],
     OBJ_ODR: ["Orthogonal distance"],
 }
@@ -151,7 +149,7 @@ def objective_choices(method: str) -> list[str]:
     return list(_FIXED_OBJECTIVE_CHOICES[kind])
 
 
-def validate_fit_setup(method: str, params, has_xerr: bool,
+def validate_fit_setup(method: str, params: Parameters | None, has_xerr: bool,
                        weight_mode: str) -> tuple[list[str], list[str]]:
     """Check a fit configuration before running it.
 
@@ -745,13 +743,15 @@ class FitManager:
         models = [self._build_component_model(c) for c in self.components]
         self._model = self._assemble_model(models)
         self._params = self._model.make_params()
+        self._finalize_params()
 
-        # ExpressionModel params default to -inf; set to 1.0 so fits don't NaN
+    def _finalize_params(self):
+        """Last step of a rebuild: give ExpressionModel parameters (which
+        default to -inf) a finite start, then re-apply the stored hints so
+        user edits survive the rebuild."""
         for par in self._params.values():
             if par.value == float("-inf"):
                 par.set(value=1.0)
-
-        # Re-apply stored parameter hints so edits survive rebuilds
         for name, hints in self._param_hints.items():
             if name in self._params:
                 self._params[name].set(**hints)
@@ -776,14 +776,7 @@ class FitManager:
                         value=par.value, min=par.min, max=par.max,
                         vary=par.vary, expr=par.expr,
                     )
-        for par in self._params.values():
-            if par.value == float("-inf"):
-                par.set(value=1.0)
-
-        # Re-apply stored parameter hints so edits survive rebuilds
-        for name, hints in self._param_hints.items():
-            if name in self._params:
-                self._params[name].set(**hints)
+        self._finalize_params()
 
     @property
     def _has_spline(self) -> bool:
@@ -792,6 +785,11 @@ class FitManager:
     @property
     def model(self) -> Model | None:
         return self._model
+
+    @property
+    def last_result(self) -> ModelResult | None:
+        """The lmfit ModelResult of the last fit, for the analysis tools."""
+        return self._last_result
 
     @property
     def params(self) -> Parameters | None:
@@ -1724,8 +1722,8 @@ class FitManager:
                                    - model.eval(x=x_dense, **kw_minus)) / (2 * h)
                 var_y = np.einsum("ij,jk,ik->i", jac, cov, jac)
                 y_uncertainty = band_sigma * np.sqrt(np.maximum(var_y, 0.0))
-            except Exception:
-                pass
+            except Exception as e:
+                warnings.warn(f"ODR confidence band not computed: {e}", RuntimeWarning)
 
         # Component curves
         component_curves = {}
@@ -1735,8 +1733,8 @@ class FitManager:
                     for comp in model.components:
                         comp_kw = {n: best_kw[n] for n in comp.param_names if n in best_kw}
                         component_curves[comp.prefix] = comp.eval(x=x_dense, **comp_kw)
-            except Exception:
-                pass
+            except Exception as e:
+                warnings.warn(f"ODR component curves not computed: {e}", RuntimeWarning)
 
         # Build params info
         params_info = {}

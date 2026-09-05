@@ -122,7 +122,7 @@ class AnalysisHandlersMixin:
             return
         # Collect varied parameters
         vary_params = [
-            name for name, par in fm._last_result.params.items()
+            name for name, par in fm.last_result.params.items()
             if par.vary
         ]
         if len(vary_params) < 2:
@@ -144,7 +144,7 @@ class AnalysisHandlersMixin:
                 messagebox.showinfo("No Profiles",
                                     "Could not compute profile traces.")
                 return
-            best_chi2 = fm._last_result.chisqr
+            best_chi2 = fm.last_result.chisqr
             dlg = ProfileLikelihoodDialog(
                 self, profiles, best_chi2,
                 threshold=fm.ci_threshold(1.0),
@@ -210,7 +210,7 @@ class AnalysisHandlersMixin:
         if fm is None:
             return
         try:
-            uvars = fm._last_result.uvars
+            uvars = fm.last_result.uvars
         except Exception:
             messagebox.showwarning(
                 "No Uncertainties",
@@ -240,7 +240,7 @@ class AnalysisHandlersMixin:
             return
         try:
             from lmfit.model import save_modelresult
-            save_modelresult(fm._last_result, filepath)
+            save_modelresult(fm.last_result, filepath)
         except Exception as e:
             messagebox.showerror("Export Error", str(e))
 

@@ -720,7 +720,7 @@ class FitPanel(ttk.LabelFrame):
         self._f_scale_entry = ttk.Entry(obj_frame, textvariable=self.f_scale_var, width=6)
         self._f_scale_entry.pack(side=tk.LEFT, padx=2)
         # Remembers the chosen label for each objective kind across method
-        # switches, keyed by the first choice of that kind.
+        # switches, keyed by the kind (METHOD_CAPS[method].objective).
         self._objective_memory: dict[str, str] = {}
 
         # --- Weights ---
