@@ -291,9 +291,12 @@ class FitManager:
             prefix = ""
         else:
             if len(self.components) == 1 and self.components[0].prefix == "":
-                # Retroactively add prefix to first component
+                # Retroactively add prefix to first component. Its hints and
+                # start values are keyed by the bare names and must follow,
+                # or the user's edits silently revert on rebuild.
                 old = self.components[0]
                 old.prefix = f"{old.name.lower()}1_"
+                self._reprefix_param_state("", old.prefix)
             prefix = f"{model_name.lower()}{count}_"
 
         comp = FitComponent(
@@ -313,26 +316,33 @@ class FitManager:
         if not (0 <= index < len(self.components)):
             return
         removed = self.components.pop(index)
-        self._drop_param_hints(removed.prefix)
+        self._drop_param_state(removed.prefix)
         if len(self.components) == 1:
             # Single component: no prefix for cleaner parameter names
             old_prefix = self.components[0].prefix
             self.components[0].prefix = ""
-            self._reprefix_param_hints(old_prefix, "")
+            self._reprefix_param_state(old_prefix, "")
         self._rebuild_model()
 
-    def _drop_param_hints(self, prefix: str):
-        """Forget hints belonging to a component prefix."""
-        for name in [n for n in self._param_hints if n.startswith(prefix)]:
-            del self._param_hints[name]
+    def _drop_param_state(self, prefix: str):
+        """Forget hints and start values belonging to a component prefix.
 
-    def _reprefix_param_hints(self, old_prefix: str, new_prefix: str):
-        """Re-key hints from one component prefix to another."""
+        Stale start values are not harmless: if the prefix is later reused
+        (a lone component regains bare names), _reset_to_start_values would
+        resurrect them over the current values.
+        """
+        for mapping in (self._param_hints, self._start_values):
+            for name in [n for n in mapping if n.startswith(prefix)]:
+                del mapping[name]
+
+    def _reprefix_param_state(self, old_prefix: str, new_prefix: str):
+        """Re-key hints and start values from one component prefix to
+        another, so they keep applying to the same parameters."""
         if old_prefix == new_prefix:
             return
-        for name in [n for n in self._param_hints if n.startswith(old_prefix)]:
-            hints = self._param_hints.pop(name)
-            self._param_hints[new_prefix + name[len(old_prefix):]] = hints
+        for mapping in (self._param_hints, self._start_values):
+            for name in [n for n in mapping if n.startswith(old_prefix)]:
+                mapping[new_prefix + name[len(old_prefix):]] = mapping.pop(name)
 
     def edit_expression(self, index: int, new_expr: str):
         """Update the expression of an Expression component and rebuild."""

@@ -250,6 +250,51 @@ class ParamHintPersistenceTests(unittest.TestCase):
         self.assertEqual(fm.params["linear1_slope"].min, -5.0)
 
 
+class AddComponentHintsTests(unittest.TestCase):
+    """Adding a second component gives the first one a prefix. Its hints and
+    start values were keyed by the bare names and stopped applying, so a
+    user's fixed value or bound silently reverted to the model default."""
+
+    def test_first_component_hints_follow_new_prefix(self):
+        from curvelab.fit_manager import FitManager
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.set_param_hint("center", value=4.0, vary=False)
+        fm.set_param_hint("sigma", min=0.5, max=3.0)
+
+        fm.add_component("Linear")   # Gaussian becomes gaussian1_
+
+        self.assertEqual(fm.components[0].prefix, "gaussian1_")
+        self.assertNotIn("center", fm._param_hints)
+        self.assertEqual(fm.params["gaussian1_center"].value, 4.0)
+        self.assertFalse(fm.params["gaussian1_center"].vary)
+        self.assertEqual(fm.params["gaussian1_sigma"].min, 0.5)
+        self.assertEqual(fm.params["gaussian1_sigma"].max, 3.0)
+
+    def test_start_values_follow_prefix_and_do_not_resurrect(self):
+        from curvelab.fit_manager import FitManager
+        x = np.linspace(0, 10, 50)
+        y = 2 * x + 1
+
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.set_start_value("slope", 7.0)
+
+        fm.add_component("Constant")   # Linear becomes linear1_
+        self.assertNotIn("slope", fm._start_values)
+        self.assertEqual(fm._start_values["linear1_slope"], 7.0)
+
+        # Remove the Constant again: the start value must be moved back, and
+        # a stale bare-name entry must not be resurrected over a fresh edit.
+        fm.remove_component(1)
+        self.assertNotIn("linear1_slope", fm._start_values)
+        self.assertEqual(fm._start_values["slope"], 7.0)
+        fm.set_param("slope", value=1.5)
+        fm.set_start_value("slope", 1.5)
+        result = fm.run_fit(x, y)
+        self.assertAlmostEqual(result.init_params["slope"], 1.5)
+
+
 class RemoveComponentHintsTests(unittest.TestCase):
     """Parameter hints are keyed by prefixed name, so removing a component
     must drop its hints and re-key a lone survivor's when it loses its
