@@ -219,6 +219,9 @@ N_DENSE = 500
 # to |x|, with a floor so x == 0 still gets a usable step.
 DFDX_REL_STEP = 1e-8
 DFDX_MIN_STEP = 1e-10
+# Central-difference step for the ODR band Jacobian (df/dbeta).
+ODR_JAC_REL_STEP = 1e-6
+ODR_JAC_MIN_STEP = 1e-10
 
 
 def make_gof(chisqr=None, redchi=None, rsquared=None, aic=None, bic=None) -> dict:
@@ -1111,24 +1114,28 @@ class FitManager:
         y_fit_dense = model.eval(x=x_dense, **best_kw)
         y_fit_data = model.eval(x=x, **best_kw)
 
-        # Confidence band via error propagation (numerical)
+        # Confidence band by linear error propagation through the full
+        # parameter covariance: var(y) = J C J^T with J = df/dbeta on the
+        # dense grid. odrpack's cov_beta is unscaled; the covariance that
+        # matches sd_beta is cov_beta * res_var. Using only the diagonal
+        # (sd_beta) would drop the parameter correlations, which for a line
+        # fitted away from x = 0 are close to -1 and make the band several
+        # times too wide.
         y_uncertainty = None
-        if any(result.sd_beta[i] > 0 for i in range(len(param_names)) if vary_mask[i]):
+        varied = [i for i, v in enumerate(vary_mask) if v]
+        if varied and np.any(result.sd_beta[varied] > 0):
             try:
-                # Simple numerical uncertainty propagation
-                var_y = np.zeros(n_dense)
-                for i, name in enumerate(param_names):
-                    if not vary_mask[i] or result.sd_beta[i] <= 0:
-                        continue
-                    h = max(abs(result.beta[i]) * 1e-6, 1e-10)
-                    kw_plus = dict(best_kw)
-                    kw_plus[name] = result.beta[i] + h
-                    kw_minus = dict(best_kw)
-                    kw_minus[name] = result.beta[i] - h
-                    dy = (model.eval(x=x_dense, **kw_plus) -
-                          model.eval(x=x_dense, **kw_minus)) / (2 * h)
-                    var_y += (dy * result.sd_beta[i]) ** 2
-                y_uncertainty = band_sigma * np.sqrt(var_y)
+                cov = np.asarray(result.cov_beta)[np.ix_(varied, varied)] * result.res_var
+                jac = np.empty((n_dense, len(varied)))
+                for col, i in enumerate(varied):
+                    name = param_names[i]
+                    h = max(abs(result.beta[i]) * ODR_JAC_REL_STEP, ODR_JAC_MIN_STEP)
+                    kw_plus = dict(best_kw, **{name: result.beta[i] + h})
+                    kw_minus = dict(best_kw, **{name: result.beta[i] - h})
+                    jac[:, col] = (model.eval(x=x_dense, **kw_plus)
+                                   - model.eval(x=x_dense, **kw_minus)) / (2 * h)
+                var_y = np.einsum("ij,jk,ik->i", jac, cov, jac)
+                y_uncertainty = band_sigma * np.sqrt(np.maximum(var_y, 0.0))
             except Exception:
                 pass
 

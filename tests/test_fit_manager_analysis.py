@@ -133,6 +133,33 @@ class OdrTests(unittest.TestCase):
         self.assertAlmostEqual(result.params["intercept"]["value"], 1.0, places=6)
         self.assertIsNone(result.params["intercept"]["stderr"])
 
+    def test_odr_band_uses_full_parameter_covariance(self):
+        # For a line fitted away from x = 0, slope and intercept are almost
+        # perfectly anticorrelated. Propagating only the diagonal (sd_beta)
+        # ignores that and gives a band several times too wide.
+        from curvelab.fit_manager import FitManager
+        from odrpack import odr_fit
+        rng = np.random.default_rng(0)
+        x = np.linspace(10, 20, 20)
+        y = 2.0 * x + 1.0 + rng.normal(0, 0.5, 20)
+        yerr = np.full(20, 0.5)
+        xerr = np.full(20, 0.1)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        result = fm.run_odr(x, y, yerr=yerr, xerr=xerr)
+
+        ref = odr_fit(lambda xx, b: b[0] * xx + b[1], x, y, np.array([2.0, 1.0]),
+                      weight_y=1 / yerr ** 2, weight_x=1 / xerr ** 2)
+        cov = ref.cov_beta * ref.res_var
+        x0 = 15.0
+        expected = np.sqrt(cov[0, 0] * x0 ** 2 + 2 * cov[0, 1] * x0 + cov[1, 1])
+        diagonal_only = np.sqrt(cov[0, 0] * x0 ** 2 + cov[1, 1])
+
+        i = np.argmin(np.abs(result.x_dense - x0))
+        self.assertAlmostEqual(result.y_uncertainty[i], expected, places=4)
+        self.assertLess(result.y_uncertainty[i], diagonal_only / 3)
+
     def test_odr_refits_from_the_guess(self):
         # Like run_fit, repeated ODR fits start from the same values instead
         # of chaining, so they are reproducible.
