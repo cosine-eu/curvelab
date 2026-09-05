@@ -689,6 +689,29 @@ class WeightedResidualTests(unittest.TestCase):
         np.testing.assert_allclose(r.weighted_residuals(), 0.2)
 
 
+class KnownSigmaStderrTests(unittest.TestCase):
+    """Pins the weight convention end to end: with weights = 1/sigma and
+    scale_covar off, the reported stderr must be the analytic one."""
+
+    def test_slope_stderr_matches_the_analytic_value(self):
+        from curvelab.fit_manager import FitManager
+        rng = np.random.default_rng(0)
+        x = np.linspace(0, 10, 50)
+        sigma = 0.3
+        y = 2.0 * x + 1.0 + rng.normal(0, sigma, 50)
+        fm = FitManager()
+        fm.add_component("Linear")
+        fm.auto_guess(x, y)
+        r = fm.run_fit(x, y, yerr=np.full(50, sigma), scale_covar=False)
+        # For a straight line with equal sigma: var(slope) = sigma^2 / sum((x - xbar)^2)
+        analytic = sigma / np.sqrt(np.sum((x - x.mean()) ** 2))
+        self.assertAlmostEqual(r.params["slope"]["stderr"], analytic, places=8)
+        # With scaling on, the stderr is multiplied by sqrt(chi2/nu) instead.
+        rs = fm.run_fit(x, y, yerr=np.full(50, sigma), scale_covar=True)
+        self.assertAlmostEqual(rs.params["slope"]["stderr"],
+                               analytic * np.sqrt(rs.gof["reduced chi-squared"]), places=8)
+
+
 class WeightedRSquaredTests(unittest.TestCase):
     """lmfit 1.2.x computed R^2 from the weighted residuals over the
     unweighted total sum of squares, so a perfect fit with small sigma gave a
