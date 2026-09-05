@@ -196,6 +196,13 @@ class OdrTests(unittest.TestCase):
         self.assertAlmostEqual(result.params["intercept"]["value"], 1.0, places=6)
         self.assertIsNone(result.params["intercept"]["stderr"])
 
+    def test_odr_refuses_to_run_without_xerr(self):
+        # odrpack would silently take sigma_x = 1 and absorb the residuals
+        # into x (chi2 far below the least-squares value, meaningless errors).
+        with self.assertRaises(ValueError) as cm:
+            self.fm.run_odr(self.x, self.y, yerr=self.yerr, xerr=None)
+        self.assertIn("x-errors", str(cm.exception))
+
     def test_odr_band_uses_full_parameter_covariance(self):
         # For a line fitted away from x = 0, slope and intercept are almost
         # perfectly anticorrelated. Propagating only the diagonal (sd_beta)

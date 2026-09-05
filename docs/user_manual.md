@@ -456,6 +456,13 @@ minimizes vertical distances), ODR minimizes the orthogonal distances from
 data points to the model curve, weighted by the measurement uncertainties
 in both variables.
 
+The series must have an X-error column; the fit is refused without one.
+Without x-errors odrpack would assume an x-error of 1 in data units and
+absorb the residuals into x, giving a meaningless fit. Y-errors are optional
+(unit y weights are used when absent). The reported parameter errors are
+always scaled by the residual variance, the equivalent of Scale covariance
+being on.
+
 Requires installation of the optional `odr` dependency:
 
 ```bash

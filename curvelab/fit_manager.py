@@ -189,6 +189,14 @@ def validate_fit_setup(method: str, params, has_xerr: bool,
             "none, so 1/yerr weighting is used instead."
         )
 
+    if method == "odr" and not has_xerr:
+        errors.append(
+            "Orthogonal distance regression needs x-errors; this series has "
+            "none. Without them ODR silently assumes an x-error of 1 in data "
+            "units and absorbs the residuals into x. Add an x-error column, "
+            "or use a least-squares method."
+        )
+
     return errors, warnings
 
 
@@ -1083,7 +1091,10 @@ class FitManager:
     ) -> FitResult:
         """Run orthogonal distance regression using the odrpack package.
 
-        Requires both xerr and yerr for proper ODR weighting.
+        xerr is required: odrpack treats a missing x weight as an x-error of
+        1 in data units, which lets the x-adjustments absorb the residuals
+        and makes the fit and its errors meaningless. yerr is optional
+        (unit y weights then), as for the other methods.
         """
         try:
             from odrpack import odr_fit
@@ -1094,6 +1105,11 @@ class FitManager:
 
         if self._model is None or self._params is None:
             raise ValueError("No model defined")
+        if xerr is None:
+            raise ValueError(
+                "Orthogonal distance regression needs x-errors; this series "
+                "has none. Add an x-error column, or use a least-squares method."
+            )
 
         if self._has_spline:
             self._rebuild_model_with_data(x)

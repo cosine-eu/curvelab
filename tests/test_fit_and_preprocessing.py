@@ -187,6 +187,15 @@ class ValidateFitSetupTests(unittest.TestCase):
             has_xerr=False, weight_mode="No weights")
         self.assertEqual(errors, [])
 
+    def test_odr_without_xerr_is_an_error(self):
+        from curvelab.fit_manager import validate_fit_setup, WEIGHT_INV_YERR
+        errors, _ = validate_fit_setup("odr", None, has_xerr=False,
+                                       weight_mode=WEIGHT_INV_YERR)
+        self.assertTrue(any("x-errors" in e for e in errors))
+        errors, _ = validate_fit_setup("odr", None, has_xerr=True,
+                                       weight_mode=WEIGHT_INV_YERR)
+        self.assertFalse(any("x-errors" in e for e in errors))
+
     def test_effective_variance_without_xerr_warns(self):
         from curvelab.fit_manager import validate_fit_setup
         errors, warnings = validate_fit_setup(
