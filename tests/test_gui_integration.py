@@ -535,6 +535,48 @@ class SqliteWorkspaceReloadTests(GuiTestBase):
         self.assertEqual(len(self.app.data_mgr.datasets), 2)
 
 
+class WorkspaceLoadWarningTests(GuiTestBase):
+    """Series whose columns are gone and fits that cannot be reconstructed
+    used to vanish silently on load. They are now collected and reported
+    once, and the rest of the workspace still loads."""
+
+    def test_missing_column_and_failed_refit_are_reported_once(self):
+        x = np.linspace(0, 10, 20)
+        self.app.data_mgr.add_dataframe("ds", pd.DataFrame({"x": x, "y": 2 * x}))
+        mapping = {"ds": "ds"}
+        ws = {"series": {
+            "ds::x::y": {"dataset_name": "ds", "visible": True, "fit_sessions": {},
+                         "style": {"dataset": "ds", "x": "x", "y": "y", "yerr": "", "xerr": "",
+                                   "label": "good", "marker": "o", "linestyle": "None", "color": ""}},
+            "ds::x::gone": {"dataset_name": "ds", "visible": True, "fit_sessions": {},
+                            "style": {"dataset": "ds", "x": "x", "y": "gone", "yerr": "", "xerr": "",
+                                      "label": "stale", "marker": "o", "linestyle": "None", "color": ""}},
+        }}
+        problems: list[str] = []
+        self.app._load_workspace_series(ws, mapping, problems)
+        self.assertEqual(list(self.app._series_records), ["ds::x::y"])
+        self.assertEqual(len(problems), 1)
+        self.assertIn("'stale' skipped", problems[0])
+        self.assertIn("No column 'gone'", problems[0])
+
+        # A session whose refit blows up is reported, not passed over.
+        rec = self.app._series_records["ds::x::y"]
+        sess = rec.ensure_session("fit1")
+        sess.fit_manager.add_component("Linear")
+        sess.result = mock.Mock()
+        with mock.patch.object(sess.fit_manager, "refit_from_result",
+                               side_effect=RuntimeError("boom")):
+            self.app._load_workspace_refit(problems)
+        self.assertEqual(len(problems), 2)
+        self.assertIn("session 'fit1'", problems[1])
+        self.assertIn("boom", problems[1])
+
+        with mock.patch("curvelab.app.messagebox") as mb:
+            self.app._report_collected_warnings("Workspace Load Warnings", problems)
+        mb.showwarning.assert_called_once()
+        self.assertEqual(mb.showwarning.call_args[0][0], "Workspace Load Warnings")
+
+
 class ObjectiveControlTests(GuiTestBase):
     """The Objective control follows the method, f_scale enables only for
     robust losses, and the app turns the selection into fit_kws."""
