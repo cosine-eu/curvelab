@@ -68,6 +68,12 @@ class FitHandlersMixin:
         if warnings:
             messagebox.showinfo("Fit Warning", "\n".join(warnings))
 
+        # Validate the option entries before any fit path touches UI state:
+        # _run_fit_async locks the panel first, and an exception after that
+        # would leave the Fit button stuck on "Abort".
+        if self._fit_options_or_warn() is None:
+            return
+
         # Capture the series id now, since an async fit can outlive the
         # user's current selection (e.g. they switch to another series
         # while a slow method like emcee is still running).
@@ -81,7 +87,13 @@ class FitHandlersMixin:
             self._run_fit_sync(rec, sess, method, sid)
 
     def _get_fit_options(self):
-        """Read objective, weight mode, max_nfev, band_sigma, scale_covar from UI."""
+        """Read objective, weight mode, max_nfev, band_sigma, scale_covar from UI.
+
+        Raises ValueError with a user-readable message for a Max nfev that
+        is not a positive whole number. Fit entry points must call
+        _fit_options_or_warn before changing any UI state, so a bad entry
+        is reported instead of escaping from a Tk callback halfway through.
+        """
         method = self.fit_panel.method_var.get()
         try:
             f_scale = float(self.fit_panel.f_scale_var.get())
@@ -91,10 +103,29 @@ class FitHandlersMixin:
             method, self.fit_panel.objective_var.get(), f_scale)
         weight_mode = self.fit_panel.weight_var.get()
         max_nfev_str = self.fit_panel.max_nfev_var.get().strip()
-        max_nfev = int(max_nfev_str) if max_nfev_str else None
+        max_nfev = None
+        if max_nfev_str:
+            try:
+                max_nfev = int(max_nfev_str)
+            except ValueError:
+                max_nfev = 0
+            if max_nfev <= 0:
+                raise ValueError(
+                    f"Max nfev must be a positive whole number or empty, "
+                    f"got '{max_nfev_str}'."
+                )
         band_sigma = int(self.plot_controls.band_sigma_var.get())
         scale_covar = self.fit_panel.scale_covar_var.get()
         return objective_kws, weight_mode, max_nfev, band_sigma, scale_covar
+
+    def _fit_options_or_warn(self):
+        """_get_fit_options, reporting an invalid entry to the user and
+        returning None instead of raising."""
+        try:
+            return self._get_fit_options()
+        except ValueError as e:
+            messagebox.showwarning("Invalid Fit Option", str(e))
+            return None
 
     def _run_fit_sync(self, rec, sess, method, sid):
         """Run fit synchronously (fast methods)."""
@@ -272,7 +303,10 @@ class FitHandlersMixin:
                 selected_recs.append((sid, r))
             self._report_collected_warnings("Data Warnings", data_warnings)
 
-            _, weight_mode, max_nfev, _, _ = self._get_fit_options()
+            options = self._fit_options_or_warn()
+            if options is None:
+                return
+            _, weight_mode, max_nfev, _, _ = options
             method = self.fit_panel.method_var.get()
             results = fm.run_global_fit(
                 datasets, shared, method=method,
@@ -306,7 +340,10 @@ class FitHandlersMixin:
         summary_rows = []
         data_warnings: list[str] = []
         fit_errors: list[str] = []
-        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = self._get_fit_options()
+        options = self._fit_options_or_warn()
+        if options is None:
+            return
+        objective_kws, weight_mode, max_nfev, band_sigma, scale_covar = options
 
         for sid, target_rec in self._series_records.items():
             target_sess = target_rec.ensure_session(session_name)

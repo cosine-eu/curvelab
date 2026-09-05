@@ -586,6 +586,43 @@ class ObjectiveControlTests(GuiTestBase):
         self.assertEqual(objective_kws["f_scale"], 1.0)
 
 
+class BadMaxNfevTests(GuiTestBase):
+    """A Max nfev that is not a positive whole number used to raise from
+    int() after the async path had already flipped the panel into Abort
+    state, leaving every fit control disabled with no fit running."""
+
+    def _fit_with_max_nfev(self, text):
+        self._add_fitted_series(run=False)
+        fp = self.app.fit_panel
+        fp.method_var.set("nelder"); fp._on_method_changed()   # async path
+        fp.max_nfev_var.set(text)
+        with mock.patch("curvelab.app_fit_handlers.messagebox") as mb:
+            self.app._on_fit()
+        return fp, mb
+
+    def test_non_numeric_max_nfev_warns_and_leaves_fit_button_usable(self):
+        fp, mb = self._fit_with_max_nfev("abc")
+        mb.showwarning.assert_called_once()
+        self.assertEqual(mb.showwarning.call_args[0][0], "Invalid Fit Option")
+        self.assertEqual(fp._fit_btn["text"], "Fit")
+        self.assertEqual(str(fp._add_comp_btn.cget("state")), "normal")
+        self.assertIsNone(self.app._fit_thread)
+
+    def test_zero_max_nfev_is_rejected(self):
+        fp, mb = self._fit_with_max_nfev("0")
+        mb.showwarning.assert_called_once()
+        self.assertEqual(fp._fit_btn["text"], "Fit")
+
+    def test_get_fit_options_raises_for_bad_max_nfev(self):
+        self._add_fitted_series(run=False)
+        self.app.fit_panel.max_nfev_var.set("12.5")
+        with self.assertRaises(ValueError):
+            self.app._get_fit_options()
+        self.app.fit_panel.max_nfev_var.set(" 250 ")
+        _, _, max_nfev, _, _ = self.app._get_fit_options()
+        self.assertEqual(max_nfev, 250)
+
+
 class ObjectiveWorkspaceTests(GuiTestBase):
     """The objective survives a workspace round trip, and an old reduce_fcn
     key still loads."""
