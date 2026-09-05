@@ -17,6 +17,7 @@ from curvelab.analysis_tools import (
     f_test,
     find_peaks_with_widths,
     parse_x_spec,
+    simulate_data,
     smooth_data,
     standardize_residuals,
 )
@@ -166,6 +167,50 @@ class ResidualDiagnosticsTests(unittest.TestCase):
         self.assertAlmostEqual(acf[0], 1.0)
         self.assertLess(acf[1], -0.9)
         self.assertAlmostEqual(ci, 1.96 / np.sqrt(40))
+
+
+class SimulateDataTests(unittest.TestCase):
+    """'Poisson noise' was Gaussian with sigma = scale*sqrt|y|, unseeded.
+    It is now real counting noise, and the draw is seeded."""
+
+    def test_poisson_gives_integer_counts_with_poisson_variance(self):
+        model = lambda x: 100.0 + 0.0 * x
+        x, y, yerr, xerr = simulate_data(model, 0, 1, 2000, {"poisson": True, "poisson_gain": 1.0}, seed=0)
+        self.assertTrue(np.all(y == np.round(y)))          # counts
+        self.assertTrue(np.all(y >= 0))
+        self.assertAlmostEqual(y.mean(), 100.0, delta=1.0)
+        self.assertAlmostEqual(y.var(), 100.0, delta=8.0)   # var = mean
+        np.testing.assert_allclose(yerr, 10.0)
+        self.assertIsNone(xerr)
+
+    def test_poisson_gain_scales_counts_and_variance(self):
+        model = lambda x: 100.0 + 0.0 * x
+        x, y, yerr, _ = simulate_data(model, 0, 1, 4000, {"poisson": True, "poisson_gain": 4.0}, seed=1)
+        self.assertTrue(np.all(np.isclose(y % 4.0, 0.0)))   # multiples of the gain
+        self.assertAlmostEqual(y.mean(), 100.0, delta=1.5)
+        self.assertAlmostEqual(y.var(), 400.0, delta=30.0)  # var = gain * y
+        np.testing.assert_allclose(yerr, 20.0)
+
+    def test_negative_model_values_count_as_zero(self):
+        _, y, _, _ = simulate_data(lambda x: -5.0 + 0.0 * x, 0, 1, 50, {"poisson": True}, seed=0)
+        np.testing.assert_array_equal(y, 0.0)
+
+    def test_seed_reproduces_and_jitter_reports_xerr(self):
+        cfg = {"gaussian": True, "gaussian_sigma": 0.5, "jitter": True, "jitter_sigma": 0.1}
+        a = simulate_data(lambda x: 2 * x, 0, 10, 30, cfg, seed=5)
+        b = simulate_data(lambda x: 2 * x, 0, 10, 30, cfg, seed=5)
+        c = simulate_data(lambda x: 2 * x, 0, 10, 30, cfg, seed=6)
+        np.testing.assert_array_equal(a[1], b[1])
+        self.assertFalse(np.array_equal(a[1], c[1]))
+        np.testing.assert_allclose(a[3], 0.1)
+        np.testing.assert_allclose(a[2], 0.5)
+        self.assertTrue(np.all(np.diff(a[0]) > 0))          # sorted by x
+
+    def test_no_noise_returns_model_and_no_errors(self):
+        x, y, yerr, xerr = simulate_data(lambda x: x ** 2, 0, 2, 5, {}, seed=0)
+        np.testing.assert_allclose(y, x ** 2)
+        self.assertIsNone(yerr)
+        self.assertIsNone(xerr)
 
 
 class ParseXSpecTests(unittest.TestCase):

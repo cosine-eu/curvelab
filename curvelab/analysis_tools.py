@@ -158,6 +158,61 @@ def derivative_and_integral(
     return dydx, integral, total, areas
 
 
+def simulate_data(model_eval, x_min: float, x_max: float, n_points: int,
+                  noise_cfg: dict, seed: int | None = None):
+    """Synthetic (x, y, yerr, xerr) from a model curve plus the configured
+    noise. model_eval(x) returns the model at x.
+
+    noise_cfg keys (each optional, off by default):
+      gaussian, gaussian_sigma   additive N(0, sigma) noise
+      poisson, poisson_gain g    counting noise: y is drawn as g * Poisson(y/g),
+                                 so the variance is g * y (g = 1 is pure
+                                 Poisson; g > 1 is coarser counting). Model
+                                 values below zero count as zero. Not a
+                                 Gaussian approximation, so low counts are
+                                 skewed and never negative, as real counts.
+      jitter, jitter_sigma       N(0, sigma_x) jitter on x, reported as xerr
+
+    yerr is the true 1-sigma of the applied noise (sqrt of the summed
+    variances, with g * max(y_model, 0) for the Poisson part), or None when
+    no y-noise was added. Points are returned sorted by x. seed makes the
+    draw reproducible.
+    """
+    rng = np.random.default_rng(seed)
+    x = np.linspace(float(x_min), float(x_max), int(n_points))
+    xerr = None
+    if noise_cfg.get("jitter"):
+        sigma_x = float(noise_cfg.get("jitter_sigma", 0.0))
+        x = x + rng.normal(0.0, sigma_x, size=x.size)
+        xerr = np.full(x.size, sigma_x)
+
+    y_model = np.asarray(model_eval(x), dtype=float)
+    y = y_model.copy()
+    variance = np.zeros(x.size)
+
+    if noise_cfg.get("poisson"):
+        gain = float(noise_cfg.get("poisson_gain", noise_cfg.get("poisson_scale", 1.0)))
+        if gain <= 0:
+            raise ValueError("Poisson gain must be positive.")
+        lam = np.maximum(y_model, 0.0) / gain
+        counts = rng.poisson(lam)
+        # Replace the model value by the counted one; the Gaussian term
+        # below is added on top of that.
+        y = counts * gain
+        variance += gain * np.maximum(y_model, 0.0)
+
+    if noise_cfg.get("gaussian"):
+        sigma = float(noise_cfg.get("gaussian_sigma", 0.0))
+        y = y + rng.normal(0.0, sigma, size=x.size)
+        variance += sigma ** 2
+
+    yerr = np.sqrt(variance) if variance.any() else None
+    order = np.argsort(x)
+    return (x[order], y[order],
+            None if yerr is None else yerr[order],
+            None if xerr is None else xerr[order])
+
+
 def parse_x_spec(text: str) -> np.ndarray | None:
     """Parse an x-values spec: 'start:stop:npoints' or comma/space-separated
     numbers. Returns None for empty input."""

@@ -52,7 +52,7 @@ class SimulateDataDialog(BaseDialog):
 
         for row, (var_on, var_mag, label, mag_label) in enumerate([
             (self._gauss_on, self._gauss_sigma, "Gaussian noise", "sigma"),
-            (self._poisson_on, self._poisson_scale, "Poisson noise", "scale"),
+            (self._poisson_on, self._poisson_scale, "Poisson counting noise", "gain"),
             (self._jitter_on, self._jitter_sigma, "X-jitter", "sigma_x"),
         ]):
             ttk.Checkbutton(noise_frame, text=label, variable=var_on).grid(
@@ -62,6 +62,16 @@ class SimulateDataDialog(BaseDialog):
             ttk.Entry(noise_frame, textvariable=var_mag, width=8).grid(
                 row=row, column=2, padx=(0, 5)
             )
+        ttk.Label(noise_frame, text="Poisson: y drawn as gain \u00d7 Poisson(y / gain); "
+                  "variance = gain \u00d7 y", foreground="gray").grid(
+            row=3, column=0, columnspan=3, sticky=tk.W, padx=5)
+
+        # A fixed default seed makes Generate reproducible; clear for a
+        # fresh draw.
+        ttk.Label(noise_frame, text="Seed").grid(row=4, column=0, sticky=tk.W, padx=(5, 10))
+        self._seed_var = tk.StringVar(value="0")
+        ttk.Entry(noise_frame, textvariable=self._seed_var, width=8).grid(
+            row=4, column=2, padx=(0, 5), sticky=tk.W)
 
         # --- Buttons ---
         btn_frame = ttk.Frame(self)
@@ -89,13 +99,15 @@ class SimulateDataDialog(BaseDialog):
             return
 
         try:
+            seed_text = self._seed_var.get().strip()
             noise_cfg = {
                 "gaussian": self._gauss_on.get(),
                 "gaussian_sigma": float(self._gauss_sigma.get()) if self._gauss_on.get() else 0,
                 "poisson": self._poisson_on.get(),
-                "poisson_scale": float(self._poisson_scale.get()) if self._poisson_on.get() else 0,
+                "poisson_gain": float(self._poisson_scale.get()) if self._poisson_on.get() else 1.0,
                 "jitter": self._jitter_on.get(),
                 "jitter_sigma": float(self._jitter_sigma.get()) if self._jitter_on.get() else 0,
+                "seed": int(seed_text) if seed_text else None,
             }
         except ValueError:
             self._status_var.set("Invalid noise parameter.")

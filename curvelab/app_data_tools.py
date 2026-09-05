@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from tkinter import messagebox
 
+from .analysis_tools import simulate_data
 from .ui_dialogs_data import (
     SimulateDataDialog, ColumnCalculatorDialog,
     EvaluateModelDialog, FindPeaksDialog, DerivativeIntegralDialog,
@@ -104,42 +105,11 @@ class DataToolsMixin:
 
     def _generate_simulated_data(self, x_min, x_max, n_points, noise_cfg):
         fm = self._active_fit_mgr
-        x = np.linspace(x_min, x_max, n_points)
-        xerr = None
-
-        # X-jitter
-        if noise_cfg.get("jitter"):
-            sigma_x = noise_cfg["jitter_sigma"]
-            x = x + np.random.normal(0, sigma_x, size=n_points)
-            xerr = np.full(n_points, sigma_x)
-
-        y = fm.model.eval(fm.params, x=x)
-
-        variance = np.zeros(n_points)
-
-        # Poisson noise
-        if noise_cfg.get("poisson"):
-            scale = noise_cfg["poisson_scale"]
-            poisson_sigma = scale * np.sqrt(np.abs(y))
-            y = y + poisson_sigma * np.random.normal(0, 1, size=n_points)
-            variance += poisson_sigma ** 2
-
-        # Gaussian noise
-        if noise_cfg.get("gaussian"):
-            sigma = noise_cfg["gaussian_sigma"]
-            y = y + np.random.normal(0, sigma, size=n_points)
-            variance += sigma ** 2
-
-        yerr = np.sqrt(variance) if variance.any() else None
-
-        # Sort by x (jitter may reorder)
-        order = np.argsort(x)
-        x = x[order]
-        y = y[order]
-        if yerr is not None:
-            yerr = yerr[order]
-        if xerr is not None:
-            xerr = xerr[order]
+        params = fm.params
+        x, y, yerr, xerr = simulate_data(
+            lambda xv: fm.model.eval(params, x=xv),
+            x_min, x_max, n_points, noise_cfg, seed=noise_cfg.get("seed"),
+        )
 
         # Check if active series is an empty placeholder — reuse its dataset
         cur_rec = self._active_record

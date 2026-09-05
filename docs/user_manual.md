@@ -1543,10 +1543,19 @@ configurable noise. This is useful for:
 3. Configure:
    - **x_min, x_max, N points**: Range and number of points
    - **Gaussian noise**: Additive Gaussian noise with specified sigma
-   - **Poisson noise**: Poisson-distributed noise scaled by a factor
-     (appropriate for count data)
+   - **Poisson counting noise**: the model value is treated as an expected
+     count and `y` is drawn as `gain * Poisson(y / gain)`, so the variance
+     is `gain * y` (gain 1 is pure Poisson; a larger gain is coarser
+     counting). Real counts, not a Gaussian approximation: low values are
+     skewed and never negative, and model values below zero count as zero.
    - **X-jitter**: Gaussian perturbation of X values with specified sigma
+   - **Seed**: random seed (default 0, so Generate is reproducible; clear
+     the field for a fresh draw)
 4. Click **Generate**.
+
+The Y-error column holds the true 1-sigma of the applied noise (the
+Poisson part contributes `sqrt(gain * y_model)`), which is what a fit
+should be given.
 
 The simulated data appears as a new series (named "Simulated 1", etc.) and
 is automatically plotted. If the active series is an empty placeholder, the
