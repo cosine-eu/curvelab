@@ -61,6 +61,23 @@ class FitResult:
     # refit with defaults. None for results from before this was recorded.
     fit_options: dict | None = None
 
+    def comparison_key(self) -> tuple:
+        """What has to agree between two results for AIC/BIC or an F-test
+        to compare them: the same points (count and x range), the same
+        weights, and the same objective. Different data or a different
+        objective make chi-square, and everything derived from it,
+        incommensurable."""
+        opts = self.fit_options or {}
+        x = np.asarray(self.x_data, dtype=float)
+        xr = (round(float(x.min()), 12), round(float(x.max()), 12)) if x.size else (None, None)
+        objective = opts.get("objective") or {}
+        return (
+            int(x.size), xr,
+            opts.get("weight_mode"),
+            self.yerr_data is not None,
+            tuple(sorted((k, str(v)) for k, v in objective.items())),
+        )
+
     def residuals(self) -> np.ndarray:
         """Raw residuals (data minus fit) at the data points."""
         return self.y_data - self.y_fit_data

@@ -469,4 +469,5 @@ class FitHandlersMixin:
         self._report_collected_warnings("Batch Fit Warnings", fit_errors)
 
         if summary_rows:
-            ModelComparisonDialog(self, summary_rows)
+            # Rows are different series: their AICs are not commensurable.
+            ModelComparisonDialog(self, summary_rows, highlight_best=False)

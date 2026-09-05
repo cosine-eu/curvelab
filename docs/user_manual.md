@@ -1115,13 +1115,20 @@ Displays a table comparing all fit sessions on the active series:
 |--------|-------------|
 | Session | Session name |
 | Model | Composite model description |
-| N params | Number of free parameters |
+| N params | Number of varying parameters (the `k` in AIC/BIC; fixed and derived parameters do not count) |
 | chi2 | Chi-squared statistic |
 | chi2/nu | Reduced chi-squared |
 | AIC | Akaike Information Criterion |
 | BIC | Bayesian Information Criterion |
 
-The session with the lowest AIC is highlighted in green.
+The session with the lowest AIC is highlighted in green. Only sessions
+fitted to the same data (points and X range), with the same weight mode
+and the same objective as the first row take part: AIC and BIC differences
+are meaningful only between fits of the same weighted data. A session that
+differs is marked with a dagger and left out of the ranking, and a note
+under the table says so. A session fitted with a robust loss or reduce
+function shows no AIC/BIC at all (Section 7). The summary table after a
+Batch Fit lists different series, so it never highlights a best row.
 
 ### Information criteria
 
@@ -1169,7 +1176,9 @@ significantly improve the fit.
 ### Usage
 
 1. Fit at least two sessions on the same series (one with fewer parameters
-   than the other).
+   than the other), with the same fit range, weight mode, and a
+   chi-squared objective. The dialog refuses pairs that differ in any of
+   these, since the test compares chi-squares of the same weighted data.
 2. Open the F-Test dialog.
 3. Select the reduced model (fewer parameters) and the full model (more
    parameters).

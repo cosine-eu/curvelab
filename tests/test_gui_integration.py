@@ -754,6 +754,76 @@ class DerivativeIntegralDialogTests(GuiTestBase):
         new[0].destroy()
 
 
+class ModelComparisonComparabilityTests(GuiTestBase):
+    """Model Comparison counted fixed and derived parameters as k and ranked
+    AICs from fits to different data, weights or objectives; the F-test did
+    the same. Rows now carry a comparison key and only comparable rows are
+    ranked or tested."""
+
+    def _fit(self, fm, x, y, **kw):
+        return fm.run_fit(x, y, weight_mode="No weights", **kw)
+
+    def test_row_counts_varying_parameters_only(self):
+        from curvelab.fit_manager import FitManager
+        from curvelab.ui_dialogs_analysis import comparison_row
+        x = np.linspace(-5, 5, 80)
+        y = 3.0 * np.exp(-x ** 2 / 2)
+        fm = FitManager()
+        fm.add_component("Gaussian")               # amplitude, center, sigma, fwhm, height
+        fm.set_param_hint("center", value=0.0, vary=False)
+        fm.auto_guess(x, y)
+        row = comparison_row("s", fm.model_description(), self._fit(fm, x, y))
+        self.assertEqual(row["n_params"], 2)       # amplitude and sigma
+        self.assertIsNotNone(row["key"])
+
+    def test_incomparable_rows_are_marked_and_not_ranked(self):
+        from curvelab.fit_manager import FitManager, objective_kwargs
+        from curvelab.ui_dialogs_analysis import comparison_row, ModelComparisonDialog
+        x = np.linspace(0, 10, 50)
+        y = 2.0 * x + 1.0 + np.random.default_rng(0).normal(0, 0.1, 50)
+        rows = []
+        for label, xr, kw in (("full", slice(None), {}),
+                              ("half range", slice(0, 25), {}),
+                              ("robust", slice(None), {"method": "least_squares",
+                                                       "objective_kws": objective_kwargs(
+                                                           "least_squares", "Cauchy", 1.0)})):
+            fm = FitManager()
+            fm.add_component("Linear")
+            fm.auto_guess(x[xr], y[xr])
+            rows.append(comparison_row(label, "Linear", self._fit(fm, x[xr], y[xr], **kw)))
+        self.assertNotEqual(rows[0]["key"], rows[1]["key"])   # different points
+        self.assertNotEqual(rows[0]["key"], rows[2]["key"])   # different objective
+        self.assertIsNone(rows[2]["aic"])
+
+        dlg = ModelComparisonDialog(self.app, rows)
+        try:
+            self.assertIn("\u2020 fitted to different data", dlg.note)
+            self.assertIn("robust loss", dlg.note)
+            tree = next(w for w in dlg.winfo_children()[0].winfo_children()
+                        if w.winfo_class() == "Treeview")
+            items = [tree.item(i) for i in tree.get_children()]
+            self.assertEqual(list(items[0]["tags"]), ["best"])    # only comparable row
+            self.assertTrue(items[1]["text"].endswith("\u2020"))
+            self.assertNotIn("best", items[1]["tags"])
+        finally:
+            dlg.destroy()
+
+    def test_batch_summary_does_not_rank_series(self):
+        from curvelab.ui_dialogs_analysis import ModelComparisonDialog
+        rows = [{"session": "A / fit", "model": "Linear", "n_params": 2, "chisqr": 1.0,
+                 "redchi": 0.1, "aic": -10.0, "bic": -9.0, "key": ("a",)},
+                {"session": "B / fit", "model": "Linear", "n_params": 2, "chisqr": 1.0,
+                 "redchi": 0.1, "aic": -20.0, "bic": -19.0, "key": ("b",)}]
+        dlg = ModelComparisonDialog(self.app, rows, highlight_best=False)
+        try:
+            self.assertIn("not compared across rows", dlg.note)
+            tree = next(w for w in dlg.winfo_children()[0].winfo_children()
+                        if w.winfo_class() == "Treeview")
+            self.assertTrue(all("best" not in tree.item(i)["tags"] for i in tree.get_children()))
+        finally:
+            dlg.destroy()
+
+
 class ContourDialogTests(GuiTestBase):
     """The contour dialog used to fill a sigma grid with no levels and no
     colorbar, so 1/2/3-sigma regions could not be read off. It now draws

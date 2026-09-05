@@ -59,6 +59,8 @@ class AnalysisHandlersMixin:
                 "n_params": n_vary,
                 "chisqr": gof.get("chi-squared", 0),
                 "n_data": len(sess.result.x_data),
+                "key": sess.result.comparison_key(),
+                "chi_square_objective": gof.get("objective") is None,
             }
         if len(sessions) < 2:
             messagebox.showinfo("Need 2+ Fits", "Need at least two completed fits to compare.")

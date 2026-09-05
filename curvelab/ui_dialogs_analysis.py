@@ -92,28 +92,41 @@ class FontDialog(BaseDialog):
 
 
 def comparison_row(label: str, model_desc: str, result=None) -> dict:
-    """One ModelComparisonDialog row. result=None marks a failed fit."""
+    """One ModelComparisonDialog row. result=None marks a failed fit.
+
+    n_params counts the varying parameters, the k in AIC/BIC; fixed and
+    derived parameters are not free. key is the result's comparison_key,
+    so the dialog can tell which rows were fitted to the same data with
+    the same weights and objective.
+    """
     gof = result.gof if result is not None else {}
+    n_vary = (sum(1 for p in result.params.values() if p.get("vary", True) and not p.get("expr"))
+              if result is not None else 0)
     return {
         "session": label,
         "model": model_desc,
-        "n_params": len(result.params) if result is not None else 0,
+        "n_params": n_vary,
         "chisqr": gof.get("chi-squared"),
         "redchi": gof.get("reduced chi-squared"),
         "aic": gof.get("AIC"),
         "bic": gof.get("BIC"),
+        "key": result.comparison_key() if result is not None else None,
     }
 
 
 class ModelComparisonDialog(BaseDialog):
     """Side-by-side comparison of fit sessions: AIC, BIC, reduced chi-squared."""
 
-    def __init__(self, parent, rows: list[dict]):
-        """rows: list of dicts with keys session, model, n_params, chisqr, redchi, aic, bic."""
-        super().__init__(parent, "Model Comparison", size="700x300")
+    def __init__(self, parent, rows: list[dict], highlight_best: bool = True):
+        """rows: dicts from comparison_row. highlight_best marks the lowest
+        AIC among rows that are comparable with the first row (same data,
+        weights, objective); pass False when the rows are different series,
+        whose AICs cannot be compared at all."""
+        super().__init__(parent, "Model Comparison", size="700x340")
 
         columns = ("model", "n_params", "chisqr", "redchi", "aic", "bic")
-        tree = ttk.Treeview(self, columns=columns, show=("tree", "headings"), height=10)
+        body = ttk.Frame(self)
+        tree = ttk.Treeview(body, columns=columns, show=("tree", "headings"), height=10)
         tree.column("#0", width=120, stretch=False)
         tree.heading("#0", text="Session")
         tree.heading("model", text="Model")
@@ -131,15 +144,22 @@ class ModelComparisonDialog(BaseDialog):
 
         configure_row_tags(tree)
 
-        # Find best AIC for highlighting
-        aic_vals = [r["aic"] for r in rows if r["aic"] is not None]
+        # Best AIC only among rows comparable with the first (same data,
+        # weights and objective); anything else is marked, not ranked.
+        ref_key = next((r.get("key") for r in rows if r.get("key") is not None), None)
+        comparable = [r.get("key") is not None and r.get("key") == ref_key for r in rows]
+        aic_vals = [r["aic"] for r, ok in zip(rows, comparable)
+                    if ok and r["aic"] is not None] if highlight_best else []
         best_aic = min(aic_vals) if aic_vals else None
+        n_incomparable = sum(1 for ok, r in zip(comparable, rows)
+                             if not ok and r.get("key") is not None)
 
-        for i, r in enumerate(rows):
-            best = best_aic is not None and r["aic"] == best_aic
+        for i, (r, ok) in enumerate(zip(rows, comparable)):
+            best = best_aic is not None and ok and r["aic"] == best_aic
             tags = ["best" if best else row_tag(i)]
+            label = r["session"] if ok or r.get("key") is None else f"{r['session']} \u2020"
             tree.insert(
-                "", tk.END, text=r["session"],
+                "", tk.END, text=label,
                 values=(
                     r["model"],
                     r["n_params"],
@@ -151,11 +171,29 @@ class ModelComparisonDialog(BaseDialog):
                 tags=tuple(tags),
             )
 
-        scroll = ttk.Scrollbar(self, orient=tk.VERTICAL, command=tree.yview)
+        note = ""
+        if not highlight_best:
+            note = ("AIC/BIC are not compared across rows: each row is a "
+                    "different series, so the values are not commensurable.")
+        elif n_incomparable:
+            note = ("\u2020 fitted to different data, weights or objective than "
+                    "the first row; its AIC/BIC cannot be compared with the "
+                    "others and it is excluded from the 'best' highlight.")
+        if any(r["aic"] is None and r.get("key") is not None for r in rows):
+            note = (note + "\n" if note else "") + (
+                "A row without AIC/BIC was fitted with a robust loss or reduce "
+                "function; its chi-square was not the minimized quantity.")
+        self.note = note
+
+        scroll = ttk.Scrollbar(body, orient=tk.VERTICAL, command=tree.yview)
         tree.configure(yscrollcommand=scroll.set)
         tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=10)
         scroll.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=10)
+        body.pack(fill=tk.BOTH, expand=True)
 
+        if note:
+            ttk.Label(self, text=note, wraplength=660, justify=tk.LEFT).pack(
+                fill=tk.X, padx=10)
         ttk.Button(self, text="Close", command=self.destroy).pack(pady=(0, 10))
 
 
@@ -208,6 +246,24 @@ class FTestDialog(BaseDialog):
         p1, p2 = r["n_params"], f["n_params"]
         chi1, chi2 = r["chisqr"], f["chisqr"]
         n = r["n_data"]
+
+        # The F-test compares chi-squares of nested models on the same
+        # data with the same weights; anything else is not a test.
+        if r.get("key") is not None and r.get("key") != f.get("key"):
+            self._show_result(
+                "These sessions were fitted to different data (range or "
+                "points), with different weights, or with a different "
+                "objective. An F-test needs both models fitted to the same "
+                "weighted data."
+            )
+            return
+        if not (r.get("chi_square_objective", True) and f.get("chi_square_objective", True)):
+            self._show_result(
+                "One of the sessions used a robust loss or reduce function, "
+                "so its chi-square was not the minimized quantity. The F-test "
+                "applies to chi-square fits only."
+            )
+            return
 
         # Ensure reduced model has fewer params
         if p1 >= p2:
