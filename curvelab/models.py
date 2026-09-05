@@ -5,6 +5,7 @@ from functools import partial
 
 import numpy as np
 from lmfit.models import (
+    BoseModel,
     BreitWignerModel,
     ConstantModel,
     DampedHarmonicOscillatorModel,
@@ -13,6 +14,7 @@ from lmfit.models import (
     ExponentialGaussianModel,
     ExponentialModel,
     ExpressionModel,
+    FermiModel,
     GaussianModel,
     LinearModel,
     LognormalModel,
@@ -36,15 +38,6 @@ from lmfit.models import (
     VoigtModel,
 )
 
-# lmfit >= 1.3 models (optional)
-try:
-    from lmfit.models import BoseModel
-except ImportError:
-    BoseModel = None
-try:
-    from lmfit.models import FermiModel
-except ImportError:
-    FermiModel = None
 
 # Display name -> factory: factory(prefix=...) returns a fresh lmfit Model.
 # None marks a model that needs extra input at creation time (see below).
@@ -82,11 +75,8 @@ MODEL_REGISTRY: dict[str, Callable | None] = {
 for _degree in range(2, 8):
     MODEL_REGISTRY[f"Polynomial{_degree}"] = partial(PolynomialModel, degree=_degree)
 
-# Add lmfit >= 1.3 models when available
-if BoseModel is not None:
-    MODEL_REGISTRY["Bose"] = BoseModel
-if FermiModel is not None:
-    MODEL_REGISTRY["Fermi"] = FermiModel
+MODEL_REGISTRY["Bose"] = BoseModel
+MODEL_REGISTRY["Fermi"] = FermiModel
 
 MODEL_NAMES: list[str] = sorted(MODEL_REGISTRY.keys())
 

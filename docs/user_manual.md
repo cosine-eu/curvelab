@@ -72,9 +72,8 @@ performing post-fit statistical diagnostics.
 
 ### Key features
 
-- 34 built-in model components (peaks, polynomials, decay, step functions,
-  splines, and user-defined expressions), plus 2 additional models
-  (Bose, Fermi) when lmfit >= 1.3 is installed
+- 36 built-in model components (peaks, polynomials, decay, step functions,
+  thermal distributions, splines, and user-defined expressions)
 - 14 fitting methods (local, global, grid, Bayesian, and ODR)
 - Multi-series and multi-session architecture for systematic model
   comparison
@@ -250,7 +249,7 @@ The operator dropdown next to the model selector controls how the new
 component combines with the existing model. The first component's
 operator is always ignored.
 
-### Built-in models (34 + 2 conditional)
+### Built-in models (36)
 
 #### Peak and line-shape models
 
@@ -296,8 +295,8 @@ operator is always ignored.
 |-------|-------------|
 | **Lognormal** | Log-normal distribution |
 | **ThermalDistribution** | Bose-Einstein, Fermi-Dirac, or Maxwell-Boltzmann distribution |
-| **Bose** | Bose-Einstein distribution (requires lmfit >= 1.3) |
-| **Fermi** | Fermi-Dirac step function (requires lmfit >= 1.3) |
+| **Bose** | Bose-Einstein distribution |
+| **Fermi** | Fermi-Dirac step function |
 | **Step** | Step function (linear, arctan, error function, or logistic forms) |
 | **Rectangle** | Product of two step functions (box shape) |
 

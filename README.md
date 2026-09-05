@@ -10,7 +10,7 @@ This project is also [an experiment in AI-assisted coding](docs/ai_assisted_codi
 
 ## Features
 
-- **34 built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, and more, plus Bose and Fermi when lmfit >= 1.3 is installed. Custom expressions supported.
+- **36 built-in models** -- Gaussian, Lorentzian, Voigt, PseudoVoigt, exponential, polynomial (up to degree 7), spline, step, sine, Bose, Fermi, and more. Custom expressions supported.
 - **Composite models** -- combine components with `+`, `*`, `-`, `/` operators
 - **14 fitting methods** -- Trust Region Reflective (default), Levenberg-Marquardt, Nelder-Mead, differential evolution, basin-hopping, MCMC (emcee), brute-force grid search, ODR, and more
 - **9 file formats** -- CSV, TSV, TXT/DAT, Excel, ODS, JSON, Parquet, HDF5, SQLite, plus clipboard paste

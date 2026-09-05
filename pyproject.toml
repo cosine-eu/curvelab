@@ -25,7 +25,9 @@ dependencies = [
     "pandas",
     "matplotlib",
     "scipy",
-    "lmfit",
+    # 1.3 computes R-squared from raw residuals (1.2 mixed weighted and
+    # unweighted sums, giving negative R^2 for good weighted fits).
+    "lmfit>=1.3",
     # Imported directly by CurveLab (also lmfit core deps, listed for clarity).
     "asteval",
     "uncertainties",

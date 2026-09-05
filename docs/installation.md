@@ -89,7 +89,7 @@ This installs the core dependencies automatically:
 | pandas        | Tabular data loading and manipulation              |
 | matplotlib    | Plotting (uses the TkAgg backend)                  |
 | scipy         | Optimizers, smoothing filters, statistical tests   |
-| lmfit         | Non-linear least-squares curve fitting             |
+| lmfit >= 1.3  | Non-linear least-squares curve fitting             |
 | asteval       | Sandboxed expression evaluation                    |
 | uncertainties | Uncertainty propagation                            |
 | numdifftools  | Uncertainties for the scalar and global minimizers |
