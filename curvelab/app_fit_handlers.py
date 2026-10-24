@@ -406,50 +406,78 @@ class FitHandlersMixin:
         GlobalFitDialog(self, series_info, base_param_names, on_fit=on_fit)
 
     def _on_batch_fit(self):
-        """Apply the active session's model to all plotted series."""
+        """Apply the active session's model to the other visible series.
+
+        The source series keeps its fit; it was set up deliberately, and
+        appears in the summary with its existing result. Each target gets
+        the source's components, fixed values and bounds, starts from its
+        own Auto Guess, and is fitted with the selected method (run_odr for
+        ODR). The setup is checked once, before anything is fitted.
+        """
         sess = self._require_session()
         if sess is None:
             return
         source_fm = sess.fit_manager
         if not self._require_model(source_fm):
             return
-        if len(self._series_records) < 1:
-            messagebox.showwarning("No Series", "Plot at least one series.")
+        source_sid = self._active_series_id
+        targets = [(sid, rec) for sid, rec in self._series_records.items()
+                   if sid != source_sid and rec.visible]
+        if not targets:
+            messagebox.showwarning(
+                "No Series", "Plot at least one other visible series to fit.")
             return
 
-        session_name = sess.name
-        summary_rows = []
-        data_warnings: list[str] = []
-        fit_errors: list[str] = []
+        method = self.fit_panel.method_var.get()
+        errors, warnings = validate_fit_setup(
+            method, source_fm.params,
+            has_xerr=all(rec.xerr is not None for _, rec in targets),
+            weight_mode=self.fit_panel.weight_var.get(),
+        )
+        if errors:
+            messagebox.showwarning("Cannot Fit", "\n".join(errors))
+            return
+        if warnings:
+            messagebox.showinfo("Fit Warning", "\n".join(warnings))
         options = self._fit_options_or_warn()
         if options is None:
             return
 
-        for sid, target_rec in self._series_records.items():
+        session_name = sess.name
+        summary_rows = []
+        if sess.result is not None:
+            source_label = self._active_record.style.get("label", source_sid)
+            summary_rows.append(comparison_row(
+                f"{source_label} / {session_name}",
+                source_fm.model_description(), sess.result,
+            ))
+        data_warnings: list[str] = []
+        fit_errors: list[str] = []
+
+        for sid, target_rec in targets:
             target_sess = target_rec.ensure_session(session_name)
             target_fm = target_sess.fit_manager
-
-            # Clone model components from source
             source_fm.clone_components_to(target_fm)
+            series_label = target_rec.style.get("label", sid)
 
             try:
                 x, y, yerr, xerr = self._get_fit_data(
                     target_rec, warnings_out=data_warnings
                 )
                 target_fm.auto_guess(x, y)
-                method = self.fit_panel.method_var.get()
-                result = target_fm.run_fit(x, y, yerr=yerr, xerr=xerr, method=method,
-                                           **options.run_fit_kwargs())
+                if method == "odr":
+                    result = target_fm.run_odr(x, y, yerr=yerr, xerr=xerr,
+                                               band_sigma=options.band_sigma)
+                else:
+                    result = target_fm.run_fit(x, y, yerr=yerr, xerr=xerr, method=method,
+                                               **options.run_fit_kwargs())
                 target_sess.result = result
                 self._show_fit_on_plot(sid, target_sess, target_rec)
-
-                series_label = target_rec.style.get("label", sid)
                 summary_rows.append(comparison_row(
                     f"{series_label} / {session_name}",
                     target_fm.model_description(), result,
                 ))
             except Exception as e:
-                series_label = target_rec.style.get("label", sid)
                 summary_rows.append(comparison_row(
                     f"{series_label} / {session_name}", "ERROR",
                 ))

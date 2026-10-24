@@ -1345,19 +1345,26 @@ See:
 
 ## 20. Batch Fitting
 
-The **Batch Fit** button applies the active session's model to all plotted
-series in a single operation. This is useful when you have multiple datasets
+The **Batch Fit** button applies the active session's model to the other
+visible series in a single operation. This is useful when you have multiple datasets
 that should be fit with the same model but independent parameters.
 
 ### Workflow
 
 1. Set up and fit a model on one series.
 2. Click **Batch Fit**.
-3. CurveLab copies the model components to every plotted series, the
-   source included, runs Auto Guess on each, and fits. Fixed values and
-   the bounds you set are copied with the model and kept by the guess;
-   the varying parameters start from each series' own guess.
+3. CurveLab copies the model components to every other visible series,
+   runs Auto Guess on each, and fits it with the selected method (ODR
+   included). Fixed values and the bounds you set are copied with the model
+   and kept by the guess; the varying parameters start from each series'
+   own guess. Hidden series are skipped.
 4. A model comparison table summarizes the results across all series.
+
+The source series (the one whose model you set up) keeps its fit: Batch
+Fit does not refit it, and it appears in the table with its existing
+result. The fit setup is checked once before anything runs, as for
+**Fit**: a method that needs bounds, or ODR without x-errors on every
+series, is refused with one message.
 
 Each series gets its own independent fit result. Parameters are **not**
 shared across series. For shared parameters, use Global Fitting instead

@@ -697,8 +697,9 @@ class BatchFitWarningTests(GuiTestBase):
         self.assertEqual(app_mb.showinfo.call_count, 0)      # no per-series info
         self.assertEqual(app_mb.showwarning.call_count, 1)   # one summary
         body = app_mb.showwarning.call_args[0][1]
-        for label in ("s0", "s1", "s2"):
+        for label in ("s1", "s2"):
             self.assertIn(label, body)
+        self.assertNotIn("s0", body)     # the source series is not refitted
 
     def test_single_fit_still_shows_dialog(self):
         self._add_series_with_nans(n_series=1)
