@@ -804,8 +804,11 @@ class FitManager:
         Components combined with *, -, / are guessed against the original
         data, since subtracting their contribution isn't meaningful.
 
-        Only updates value/min/max from guess; preserves user-edited vary,
-        expr, and param_hints.
+        What the user has set is kept: a fixed (vary=False) parameter keeps
+        its value, a derived (expr) parameter keeps its expression, and a
+        min or max set as a hint stays in force -- the guessed value is
+        clipped into it rather than the bound being replaced by the
+        guess's. Only the remaining values and bounds come from guess().
         """
         if self._model is None:
             raise ValueError("No model defined")
@@ -822,20 +825,14 @@ class FitManager:
             try:
                 guessed = m.guess(target, x=x)
                 for pname, par in guessed.items():
-                    if pname not in self._params:
-                        continue
-                    if self._params[pname].expr:
-                        # A derived parameter (fwhm, height, or a user tie)
-                        # takes its value from its expression. Parameter.set
-                        # with a value clears the expression, which would
-                        # freeze it at the guess and drop it from the fit.
-                        continue
-                    self._params[pname].set(
-                        value=par.value, min=par.min, max=par.max
-                    )
+                    if pname in self._params:
+                        self._apply_guess(pname, par)
                 if is_additive:
                     try:
-                        residual = residual - m.eval(guessed, x=x)
+                        # Subtract the component as it will actually start
+                        # (fixed values and clipped guesses included), not
+                        # the raw guess.
+                        residual = residual - m.eval(self._params, x=x)
                     except Exception:
                         pass  # Keep prior residual if this component can't be evaluated yet
             except NotImplementedError:
@@ -844,6 +841,26 @@ class FitManager:
         # The guess is the starting point every subsequent fit resets to.
         self._start_values = {name: par.value for name, par in self._params.items()}
         return self._params
+
+    def _apply_guess(self, name: str, guessed) -> None:
+        """Take one guessed parameter, keeping what the user has set."""
+        par = self._params[name]
+        if par.expr:
+            # A derived parameter (fwhm, height, or a user tie) takes its
+            # value from its expression. Parameter.set with a value clears
+            # the expression, which would freeze it at the guess and drop it
+            # from the fit.
+            return
+        if not par.vary:
+            # A fixed parameter is a value the user chose; it is not a guess.
+            return
+        hints = self._param_hints.get(name, {})
+        lo = hints["min"] if "min" in hints else guessed.min
+        hi = hints["max"] if "max" in hints else guessed.max
+        value = guessed.value
+        if np.isfinite(value):
+            value = float(np.clip(value, lo, hi))
+        par.set(value=value, min=lo, max=hi)
 
     def clone_components_to(self, target: "FitManager"):
         """Copy this manager's component list and parameter hints (fixed

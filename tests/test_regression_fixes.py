@@ -1,8 +1,7 @@
 """Regression tests for bugs fixed on the code-review branch.
 
 Each test reproduces a specific defect and asserts the fixed behavior, so the
-bug can't silently return. GUI-layer fixes (Tk widget lockout, TclError on
-double-commit, etc.) are not covered here — this file is pure logic only.
+bug can't silently return. GUI-layer fixes are not covered here — this file is pure logic only.
 """
 
 import json
@@ -13,7 +12,7 @@ import numpy as np
 
 
 class ComponentPrefixCollisionTests(unittest.TestCase):
-    """6ba7037: add_component reused a freed suffix after remove_component."""
+    """add_component reused a freed suffix after remove_component."""
 
     def test_readd_after_remove_gives_fresh_prefix(self):
         from curvelab.fit_manager import FitManager
@@ -192,6 +191,67 @@ class AutoGuessMultiPeakTests(unittest.TestCase):
         centers = [round(fm.params[f"{c.prefix}center"].value) for c in fm.components]
         # Sequential residual guessing must not put all three on the same peak.
         self.assertEqual(len(set(centers)), 3, f"centers collapsed: {centers}")
+
+
+class AutoGuessKeepsUserConstraintsTests(unittest.TestCase):
+    """Auto Guess copied value/min/max from lmfit's guess() onto every
+    parameter, so a fixed (Vary = No) value was replaced by the guess and
+    any bounds the user set became -inf..inf. Batch Fit guesses every
+    series after cloning the model, so the source's constraints never
+    reached the fit."""
+
+    def _data(self):
+        x = np.linspace(-5, 5, 100)
+        y = 3.0 * np.exp(-(x - 0.2) ** 2 / (2 * 1.2 ** 2))
+        return x, y
+
+    def test_fixed_value_survives_auto_guess(self):
+        from curvelab.fit_manager import FitManager
+        x, y = self._data()
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.set_param_hint("sigma", value=0.5, vary=False)
+        fm.auto_guess(x, y)
+        self.assertEqual(fm.params["sigma"].value, 0.5)
+        self.assertFalse(fm.params["sigma"].vary)
+        r = fm.run_fit(x, y, weight_mode="No weights")
+        self.assertEqual(r.params["sigma"]["value"], 0.5)
+
+    def test_user_bounds_survive_auto_guess(self):
+        from curvelab.fit_manager import FitManager
+        x, y = self._data()
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.set_param_hint("center", min=-0.5, max=0.5)
+        fm.auto_guess(x, y)
+        self.assertEqual((fm.params["center"].min, fm.params["center"].max), (-0.5, 0.5))
+        # The guessed value is still taken, inside the user's bounds.
+        self.assertTrue(-0.5 <= fm.params["center"].value <= 0.5)
+        self.assertNotEqual(fm.params["amplitude"].value, 1.0)   # unconstrained params are guessed
+
+    def test_guess_outside_user_bounds_is_clipped(self):
+        from curvelab.fit_manager import FitManager
+        x, y = self._data()
+        fm = FitManager()
+        fm.add_component("Gaussian")
+        fm.set_param_hint("center", min=2.0, max=3.0)             # peak is at 0.2
+        fm.auto_guess(x, y)
+        self.assertEqual(fm.params["center"].value, 2.0)
+
+    def test_batch_fit_clone_keeps_source_constraints(self):
+        # The Batch Fit sequence: clone onto a target, guess, fit.
+        from curvelab.fit_manager import FitManager
+        x, y = self._data()
+        source = FitManager()
+        source.add_component("Gaussian")
+        source.set_param_hint("sigma", value=0.5, vary=False)
+        source.set_param_hint("center", min=-0.5, max=0.5)
+        target = FitManager()
+        source.clone_components_to(target)
+        target.auto_guess(x, y)
+        self.assertEqual(target.params["sigma"].value, 0.5)
+        self.assertFalse(target.params["sigma"].vary)
+        self.assertEqual((target.params["center"].min, target.params["center"].max), (-0.5, 0.5))
 
 
 class AutoGuessDerivedParamTests(unittest.TestCase):

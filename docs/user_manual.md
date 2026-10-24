@@ -326,6 +326,12 @@ well for peaks (Gaussian, Lorentzian, Voigt, etc.) where the data range
 provides clear hints about center, amplitude, and width. Components that
 do not implement `guess()` fall back to default parameter values.
 
+Auto Guess keeps what you have set. A fixed (Vary = No) parameter keeps
+its value, a derived parameter keeps its expression, and a Min or Max you
+entered stays in force: a guess outside your bounds is moved to the nearest
+bound instead of replacing them. Only the other values and bounds come from
+the guess.
+
 Good initial guesses are essential for gradient-based optimizers. If the
 auto-guess is poor, adjust parameters manually in the results table before
 fitting.
@@ -523,7 +529,8 @@ repeated fits are reproducible: the answer doesn't drift when you fit twice.
 This applies to ordinary, global and ODR fits alike; emcee is the exception
 (Section 15). Fixed (Vary = No) parameters keep the value you set; only the
 varying parameters are reset to the start. The start values are saved with
-the workspace and copied along with the model by Batch Fit.
+the workspace. Batch Fit copies the model with its fixed values and bounds,
+then guesses the varying parameters afresh for each series.
 
 To deliberately refine — start the next fit from the last result — click
 **Use as Start** below the parameter table. It copies the current fitted
@@ -1346,8 +1353,10 @@ that should be fit with the same model but independent parameters.
 
 1. Set up and fit a model on one series.
 2. Click **Batch Fit**.
-3. CurveLab clones the model components to each other series, calls
-   auto-guess for initial values, and runs the fit.
+3. CurveLab copies the model components to every plotted series, the
+   source included, runs Auto Guess on each, and fits. Fixed values and
+   the bounds you set are copied with the model and kept by the guess;
+   the varying parameters start from each series' own guess.
 4. A model comparison table summarizes the results across all series.
 
 Each series gets its own independent fit result. Parameters are **not**
