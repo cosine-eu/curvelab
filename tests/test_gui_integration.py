@@ -866,6 +866,32 @@ class EmceeSettingsTests(GuiTestBase):
         self.assertEqual(self.app._emcee_settings["nwalkers"], 100)   # default filled in
 
 
+class PlotFontTests(GuiTestBase):
+    """set_font used get_*ticklabels(), which returns only the ticks in use.
+    Matplotlib keeps spare Tick objects from earlier views and reuses them
+    when the limits change, so a tick that came back after a font change
+    (the 1.0 at the top of the axis) kept the old size."""
+
+    def test_spare_ticks_follow_the_font_size(self):
+        pm = self.app.plot_mgr
+        pm.ax.set_ylim(0, 3); pm.canvas.draw()        # seven ticks exist
+        pm.ax.set_ylim(0, 0.8); pm.canvas.draw()      # five in use, two spare
+        pm.set_font("DejaVu Sans", 16)
+        pm.ax.set_ylim(0, 1.0); pm.canvas.draw()      # the sixth is a spare
+        sizes = {t.get_text(): t.get_fontsize() for t in pm.ax.yaxis.get_ticklabels()}
+        self.assertEqual(set(sizes.values()), {16.0}, sizes)
+        # And a tick created afterwards.
+        pm.ax.set_ylim(0, 5); pm.canvas.draw()
+        self.assertEqual({t.get_fontsize() for t in pm.ax.yaxis.get_ticklabels()}, {16.0})
+
+    def test_residual_label_and_annotation_follow_the_font(self):
+        pm = self.app.plot_mgr
+        pm.set_font("DejaVu Sans", 20)
+        self.assertEqual(pm.ax_resid.yaxis.label.get_fontsize(), 18.0)
+        pm.plot_residuals("k", np.array([0.0, 1.0]), np.array([0.1, -0.1]), color="C0")
+        self.assertEqual(pm.ax_resid.yaxis.label.get_fontsize(), 18.0)
+
+
 class ContourDialogTests(GuiTestBase):
     """The contour dialog used to fill a sigma grid with no levels and no
     colorbar, so 1/2/3-sigma regions could not be read off. It now draws

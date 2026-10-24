@@ -196,7 +196,7 @@ class PlotManager:
         )
         artists.append(line)
         self._residual_lines[session_key] = artists
-        self.ax_resid.set_ylabel("Residuals", fontsize=8)
+        self.ax_resid.set_ylabel("Residuals", fontsize=self._small_font_size())
         self.canvas.draw_idle()
 
     def clear_residuals(self, session_key: str):
@@ -291,7 +291,7 @@ class PlotManager:
             text,
             transform=self.ax.transAxes,
             verticalalignment="top",
-            fontsize=8,
+            fontsize=self._small_font_size(),
             fontfamily="monospace",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="wheat", alpha=0.8),
         )
@@ -389,6 +389,8 @@ class PlotManager:
 
     def set_font(self, family: str, size: int):
         """Apply font to all plot text elements."""
+        self._font_family = family
+        self._font_size = size
         matplotlib.rcParams.update({
             "font.family": family,
             "font.size": size,
@@ -400,9 +402,14 @@ class PlotManager:
             ax.xaxis.label.set_fontsize(size)
             ax.yaxis.label.set_fontfamily(family)
             ax.yaxis.label.set_fontsize(size)
-            for label in ax.get_xticklabels() + ax.get_yticklabels():
-                label.set_fontfamily(family)
-                label.set_fontsize(size)
+            # tick_params, not get_xticklabels(): matplotlib keeps spare Tick
+            # objects from earlier views and reuses them when the limits
+            # change, and get_*ticklabels() only returns the ticks in use.
+            # tick_params updates every tick, spares included, and the
+            # defaults for ticks created later.
+            ax.tick_params(axis="both", which="both", labelsize=size,
+                           labelfontfamily=family)
+        self.ax_resid.yaxis.label.set_fontsize(self._small_font_size())
         legend = self.ax.get_legend()
         if legend:
             for text in legend.get_texts():
@@ -410,8 +417,13 @@ class PlotManager:
                 text.set_fontsize(size)
         for ann in self._annotations.values():
             ann.set_fontfamily(family)
-            ann.set_fontsize(max(size - 2, 6))
+            ann.set_fontsize(self._small_font_size())
         self.canvas.draw_idle()
+
+    def _small_font_size(self) -> int:
+        """Size for secondary text (residual label, annotations): two points
+        below the plot font, never below 6."""
+        return max(getattr(self, "_font_size", matplotlib.rcParams["font.size"]) - 2, 6)
 
     def _update_legend(self):
         legend = self.ax.get_legend()
