@@ -568,6 +568,52 @@ class RemoveSeriesConfirmTests(GuiTestBase):
         self.assertEqual(len(self.app.data_panel.series_list), 0)
 
 
+class FitLineStyleGuiTests(GuiTestBase):
+    """The fit line was always solid and 2 points wide, in a color picked
+    by session order, with no way to change it. A Style button in the Fit
+    panel sets the active session's color, line style and width."""
+
+    def _fit_line(self, sid="ds::x::y", session="Fit 1"):
+        return self.app.plot_mgr._fit_lines[f"{sid}::{session}"][0]
+
+    def test_fit_line_drawn_with_session_style(self):
+        from matplotlib.colors import to_hex
+        rec, sess = self._add_fitted_series()
+        sess.color = "xkcd:black"
+        sess.linestyle = "--"
+        sess.linewidth = 1.0
+        self.app._show_fit_on_plot("ds::x::y", sess, rec)
+        line = self._fit_line()
+        self.assertEqual(to_hex(line.get_color()), to_hex("xkcd:black"))
+        self.assertEqual(line.get_linestyle(), "--")
+        self.assertEqual(line.get_linewidth(), 1.0)
+
+    def test_set_session_style_updates_session_and_plot(self):
+        rec, sess = self._add_fitted_series()
+        self.app._show_fit_on_plot("ds::x::y", sess, rec)
+        self.app._set_session_style(color="xkcd:black", linestyle=":", linewidth=3.0)
+        self.assertEqual((sess.color, sess.linestyle, sess.linewidth),
+                         ("xkcd:black", ":", 3.0))
+        line = self._fit_line()
+        self.assertEqual(line.get_linestyle(), ":")
+        self.assertEqual(line.get_linewidth(), 3.0)
+
+    def test_set_session_style_rejects_bad_width(self):
+        rec, sess = self._add_fitted_series()
+        with mock.patch("curvelab.app_series.messagebox") as mb:
+            self.app._set_session_style(color=sess.color, linestyle="-", linewidth=-1.0)
+        mb.showwarning.assert_called_once()
+        self.assertEqual(sess.linewidth, 2.0)
+
+    def test_style_button_locked_during_fit(self):
+        self._add_fitted_series(run=False)
+        btn = self.app.fit_panel._style_btn
+        self.app._set_fit_running(True)
+        self.assertEqual(str(btn["state"]), "disabled")
+        self.app._set_fit_running(False)
+        self.assertEqual(str(btn["state"]), "normal")
+
+
 class BatchFitSourceAndSetupTests(GuiTestBase):
     """Batch Fit re-fitted the source series from a fresh guess, replacing
     the fit the user had set up; skipped the setup check that Fit does;
