@@ -717,8 +717,15 @@ tab-separated format, suitable for pasting into a spreadsheet.
 ### Editing parameters
 
 Double-click any editable cell in the Fit Results parameter table to modify
-it. Editable columns are: Value, Min, Max, Vary, and Expr. Press Enter to
-confirm or Escape to cancel.
+it. Editable columns are marked with a pencil (✎) in their heading: Value,
+Min, Max, Vary, and Expr. Press Enter to confirm or Escape to cancel.
+Double-clicking Vary toggles it between Yes and No. After a fit, Value shows
+the fitted result; editing it sets the starting value of the next fit.
+
+Derived parameters (those with an expression, such as a Gaussian's `fwhm`)
+are shown in gray. Their Value and Vary cannot be edited, because the
+expression determines both; the line under the table says so. Edit or clear
+Expr to untie the parameter.
 
 Each parameter has five attributes:
 
