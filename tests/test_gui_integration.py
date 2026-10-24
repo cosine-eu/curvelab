@@ -288,6 +288,110 @@ class ParamEditorGuardTests(GuiTestBase):
         self.assertTrue(panel._editing_done)
 
 
+class ParamTableEditabilityTests(GuiTestBase):
+    """Nothing in the parameter table said which cells could be edited.
+    Editable headings carry a pencil and a line under the table explains
+    them; derived (expr) rows are grayed and refuse Value/Vary edits, which
+    the expression would override; Vary toggles on double-click instead of
+    asking for typed Yes/No."""
+
+    EDITABLE = ("value", "min", "max", "vary", "expr")
+    COLUMNS = ("value", "init", "stderr", "min", "max", "vary", "expr")
+
+    def _params(self):
+        inf = float("inf")
+        return {
+            "sigma": {"value": 0.7, "init_value": 0.7, "stderr": None,
+                      "min": 0.0, "max": inf, "vary": True, "expr": ""},
+            "fwhm": {"value": 1.65, "init_value": 1.65, "stderr": None,
+                     "min": -inf, "max": inf, "vary": False,
+                     "expr": "2.3548200*sigma"},
+        }
+
+    def _panel(self, edits=None):
+        panel = self.app.fit_results
+        if edits is not None:
+            panel._on_param_edited = lambda n, f, v: edits.append((n, f, v))
+        panel.set_params(self._params())
+        self.root.update()
+        return panel
+
+    def _double_click(self, panel, name, column):
+        tree = panel.param_tree
+        item = next(i for i in tree.get_children() if tree.item(i, "text") == name)
+        col_id = f"#{self.COLUMNS.index(column) + 1}"
+        bbox = tree.bbox(item, col_id)
+        panel._on_double_click(mock.Mock(x=bbox[0] + bbox[2] // 2,
+                                         y=bbox[1] + bbox[3] // 2))
+        self.root.update()
+        return item
+
+    def test_editable_headings_are_marked(self):
+        tree = self.app.fit_results.param_tree
+        for col in self.COLUMNS:
+            text = tree.heading(col, "text")
+            if col in self.EDITABLE:
+                self.assertIn("✎", text, col)
+            else:
+                self.assertNotIn("✎", text, col)
+
+    def test_hint_line_explains_editing(self):
+        hint = self.app.fit_results.hint_var.get()
+        self.assertIn("Double-click", hint)
+        self.assertIn("start", hint)       # Value sets the next fit's start
+
+    def test_derived_row_is_grayed(self):
+        panel = self._panel()
+        tree = panel.param_tree
+        tags = {tree.item(i, "text"): tree.item(i, "tags") for i in tree.get_children()}
+        self.assertIn("derived", tags["fwhm"])
+        self.assertNotIn("derived", tags["sigma"])
+        self.assertTrue(tree.tag_configure("derived", "foreground"))
+
+    def test_derived_row_refuses_value_and_vary(self):
+        edits = []
+        panel = self._panel(edits)
+        for col in ("value", "vary"):
+            self._double_click(panel, "fwhm", col)
+            self.assertIsNone(panel._editing_entry, col)
+            self.assertIn("expression", panel.hint_var.get().lower())
+        self.assertEqual(edits, [])
+
+    def test_derived_row_expr_still_editable(self):
+        # Editing the expression is how a derived parameter is untied.
+        panel = self._panel()
+        self._double_click(panel, "fwhm", "expr")
+        self.assertIsNotNone(panel._editing_entry)
+        panel._editing_entry.event_generate("<Escape>")
+        self.root.update()
+
+    def test_vary_toggles_on_double_click(self):
+        edits = []
+        panel = self._panel(edits)
+        item = self._double_click(panel, "sigma", "vary")
+        self.assertIsNone(panel._editing_entry)      # no typing needed
+        self.assertEqual(panel.param_tree.set(item, "vary"), "No")
+        self._double_click(panel, "sigma", "vary")
+        self.assertEqual(panel.param_tree.set(item, "vary"), "Yes")
+        self.assertEqual(edits, [("sigma", "vary", "No"), ("sigma", "vary", "Yes")])
+
+    def test_vary_toggle_reaches_fit_manager(self):
+        rec, sess = self._add_fitted_series(run=False)
+        panel = self.app.fit_results
+        self.app._refresh_param_display()
+        self.root.update()
+        self._double_click(panel, "slope", "vary")
+        self.assertFalse(sess.fit_manager.params["slope"].vary)
+
+    def test_vary_toggle_ignored_while_locked(self):
+        edits = []
+        panel = self._panel(edits)
+        panel.set_locked(True)
+        item = self._double_click(panel, "sigma", "vary")
+        self.assertEqual(panel.param_tree.set(item, "vary"), "Yes")
+        self.assertEqual(edits, [])
+
+
 class ParamUndoRedoTests(GuiTestBase):
     """lmfit forces vary=False when an expression is set and never restores
     it, so undoing an expression edit must restore vary explicitly -- else
