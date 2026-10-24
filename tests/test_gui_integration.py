@@ -568,6 +568,100 @@ class RemoveSeriesConfirmTests(GuiTestBase):
         self.assertEqual(len(self.app.data_panel.series_list), 0)
 
 
+class BatchFitSourceAndSetupTests(GuiTestBase):
+    """Batch Fit re-fitted the source series from a fresh guess, replacing
+    the fit the user had set up; skipped the setup check that Fit does;
+    ran an ordinary fit when ODR was selected; and fitted hidden series."""
+
+    def _add_series(self, n=3, xerr=False, hidden=()):
+        from curvelab.session import SeriesRecord, FitSession
+        rng = np.random.default_rng(1)
+        for i in range(n):
+            x = np.linspace(0, 10, 30)
+            y = (1.5 + i) * x + 2.0 + rng.normal(0, 0.2, 30)
+            ds = f"ds{i}"
+            self.app.data_mgr.add_dataframe(ds, pd.DataFrame({"x": x, "y": y}))
+            sid = f"{ds}::x::y"
+            rec = SeriesRecord(
+                x=x, y=y, yerr=np.full(30, 0.2),
+                xerr=np.full(30, 0.05) if xerr else None, dataset_name=ds,
+                style={"dataset": ds, "x": "x", "y": "y", "label": f"s{i}"},
+                visible=i not in hidden,
+            )
+            self.app._series_records[sid] = rec
+        src = self.app._series_records["ds0::x::y"]
+        sess = FitSession(name="Fit 1", color="C0")
+        src.fit_sessions["Fit 1"] = sess
+        src.active_session_name = "Fit 1"
+        self.app._active_series_id = "ds0::x::y"
+        fm = sess.fit_manager
+        fm.add_component("Linear")
+        fm.auto_guess(src.x, src.y)
+        fm.set_param("intercept", value=1.0)          # a start the user chose
+        fm.set_param_hint("intercept", value=1.0)
+        sess.result = fm.run_fit(src.x, src.y, weight_mode="No weights")
+        return src, sess
+
+    def _batch_fit(self, method="least_squares"):
+        self.app.fit_panel.method_var.set(method)
+        with mock.patch("curvelab.app.messagebox") as app_mb, \
+             mock.patch("curvelab.app_fit_handlers.messagebox") as fit_mb, \
+             mock.patch("curvelab.app_fit_handlers.ModelComparisonDialog") as dlg:
+            self.app._on_batch_fit()
+        return app_mb, fit_mb, dlg
+
+    def _target_result(self, i):
+        sess = self.app._series_records[f"ds{i}::x::y"].fit_sessions.get("Fit 1")
+        return None if sess is None else sess.result
+
+    def test_source_series_is_left_alone(self):
+        src, sess = self._add_series()
+        result = sess.result
+        start = dict(sess.fit_manager._start_values)
+        self._batch_fit()
+        self.assertIs(sess.result, result)
+        self.assertEqual(sess.fit_manager._start_values, start)
+        self.assertIsNotNone(self._target_result(1))
+        self.assertIsNotNone(self._target_result(2))
+
+    def test_source_still_listed_in_summary(self):
+        self._add_series()
+        _, _, dlg = self._batch_fit()
+        rows = dlg.call_args[0][1]
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(any(r["session"].startswith("s0") for r in rows))
+
+    def test_hidden_series_is_skipped(self):
+        self._add_series(hidden=(2,))
+        _, _, dlg = self._batch_fit()
+        self.assertIsNotNone(self._target_result(1))
+        self.assertIsNone(self._target_result(2))
+        rows = dlg.call_args[0][1]
+        self.assertFalse(any(r["session"].startswith("s2") for r in rows))
+
+    def test_setup_error_refused_once_before_fitting(self):
+        # differential_evolution needs finite bounds; Linear has none.
+        self._add_series()
+        app_mb, fit_mb, dlg = self._batch_fit("differential_evolution")
+        fit_mb.showwarning.assert_called_once()
+        self.assertEqual(fit_mb.showwarning.call_args[0][0], "Cannot Fit")
+        app_mb.showwarning.assert_not_called()
+        dlg.assert_not_called()
+        self.assertIsNone(self._target_result(1))
+
+    def test_odr_selected_runs_odr(self):
+        from curvelab.fit_manager import FitManager
+        self._add_series(xerr=True)
+        with mock.patch.object(FitManager, "run_odr", autospec=True,
+                               side_effect=FitManager.run_odr) as odr, \
+             mock.patch.object(FitManager, "run_fit", autospec=True,
+                               side_effect=FitManager.run_fit) as fit:
+            self._batch_fit("odr")
+        self.assertEqual(odr.call_count, 2)            # the two targets
+        fit.assert_not_called()
+        self.assertIsNotNone(self._target_result(1))
+
+
 class BatchFitWarningTests(GuiTestBase):
     """Batch fit prepares every series in a loop; data warnings and failures
     are collected and reported once instead of one modal dialog per series."""
