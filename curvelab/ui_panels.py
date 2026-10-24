@@ -10,6 +10,15 @@ from .fit_manager import (
 from .models import MODEL_NAMES
 from .ui_common import configure_row_tags, row_tag, set_readonly_text
 
+# Parameter-table columns the user can double-click to edit; their headings
+# carry a pencil. An expression overrides Value and Vary, so a derived row
+# refuses edits to those two.
+_EDITABLE_PARAM_COLUMNS = ("value", "min", "max", "vary", "expr")
+_EXPR_OVERRIDDEN_COLUMNS = ("value", "vary")
+_PARAM_EDIT_HINT = ("Double-click a \u270e column to edit. "
+                    "Value sets the start of the next fit.")
+_DERIVED_FOREGROUND = "#808080"
+
 # Marker choices for the style dropdown
 MARKERS = ["o", "s", "^", "v", "D", "x", "+", ".", "*", "h"]
 LINESTYLES = ["None", "-", "--", "-.", ":"]
@@ -1056,20 +1065,19 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree = ttk.Treeview(
             tree_frame, columns=columns, show="headings", height=6
         )
-        self.param_tree.heading("value", text="Value")
-        self.param_tree.heading("init", text="Initial")
-        self.param_tree.heading("stderr", text="StdErr")
-        self.param_tree.heading("min", text="Min")
-        self.param_tree.heading("max", text="Max")
-        self.param_tree.heading("vary", text="Vary")
-        self.param_tree.heading("expr", text="Expr")
+        headings = {"value": "Value", "init": "Initial", "stderr": "StdErr",
+                    "min": "Min", "max": "Max", "vary": "Vary", "expr": "Expr"}
+        for col, text in headings.items():
+            if col in _EDITABLE_PARAM_COLUMNS:
+                text += " \u270e"
+            self.param_tree.heading(col, text=text)
 
         self.param_tree.column("value", width=80)
         self.param_tree.column("init", width=70)
         self.param_tree.column("stderr", width=80)
         self.param_tree.column("min", width=60)
         self.param_tree.column("max", width=60)
-        self.param_tree.column("vary", width=40)
+        self.param_tree.column("vary", width=55)
         self.param_tree.column("expr", width=120)
 
         # Add Name as a "tree" column
@@ -1078,6 +1086,7 @@ class FitResultsPanel(ttk.LabelFrame):
         self.param_tree.heading("#0", text="Name")
 
         configure_row_tags(self.param_tree)
+        self.param_tree.tag_configure("derived", foreground=_DERIVED_FOREGROUND)
 
         tree_scroll = ttk.Scrollbar(
             tree_frame, orient=tk.VERTICAL, command=self.param_tree.yview
@@ -1088,6 +1097,11 @@ class FitResultsPanel(ttk.LabelFrame):
 
         # Double-click to edit
         self.param_tree.bind("<Double-1>", self._on_double_click)
+
+        # What can be edited, or why an edit was refused.
+        self.hint_var = tk.StringVar(value=_PARAM_EDIT_HINT)
+        ttk.Label(self, textvariable=self.hint_var,
+                  font=("TkDefaultFont", 8)).pack(anchor=tk.W)
 
         # --- Table action buttons ---
         btn_row = ttk.Frame(self)
@@ -1130,8 +1144,9 @@ class FitResultsPanel(ttk.LabelFrame):
             mx = f"{info['max']:.6g}" if info["max"] not in (None, float("inf")) else "inf"
             vary = "Yes" if info.get("vary", True) else "No"
             expr = info.get("expr") or ""
-            tag = row_tag(i)
-            self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=(tag,))
+            tags = (row_tag(i), "derived") if expr else (row_tag(i),)
+            self.param_tree.insert("", tk.END, text=name, values=(val, init_val, stderr, mn, mx, vary, expr), tags=tags)
+        self.hint_var.set(_PARAM_EDIT_HINT)
 
     def set_gof(self, gof: dict | None, strong_correlations=()):
         """Update the goodness-of-fit summary line. Strongly correlated
@@ -1206,8 +1221,21 @@ class FitResultsPanel(ttk.LabelFrame):
             return
 
         col_name = col_names[col_idx]
-        # Only allow editing value, min, max, vary, expr
-        if col_name not in ("value", "min", "max", "vary", "expr"):
+        if col_name not in _EDITABLE_PARAM_COLUMNS:
+            return
+        param_name = self.param_tree.item(item, "text")
+        if (col_name in _EXPR_OVERRIDDEN_COLUMNS
+                and "derived" in self.param_tree.item(item, "tags")):
+            self.hint_var.set(f"{param_name} follows its expression; "
+                              "edit Expr to untie it.")
+            return
+        self.hint_var.set(_PARAM_EDIT_HINT)
+        if col_name == "vary":
+            # A two-state field: toggle it instead of asking for Yes/No.
+            new_val = "No" if self.param_tree.set(item, column) == "Yes" else "Yes"
+            self.param_tree.set(item, column, new_val)
+            if self._on_param_edited:
+                self._on_param_edited(param_name, col_name, new_val)
             return
 
         # Get cell bbox
@@ -1216,7 +1244,6 @@ class FitResultsPanel(ttk.LabelFrame):
             return
 
         current_val = self.param_tree.set(item, column)
-        param_name = self.param_tree.item(item, "text")
 
         # Create entry overlay
         if self._editing_entry:
