@@ -6,17 +6,20 @@ visibility toggles. They rely on the coordinator's state, panels, and
 refresh helpers, so they are not usable standalone.
 """
 
+import math
 import tkinter as tk
 from tkinter import messagebox
 
 import numpy as np
 import pandas as pd
+from matplotlib.colors import is_color_like
 
 from .session import (
     SeriesRecord,
     make_series_id as _make_series_id,
     make_session_key as _make_session_key,
 )
+from .ui_panels import FitStyleDialog
 
 
 class SeriesSessionMixin:
@@ -192,6 +195,32 @@ class SeriesSessionMixin:
             rec.active_session_name = new_name
 
         self._sync_session_list()
+
+    def _on_session_style(self):
+        """Open the Style dialog for the active session's fit curve."""
+        sess = self._require_session()
+        if sess is None:
+            return
+        FitStyleDialog(self, sess.name, sess.color, sess.linestyle,
+                       sess.linewidth, on_apply=self._set_session_style)
+
+    def _set_session_style(self, color: str, linestyle: str, linewidth: float):
+        """Set the active session's curve color, line style and width, and
+        redraw it. The confidence band and residuals follow the color."""
+        sess = self._active_session
+        if sess is None:
+            return
+        if not is_color_like(color):
+            messagebox.showwarning("Fit Style", f"'{color}' is not a color.")
+            return
+        if not (math.isfinite(linewidth) and linewidth > 0):
+            messagebox.showwarning("Fit Style", "Line width must be greater than 0.")
+            return
+        sess.color = color
+        sess.linestyle = linestyle
+        sess.linewidth = float(linewidth)
+        if sess.result is not None and sess.visible:
+            self._show_fit_on_plot(self._active_series_id, sess, self._active_record)
 
     def _on_delete_session(self, name: str):
         rec = self._active_record

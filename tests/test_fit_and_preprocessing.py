@@ -853,5 +853,50 @@ class DiagnosticStatsTests(unittest.TestCase):
         self.assertEqual(compute_diagnostic_stats(np.zeros(50)), [])
 
 
+class FitLineStyleTests(unittest.TestCase):
+    """A fit session's line color, style and width are the user's to set,
+    and are saved with the workspace. Older workspaces load with the
+    defaults (solid, 2 points)."""
+
+    def _round_trip(self, sess, drop_style=False):
+        from curvelab.session import SeriesRecord
+        from curvelab.workspace import (
+            WorkspaceEncoder, serialize_series_records,
+            deserialize_series_record, decode_workspace,
+        )
+        x = np.linspace(0, 1, 5)
+        rec = SeriesRecord(x=x, y=x, style={"x": "x", "y": "y"}, dataset_name="t")
+        rec.fit_sessions[sess.name] = sess
+        series = serialize_series_records({"sid": rec})
+        if drop_style:
+            for key in ("linestyle", "linewidth"):
+                series["sid"]["fit_sessions"][sess.name].pop(key, None)
+        loaded = json.loads(json.dumps(series, cls=WorkspaceEncoder),
+                            object_hook=decode_workspace)
+        rec2 = deserialize_series_record(loaded["sid"], x, x, None, None, "t")
+        return rec2.fit_sessions[sess.name]
+
+    def test_session_default_style(self):
+        from curvelab.session import FitSession
+        sess = FitSession(name="Fit 1")
+        self.assertEqual(sess.linestyle, "-")
+        self.assertEqual(sess.linewidth, 2.0)
+
+    def test_workspace_keeps_style(self):
+        from curvelab.session import FitSession
+        sess = FitSession(name="Fit 1", color="xkcd:black")
+        sess.linestyle = "--"
+        sess.linewidth = 1.0
+        loaded = self._round_trip(sess)
+        self.assertEqual(
+            (loaded.color, loaded.linestyle, loaded.linewidth),
+            ("xkcd:black", "--", 1.0))
+
+    def test_old_workspace_loads_default_style(self):
+        from curvelab.session import FitSession
+        loaded = self._round_trip(FitSession(name="Fit 1"), drop_style=True)
+        self.assertEqual((loaded.linestyle, loaded.linewidth), ("-", 2.0))
+
+
 if __name__ == "__main__":
     unittest.main()

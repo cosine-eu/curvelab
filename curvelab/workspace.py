@@ -7,7 +7,9 @@ import math
 
 import numpy as np
 
-from .session import SeriesRecord, FitSession, FitResult
+from .session import (
+    DEFAULT_FIT_LINESTYLE, DEFAULT_FIT_LINEWIDTH, FitResult, FitSession, SeriesRecord,
+)
 from .fit_manager import FitManager
 
 
@@ -81,6 +83,8 @@ def serialize_series_records(
             sess_data = {
                 "name": sess.name,
                 "color": sess.color,
+                "linestyle": sess.linestyle,
+                "linewidth": sess.linewidth,
                 "visible": sess.visible,
                 **sess.fit_manager.serialize(),
             }
@@ -166,6 +170,8 @@ def deserialize_series_record(
             name=sess_data.get("name", sess_name),
             fit_manager=fm,
             color=sess_data.get("color", ""),
+            linestyle=sess_data.get("linestyle", DEFAULT_FIT_LINESTYLE),
+            linewidth=float(sess_data.get("linewidth", DEFAULT_FIT_LINEWIDTH)),
             visible=sess_data.get("visible", True),
         )
 

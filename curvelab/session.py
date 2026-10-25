@@ -145,6 +145,11 @@ class ParamEdit:
     new_value: Any
 
 
+# How a fit curve is drawn unless the user picks otherwise (Style...).
+DEFAULT_FIT_LINESTYLE = "-"
+DEFAULT_FIT_LINEWIDTH = 2.0
+
+
 @dataclass
 class FitSession:
     """One named fit attempt attached to a series."""
@@ -153,6 +158,8 @@ class FitSession:
     fit_manager: FitManagerProtocol = field(default_factory=_fit_manager_factory)
     result: FitResult | None = None
     color: str = ""
+    linestyle: str = DEFAULT_FIT_LINESTYLE
+    linewidth: float = DEFAULT_FIT_LINEWIDTH
     visible: bool = True
     undo_stack: list[ParamEdit] = field(default_factory=list)
     redo_stack: list[ParamEdit] = field(default_factory=list)
