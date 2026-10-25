@@ -194,6 +194,11 @@ class SeriesSessionMixin:
         if rec.active_session_name == old_name:
             rec.active_session_name = new_name
 
+        # The legend label carries the session name and is set when the fit
+        # is drawn, so redraw it under the new name.
+        if sess.result is not None and sess.visible:
+            self._show_fit_on_plot(self._active_series_id, sess, rec)
+
         self._sync_session_list()
 
     def _on_session_style(self):
