@@ -413,6 +413,16 @@ class SessionRenameLegendTests(GuiTestBase):
         self.assertIn("s1 \u2014 Peak model", texts)
         self.assertNotIn("s1 \u2014 Fit 1", texts)
 
+    def test_rename_keeps_session_position(self):
+        # Rename popped the session and re-added it, moving it to the end.
+        rec, sess = self._add_fitted_series()
+        rec.ensure_session("Fit 2")
+        rec.ensure_session("Fit 3")
+        self.app._on_rename_session("Fit 1", "Peak model")
+        self.assertEqual(list(rec.fit_sessions), ["Peak model", "Fit 2", "Fit 3"])
+        self.assertEqual(self.app.fit_panel._session_names,
+                         ["Peak model", "Fit 2", "Fit 3"])
+
     def test_rename_of_hidden_session_does_not_draw_it(self):
         rec, sess = self._add_fitted_series()
         self.app._show_fit_on_plot("ds::x::y", sess, rec)

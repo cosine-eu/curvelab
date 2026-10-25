@@ -182,9 +182,14 @@ class SeriesSessionMixin:
             messagebox.showwarning("Duplicate", f"Session '{new_name}' already exists.")
             return
 
-        sess = rec.fit_sessions.pop(old_name)
+        # Rebuild in order rather than pop and re-add, which would move the
+        # renamed session to the end of the list.
+        sess = rec.fit_sessions[old_name]
         sess.name = new_name
-        rec.fit_sessions[new_name] = sess
+        rec.fit_sessions = {
+            (new_name if name == old_name else name): s
+            for name, s in rec.fit_sessions.items()
+        }
 
         # Re-key in PlotManager
         old_key = _make_session_key(self._active_series_id, old_name)
