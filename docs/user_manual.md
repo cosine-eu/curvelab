@@ -1690,6 +1690,7 @@ result, undo/redo history, and plot color.
 | **New** | Creates a new session with a default name ("Fit 1", "Fit 2", ...). You can enter a custom name. |
 | **Rename** | Changes the session name |
 | **Delete** | Removes a session, its model, fit result, and fit curve |
+| **Style…** | Sets the fit curve's color, line style and width (see below) |
 | **Show/Hide** | Toggles the session's fit curve visibility |
 | **Clear Model** | Empties the active session: removes its model components, fit result, fit curve, and undo history. The session itself (name and color) remains, ready for a new model. Use **Delete** to remove the session entirely. |
 
@@ -1705,6 +1706,18 @@ Sessions are automatically assigned colors from a 16-color palette (xkcd
 colors: red, bright blue, green, purple, orange, magenta, teal, gold,
 coral, navy blue, lime green, lavender, hot pink, olive, sky blue, salmon).
 Colors cycle if more than 16 sessions exist.
+
+To change how the active session's fit curve is drawn, click **Style…** in
+the Fit panel. The dialog sets:
+
+- **Color** -- any matplotlib color: a name (`black`, `xkcd:navy blue`), a
+  hex code (`#1f77b4`), or one chosen with **Pick…**
+- **Line** -- Solid, Dashed, Dotted or Dash-dot
+- **Width** -- in points (default 2)
+
+**Apply** redraws the curve; the confidence band and residual points follow
+the new color. The style is saved with the workspace. Batch Fit does not
+copy a session's style to the series it fits.
 
 ### Component curves
 
