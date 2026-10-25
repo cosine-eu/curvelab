@@ -1,14 +1,17 @@
-"""Core tkinter panel widgets: DataPanel, PlotControlPanel, FitPanel, FitResultsPanel."""
+"""Core tkinter panel widgets: DataPanel, PlotControlPanel, FitPanel,
+FitResultsPanel, and the fit-line FitStyleDialog."""
 
 import tkinter as tk
-from tkinter import ttk, filedialog, simpledialog
+from tkinter import colorchooser, ttk, filedialog, simpledialog
 
 from .fit_manager import (
     DEFAULT_F_SCALE, DEFAULT_FIT_METHOD, DEFAULT_WEIGHT_MODE, FIT_METHODS,
     METHOD_CAPS, ROBUST_LOSSES, WEIGHT_MODES, objective_choices,
 )
+from matplotlib.colors import to_hex
+
 from .models import MODEL_NAMES
-from .ui_common import configure_row_tags, row_tag, set_readonly_text
+from .ui_common import BaseDialog, configure_row_tags, row_tag, set_readonly_text
 
 # Parameter-table columns the user can double-click to edit; their headings
 # carry a pencil. An expression overrides Value and Vary, so a derived row
@@ -582,6 +585,7 @@ class FitPanel(ttk.LabelFrame):
         on_toggle_session_visible=None,
         on_toggle_series_visible=None,
         on_abort=None,
+        on_session_style=None,
     ):
         super().__init__(parent, text="Fit", padding=5)
         self._on_add_component = on_add_component
@@ -599,6 +603,7 @@ class FitPanel(ttk.LabelFrame):
         self._on_toggle_session_visible = on_toggle_session_visible
         self._on_toggle_series_visible = on_toggle_series_visible
         self._on_abort = on_abort
+        self._on_session_style = on_session_style
         self._session_names: list[str] = []
         self._model_locked = False
 
@@ -645,6 +650,10 @@ class FitPanel(ttk.LabelFrame):
             sess_btn_frame, text="Delete", command=self._delete_session
         )
         self._delete_session_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
+        self._style_btn = ttk.Button(
+            sess_btn_frame, text="Style\u2026", command=self._session_style
+        )
+        self._style_btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         ttk.Button(sess_btn_frame, text="Show/Hide", command=self._toggle_session_visible).pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=(2, 0)
         )
@@ -879,6 +888,10 @@ class FitPanel(ttk.LabelFrame):
             name = self._session_names[sel[0]]
             self._on_delete_session(name)
 
+    def _session_style(self):
+        if self._on_session_style:
+            self._on_session_style()
+
     def _toggle_session_visible(self):
         sel = self.session_listbox.curselection()
         if sel and self._on_toggle_session_visible:
@@ -1012,6 +1025,7 @@ class FitPanel(ttk.LabelFrame):
             self._new_session_btn,
             self._rename_session_btn,
             self._delete_session_btn,
+            self._style_btn,
         ):
             btn.configure(state=state)
 
@@ -1286,3 +1300,65 @@ class FitResultsPanel(ttk.LabelFrame):
         entry.bind("<FocusOut>", commit)
 
 
+# Line styles offered for a fit curve: label shown -> matplotlib linestyle.
+FIT_LINESTYLES = {"Solid": "-", "Dashed": "--", "Dotted": ":", "Dash-dot": "-."}
+
+
+class FitStyleDialog(BaseDialog):
+    """Color, line style and width of one fit session's curve. Apply calls
+    on_apply(color=, linestyle=, linewidth=); the caller validates."""
+
+    def __init__(self, parent, session_name: str, color: str, linestyle: str,
+                 linewidth: float, on_apply=None):
+        super().__init__(parent, f"Fit Style: {session_name}",
+                         resizable=(False, False))
+        self._on_apply = on_apply
+        self._color_var = tk.StringVar(value=color)
+        style_label = next((k for k, v in FIT_LINESTYLES.items() if v == linestyle),
+                           "Solid")
+        self._style_var = tk.StringVar(value=style_label)
+        self._width_var = tk.StringVar(value=f"{linewidth:g}")
+        self._status_var = tk.StringVar()
+
+        frame = ttk.Frame(self, padding=10)
+        frame.pack(fill=tk.BOTH, expand=True)
+        ttk.Label(frame, text="Color:").grid(row=0, column=0, sticky=tk.W)
+        ttk.Entry(frame, textvariable=self._color_var, width=16).grid(
+            row=0, column=1, sticky=tk.W, padx=4)
+        ttk.Button(frame, text="Pick\u2026", command=self._pick_color).grid(
+            row=0, column=2, sticky=tk.W)
+        ttk.Label(frame, text="Line:").grid(row=1, column=0, sticky=tk.W, pady=4)
+        ttk.Combobox(frame, textvariable=self._style_var, state="readonly",
+                     values=list(FIT_LINESTYLES), width=14).grid(
+            row=1, column=1, sticky=tk.W, padx=4)
+        ttk.Label(frame, text="Width:").grid(row=2, column=0, sticky=tk.W)
+        ttk.Entry(frame, textvariable=self._width_var, width=6).grid(
+            row=2, column=1, sticky=tk.W, padx=4)
+        ttk.Label(frame, textvariable=self._status_var, foreground="red").grid(
+            row=3, column=0, columnspan=3, sticky=tk.W, pady=(4, 0))
+
+        btns = ttk.Frame(frame)
+        btns.grid(row=4, column=0, columnspan=3, sticky=tk.E, pady=(6, 0))
+        ttk.Button(btns, text="Apply", command=self._apply).pack(side=tk.LEFT, padx=2)
+        ttk.Button(btns, text="Close", command=self.destroy).pack(side=tk.LEFT)
+
+    def _pick_color(self):
+        try:
+            initial = to_hex(self._color_var.get())
+        except ValueError:
+            initial = None
+        _, chosen = colorchooser.askcolor(initialcolor=initial, parent=self)
+        if chosen:
+            self._color_var.set(chosen)
+
+    def _apply(self):
+        try:
+            width = float(self._width_var.get())
+        except ValueError:
+            self._status_var.set("Width must be a number.")
+            return
+        self._status_var.set("")
+        if self._on_apply:
+            self._on_apply(color=self._color_var.get().strip(),
+                           linestyle=FIT_LINESTYLES[self._style_var.get()],
+                           linewidth=width)

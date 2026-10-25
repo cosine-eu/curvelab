@@ -102,6 +102,8 @@ class PlottingMixin:
             session_key=skey,
             y_uncertainty=result.y_uncertainty,
             show_band=show_band,
+            linestyle=sess.linestyle,
+            linewidth=sess.linewidth,
         )
 
     def _show_fit_on_plot(self, sid: str, sess: FitSession, rec: SeriesRecord) -> str:

@@ -260,6 +260,7 @@ class CurveLabApp(
             on_batch_fit=self._on_batch_fit,
             on_toggle_session_visible=self._on_toggle_session_visible,
             on_toggle_series_visible=self._on_toggle_series_and_sessions,
+            on_session_style=self._on_session_style,
             on_abort=self._abort_fit,
         )
         left_pane.add(self.fit_panel, weight=1)

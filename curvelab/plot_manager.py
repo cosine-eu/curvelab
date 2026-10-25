@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import matplotlib
-from .session import COMPONENT_COLORS
+from .session import COMPONENT_COLORS, DEFAULT_FIT_LINESTYLE, DEFAULT_FIT_LINEWIDTH
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 
@@ -138,6 +138,8 @@ class PlotManager:
         session_key: str = "",
         y_uncertainty: np.ndarray | None = None,
         show_band: bool = False,
+        linestyle: str = DEFAULT_FIT_LINESTYLE,
+        linewidth: float = DEFAULT_FIT_LINEWIDTH,
     ):
         """Plot a fit curve and optional component curves.
 
@@ -148,7 +150,8 @@ class PlotManager:
         lines: list = []
 
         (line,) = self.ax.plot(
-            x_dense, y_dense, color=color, linewidth=2, label=label
+            x_dense, y_dense, color=color, linestyle=linestyle,
+            linewidth=linewidth, label=label,
         )
         lines.append(line)
 
