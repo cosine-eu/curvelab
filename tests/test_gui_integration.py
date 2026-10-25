@@ -392,6 +392,35 @@ class ParamTableEditabilityTests(GuiTestBase):
         self.assertEqual(edits, [])
 
 
+class SessionRenameLegendTests(GuiTestBase):
+    """Renaming a fit session re-keyed its plot lines but left their legend
+    label, so the legend showed the old name until the fit was redrawn."""
+
+    def _legend_texts(self):
+        legend = self.app.plot_mgr.ax.get_legend()
+        return [t.get_text() for t in legend.get_texts()] if legend else []
+
+    def test_rename_updates_fit_label_and_legend(self):
+        rec, sess = self._add_fitted_series()
+        self.app._show_fit_on_plot("ds::x::y", sess, rec)
+        self.assertIn("s1 \u2014 Fit 1", self._legend_texts())
+
+        self.app._on_rename_session("Fit 1", "Peak model")
+
+        line = self.app.plot_mgr._fit_lines["ds::x::y::Peak model"][0]
+        self.assertEqual(line.get_label(), "s1 \u2014 Peak model")
+        texts = self._legend_texts()
+        self.assertIn("s1 \u2014 Peak model", texts)
+        self.assertNotIn("s1 \u2014 Fit 1", texts)
+
+    def test_rename_of_hidden_session_does_not_draw_it(self):
+        rec, sess = self._add_fitted_series()
+        self.app._show_fit_on_plot("ds::x::y", sess, rec)
+        self.app._on_toggle_session_visible("Fit 1")
+        self.app._on_rename_session("Fit 1", "Peak model")
+        self.assertNotIn("s1 \u2014 Peak model", self._legend_texts())
+
+
 class ParamUndoRedoTests(GuiTestBase):
     """lmfit forces vary=False when an expression is set and never restores
     it, so undoing an expression edit must restore vary explicitly -- else
